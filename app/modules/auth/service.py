@@ -1,36 +1,36 @@
-from sqlalchemy import or_, select
-from sqlalchemy.orm import Session
+import sqlite3
 
-from app.modules.auth.models import User
-from app.modules.auth.schemas import UserCreate
-from app.modules.auth.security import hash_password
-
-
-def get_user_by_username(db: Session, username: str) -> User | None:
-    statement = select(User).where(User.username == username)
-    return db.scalar(statement)
+from app.core.err import BizError, ErrCode
+from app.modules.auth.schemas import UserLoginInfo, UserRegInfo
+from app.modules.auth.security import hashpwd, verifypwd
 
 
-def get_user_by_email(db: Session, email: str) -> User | None:
-    statement = select(User).where(User.email == email)
-    return db.scalar(statement)
-
-
-def get_user_by_username_or_email(db: Session, username: str, email: str) -> User | None:
-    statement = select(User).where(or_(User.username == username, User.email == email))
-    return db.scalar(statement)
-
-
-def create_user(db: Session, user_in: UserCreate) -> User:
-    user = User(
-        username=user_in.username,
-        email=str(user_in.email),
-        hashed_password=hash_password(user_in.password),
-        nickname=user_in.nickname,
-        research_direction=user_in.research_direction,
-        bio=user_in.bio,
+def register(conn: sqlite3.Connection, info: UserRegInfo) -> int:
+    cur = conn.execute(
+        "SELECT id FROM users WHERE username = ? OR email = ?",
+        (info.username, info.email),
     )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
+    if cur.fetchone():
+        raise BizError(ErrCode.ALREADY_REGISTERED)
+
+    hashed = hashpwd(info.password)
+    cur = conn.execute(
+        "INSERT INTO users (username, email, hpwd) VALUES (?, ?, ?)",
+        (info.username, info.email, hashed),
+    )
+    return cur.lastrowid
+
+
+def login(conn: sqlite3.Connection, info: UserLoginInfo) -> int:
+    row = conn.execute(
+        "SELECT id, hpwd FROM users WHERE username = ?",
+        (info.username,),
+    ).fetchone()
+
+    if not row:
+        raise BizError(ErrCode.USER_NOT_FOUND)
+
+    if not verifypwd(info.password, row["hpwd"]):
+        raise BizError(ErrCode.INVALID_CREDENTIALS)
+
+    return row["id"]

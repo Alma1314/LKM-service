@@ -1,19 +1,18 @@
-from collections.abc import Generator
-
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+import sqlite3
+from contextlib import contextmanager
 
 from app.core.config import settings
 
-connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
 
-engine = create_engine(settings.database_url, connect_args=connect_args)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-
-def get_db() -> Generator[Session, None, None]:
-    db = SessionLocal()
+@contextmanager
+def getdb(db_path: str | None = None):
+    conn = sqlite3.connect(db_path or settings.db_path)
+    conn.row_factory = sqlite3.Row
     try:
-        yield db
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
-        db.close()
+        conn.close()

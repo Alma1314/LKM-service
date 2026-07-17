@@ -1,34 +1,28 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 
-from app.db.session import get_db
-from app.modules.auth.schemas import UserCreate, UserRead
-from app.modules.auth.service import create_user, get_user_by_username_or_email
-from app.modules.common import ModuleStatus
+from app.core.err import BizError, ErrCode, ERRTABLE, map_err
+from app.db.session import getdb
+from app.modules.auth.schemas import UserLoginInfo, UserRegInfo
+from app.modules.auth.service import login, register
+from app.modules.common import ApiResp
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.get("/status", response_model=ModuleStatus)
-async def auth_status() -> ModuleStatus:
-    return ModuleStatus(
-        module="auth",
-        responsibility="Handle registration, login, user profiles, and basic member/admin roles.",
-        next_steps=[
-            "Create database tables",
-            "Add password hashing and token authentication",
-            "Expose registration, login, and current-user APIs",
-        ],
-    )
+@router.post("/reg", response_model=ApiResp)
+def reg(user: UserRegInfo):
+    with getdb() as conn:
+        user_id = register(conn, user)
+
+    _, ok_msg = ERRTABLE[ErrCode.OK]
+    return ApiResp(code=ErrCode.OK, msg=ok_msg, data={"user_id": user_id})
 
 
-@router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-async def register_user(user_in: UserCreate, db: Session = Depends(get_db)) -> UserRead:
-    existing_user = get_user_by_username_or_email(db, user_in.username, str(user_in.email))
-    if existing_user is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Username or email already exists.",
-        )
+@router.post("/login", response_model=ApiResp)
+def login_route(user: UserLoginInfo):
+    with getdb() as conn:
+        user_id = login(conn, user)
 
-    return create_user(db, user_in)
+    _, ok_msg = ERRTABLE[ErrCode.OK]
+    return ApiResp(code=ErrCode.OK, msg=ok_msg, data={"user_id": user_id})
