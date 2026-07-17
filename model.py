@@ -25,6 +25,12 @@ class UserRegInfo(BaseModel):
     password: Password = Field(...)
 
 
+class UserLoginInfo(BaseModel):
+    username: str = Field(..., min_length=1)
+
+    password: str
+
+
 class ApiResp(BaseModel):
     code: int
     msg: str

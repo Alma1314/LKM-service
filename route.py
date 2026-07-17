@@ -3,8 +3,8 @@ from fastapi.responses import JSONResponse
 
 from err import BizError, ErrCode, ERRTABLE, map_err
 from db import getdb
-from model import ApiResp, UserRegInfo
-from passwd import hashpwd
+from model import ApiResp, UserLoginInfo, UserRegInfo
+from passwd import hashpwd, verifypwd
 
 router = APIRouter()
 
@@ -28,6 +28,24 @@ def reg(user: UserRegInfo):
 
     _, ok_msg = ERRTABLE[ErrCode.OK]
     return ApiResp(code=ErrCode.OK, msg=ok_msg, data={"user_id": user_id})
+
+
+@router.post("/login", response_model=ApiResp)
+def login(user: UserLoginInfo):
+    with getdb() as conn:
+        row = conn.execute(
+            "SELECT id, hpwd FROM users WHERE username = ?",
+            (user.username,),
+        ).fetchone()
+
+        if not row:
+            raise BizError(ErrCode.INVALID_CREDENTIALS)
+
+        if not verifypwd(user.password, row["hpwd"]):
+            raise BizError(ErrCode.INVALID_CREDENTIALS)
+
+    _, ok_msg = ERRTABLE[ErrCode.OK]
+    return ApiResp(code=ErrCode.OK, msg=ok_msg, data={"user_id": row["id"]})
 
 
 @router.get("/")
