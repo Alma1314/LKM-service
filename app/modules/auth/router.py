@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.db.init_db import init_db
 from app.db.session import get_db
 from app.modules.auth.schemas import UserCreate, UserRead
 from app.modules.auth.service import create_user, get_user_by_username_or_email
@@ -21,11 +20,6 @@ async def auth_status() -> ModuleStatus:
             "Expose registration, login, and current-user APIs",
         ],
     )
-
-
-@router.post("/dev/init-db", status_code=status.HTTP_204_NO_CONTENT)
-async def initialize_database() -> None:
-    init_db()
 
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)

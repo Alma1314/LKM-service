@@ -2,7 +2,7 @@
 
 理科学迷社区平台的后端服务，当前基于 FastAPI 搭建。
 
-当前代码只保留第一阶段 MVP 所需的基础模块：用户系统、分科板块、内容发布和健康检查。
+当前代码只保留第一阶段 MVP 所需的基础模块：用户系统、分科板块和健康检查。
 
 ## 当前架构
 
@@ -22,7 +22,6 @@
 │   └── modules/
 │       ├── auth/
 │       ├── boards/
-│       ├── contents/
 │       └── health/
 ├── pyproject.toml
 └── uv.lock
@@ -37,7 +36,6 @@
 - `app/api/router.py`：集中挂载所有业务模块路由。
 - `app/modules/auth/`：登录、注册、用户资料、基础角色权限；当前已包含用户 ORM 模型和用户 schema。
 - `app/modules/boards/`：分科板块、板块申请、板块运营。
-- `app/modules/contents/`：文章、笔记、想法、评论、点赞、收藏、关注。
 - `app/modules/health/`：服务健康检查。
 
 ## 本地运行
@@ -56,10 +54,8 @@ uvicorn main:app --reload
 GET /
 GET /api/v1/health
 GET /api/v1/auth/status
-POST /api/v1/auth/dev/init-db
 POST /api/v1/auth/register
 GET /api/v1/boards/status
-GET /api/v1/contents/status
 ```
 
 ## 开发说明
@@ -77,20 +73,18 @@ GET /api/v1/contents/status
 ## 当前进度
 
 - 已搭建 FastAPI 分层结构。
-- 已保留第一阶段模块：`auth`、`boards`、`contents`、`health`。
-- 已增加 SQLAlchemy 数据库基础层和开发期建表辅助函数。
+- 已保留第一阶段模块：`auth`、`boards`、`health`。
+- 已增加 SQLAlchemy 数据库基础层和启动自动建表逻辑。
 - 已定义用户表模型和用户创建/读取 schema。
-- 已实现用户注册接口，包含密码哈希和用户名/邮箱重复检查。
+- 已实现用户注册接口，包含 PBKDF2-SHA256 密码哈希和用户名/邮箱重复检查。
+
+密码哈希当前使用 Python 标准库实现，不依赖 `passlib[bcrypt]`，避免 bcrypt 的 72 bytes 密码长度限制。
 
 下一步建议实现用户登录接口，包括密码校验、JWT 生成和当前用户信息接口。
 
 ## 注册示例
 
-开发期首次使用 SQLite 前，可以先调用：
-
-```text
-POST /api/v1/auth/dev/init-db
-```
+开发期启动应用时，后端会自动根据当前 ORM 模型创建缺失的数据表。
 
 注册请求示例：
 
@@ -100,7 +94,6 @@ POST /api/v1/auth/dev/init-db
   "email": "student001@example.com",
   "password": "password123",
   "nickname": "理科迷同学",
-  "grade": "高一",
   "research_direction": "数学",
   "bio": "喜欢数学和物理。"
 }

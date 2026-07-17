@@ -20,7 +20,6 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String(255))
     nickname: Mapped[str | None] = mapped_column(String(50), default=None)
-    grade: Mapped[str | None] = mapped_column(String(50), default=None)
     research_direction: Mapped[str | None] = mapped_column(String(120), default=None)
     bio: Mapped[str | None] = mapped_column(String(500), default=None)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.MEMBER)
