@@ -1,5 +1,12 @@
+from enum import StrEnum
+
 from pydantic import BaseModel, EmailStr, Field
 from pydantic_core import core_schema
+
+
+class ProfileRole(StrEnum):
+    MEMBER = "member"
+    ADMIN = "admin"
 
 
 class Password(str):
@@ -26,3 +33,14 @@ class UserRegInfo(BaseModel):
 class UserLoginInfo(BaseModel):
     username: str = Field(..., min_length=1)
     password: str
+
+
+class ProfileInfo(BaseModel):
+    nickname: str | None = None
+    avatar: str | None = None
+    role: ProfileRole = ProfileRole.MEMBER
+
+
+class ProfileUpdate(BaseModel):
+    nickname: str | None = None
+    avatar: str | None = None

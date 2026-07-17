@@ -1,3 +1,4 @@
+import functools
 from enum import IntEnum
 
 from fastapi.exceptions import RequestValidationError
@@ -44,3 +45,36 @@ def map_err(exc: Exception) -> tuple[int, int, str]:
 
     status, msg = ERRTABLE[ErrCode.INTERNAL_ERROR]
     return status, ErrCode.INTERNAL_ERROR, msg
+
+
+def resp_json(errcode: ErrCode, *, data=None, detail=None):
+    status, msg = ERRTABLE[errcode]
+    from fastapi.responses import JSONResponse
+
+    from app.modules.common import ApiResp
+
+    return JSONResponse(
+        status_code=status,
+        content=ApiResp(code=errcode, msg=detail or msg, data=data).model_dump(),
+    )
+
+
+def respond(func):
+    """Decorator: wrap return value through ERRTABLE.
+
+    - bare dict/list/None -> OK + data
+    - (ErrCode, str)      -> given errcode, string as detail
+    - (ErrCode, dict)     -> given errcode, dict as data
+    """
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        result = func(*args, **kwargs)
+        if isinstance(result, tuple) and isinstance(result[0], ErrCode):
+            errcode, payload = result
+            if isinstance(payload, str):
+                return resp_json(errcode, detail=payload)
+            return resp_json(errcode, data=payload)
+        return resp_json(ErrCode.OK, data=result)
+
+    return wrapper

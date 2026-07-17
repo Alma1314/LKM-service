@@ -20,3 +20,11 @@ def _init_tables(conn: sqlite3.Connection) -> None:
             hpwd TEXT NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS profiles (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id),
+            nickname TEXT,
+            avatar TEXT,
+            role TEXT NOT NULL DEFAULT 'member'
+        )
+    """)

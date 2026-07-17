@@ -4,8 +4,8 @@ import pytest
 
 from app.core.err import BizError, ErrCode
 from app.db.init_db import init_db
-from app.modules.auth.schemas import UserLoginInfo, UserRegInfo
-from app.modules.auth.service import login, register
+from app.modules.auth.schemas import ProfileUpdate, UserLoginInfo, UserRegInfo
+from app.modules.auth.service import get_profile, login, register, update_profile
 
 
 @pytest.fixture
@@ -71,3 +71,34 @@ class TestLogin:
             _login(conn, password="wrongpass")
 
         assert exc.value.errcode == ErrCode.INVALID_CREDENTIALS
+
+
+class TestProfile:
+    def should_auto_create_profile_on_register(self, conn):
+        user_id = _reg(conn)
+
+        profile = get_profile(conn, user_id)
+        assert profile.nickname is None
+        assert profile.avatar is None
+        assert profile.role == "member"
+
+    def should_get_profile(self, conn):
+        user_id = _reg(conn)
+        update_profile(conn, user_id, ProfileUpdate(nickname="Alice"))
+
+        profile = get_profile(conn, user_id)
+        assert profile.nickname == "Alice"
+
+    def should_update_profile_partially(self, conn):
+        user_id = _reg(conn)
+        update_profile(conn, user_id, ProfileUpdate(nickname="Alice"))
+
+        update_profile(conn, user_id, ProfileUpdate(avatar="/avatars/1.png"))
+        profile = get_profile(conn, user_id)
+        assert profile.nickname == "Alice"
+        assert profile.avatar == "/avatars/1.png"
+
+    def should_reject_get_nonexistent_profile(self, conn):
+        with pytest.raises(BizError) as exc:
+            get_profile(conn, 999)
+        assert exc.value.errcode == ErrCode.USER_NOT_FOUND
