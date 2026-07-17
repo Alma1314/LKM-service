@@ -40,4 +40,5 @@ def map_err(exc: Exception) -> tuple[int, int, str]:
         status, _ = ERRTABLE[ErrCode.INVALID_INPUT]
         return status, ErrCode.INVALID_INPUT, detail
 
-    return *ERRTABLE[ErrCode.INTERNAL_ERROR], ErrCode.INTERNAL_ERROR
+    status, msg = ERRTABLE[ErrCode.INTERNAL_ERROR]
+    return status, ErrCode.INTERNAL_ERROR, msg
