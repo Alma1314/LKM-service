@@ -1,29 +1,43 @@
 from enum import IntEnum
 
+from fastapi.exceptions import RequestValidationError
+
 
 class ErrCode(IntEnum):
-    """Application error codes. 0 = success, non-zero = error."""
-
     OK = 0
     INVALID_INPUT = 1001
     ALREADY_REGISTERED = 1002
-    DB_ERROR = 2001
     INTERNAL_ERROR = 9999
 
-    def msg(self) -> str:
-        _msgs = {
-            ErrCode.OK: "OK",
-            ErrCode.INVALID_INPUT: "Invalid input",
-            ErrCode.ALREADY_REGISTERED: "Username or email already registered",
-            ErrCode.DB_ERROR: "Database error",
-            ErrCode.INTERNAL_ERROR: "Internal server error",
-        }
-        return _msgs.get(self, "Unknown error")
+
+# (http_status, default_message)
+ERRTABLE: dict[ErrCode, tuple[int, str]] = {
+    ErrCode.OK:                 (200, "OK"),
+    ErrCode.INVALID_INPUT:      (422, "Invalid input"),
+    ErrCode.ALREADY_REGISTERED: (400, "Username or email already registered"),
+    ErrCode.INTERNAL_ERROR:     (500, "Internal server error"),
+}
 
 
 class BizError(Exception):
-    """Business exception carrying an ErrCode."""
-
     def __init__(self, errcode: ErrCode, detail: str | None = None):
         self.errcode = errcode
-        self.detail = detail or errcode.msg()
+        self.detail = detail or ERRTABLE[errcode][1]
+
+
+def map_err(exc: Exception) -> tuple[int, int, str]:
+    """Dispatch exception -> (http_status, errcode, detail)."""
+    if isinstance(exc, BizError):
+        status, _ = ERRTABLE[exc.errcode]
+        return status, exc.errcode, exc.detail
+
+    if isinstance(exc, RequestValidationError):
+        msgs = []
+        for err in exc.errors():
+            field = ".".join(str(loc) for loc in err["loc"] if loc != "body")
+            msgs.append(f"{field}: {err['msg']}")
+        detail = "; ".join(msgs)
+        status, _ = ERRTABLE[ErrCode.INVALID_INPUT]
+        return status, ErrCode.INVALID_INPUT, detail
+
+    return *ERRTABLE[ErrCode.INTERNAL_ERROR], ErrCode.INTERNAL_ERROR

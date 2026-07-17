@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from err import BizError, ErrCode
+from err import BizError, ErrCode, ERRTABLE, map_err
 from db import getdb
 from model import ApiResp, UserRegInfo
 from passwd import hashpwd
@@ -26,7 +26,8 @@ def reg(user: UserRegInfo):
         )
         user_id = cur.lastrowid
 
-    return ApiResp(code=ErrCode.OK, msg=ErrCode.OK.msg(), data={"user_id": user_id})
+    _, ok_msg = ERRTABLE[ErrCode.OK]
+    return ApiResp(code=ErrCode.OK, msg=ok_msg, data={"user_id": user_id})
 
 
 @router.get("/")
@@ -34,8 +35,9 @@ def root():
     return {"message": "OK"}
 
 
-async def on_biz_error(request: Request, exc: BizError):
+async def on_err(request: Request, exc: Exception):
+    status, errcode, detail = map_err(exc)
     return JSONResponse(
-        status_code=400,
-        content=ApiResp(code=exc.errcode, msg=exc.detail).model_dump(),
+        status_code=status,
+        content=ApiResp(code=errcode, msg=detail).model_dump(),
     )
