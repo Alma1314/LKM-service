@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from err import BizError, ErrCode, ERRTABLE, map_err
+import svc
 from db import getdb
+from err import BizError, ErrCode, ERRTABLE, map_err
 from model import ApiResp, UserLoginInfo, UserRegInfo
-from passwd import hashpwd, verifypwd
 
 router = APIRouter()
 
@@ -12,19 +12,7 @@ router = APIRouter()
 @router.post("/reg", response_model=ApiResp)
 def reg(user: UserRegInfo):
     with getdb() as conn:
-        cur = conn.execute(
-            "SELECT id FROM users WHERE username = ? OR email = ?",
-            (user.username, user.email),
-        )
-        if cur.fetchone():
-            raise BizError(ErrCode.ALREADY_REGISTERED)
-
-        hashed = hashpwd(user.password)
-        cur = conn.execute(
-            "INSERT INTO users (username, email, hpwd) VALUES (?, ?, ?)",
-            (user.username, user.email, hashed),
-        )
-        user_id = cur.lastrowid
+        user_id = svc.register(conn, user)
 
     _, ok_msg = ERRTABLE[ErrCode.OK]
     return ApiResp(code=ErrCode.OK, msg=ok_msg, data={"user_id": user_id})
@@ -33,19 +21,10 @@ def reg(user: UserRegInfo):
 @router.post("/login", response_model=ApiResp)
 def login(user: UserLoginInfo):
     with getdb() as conn:
-        row = conn.execute(
-            "SELECT id, hpwd FROM users WHERE username = ?",
-            (user.username,),
-        ).fetchone()
-
-        if not row:
-            raise BizError(ErrCode.USER_NOT_FOUND)
-
-        if not verifypwd(user.password, row["hpwd"]):
-            raise BizError(ErrCode.INVALID_CREDENTIALS)
+        user_id = svc.login(conn, user)
 
     _, ok_msg = ERRTABLE[ErrCode.OK]
-    return ApiResp(code=ErrCode.OK, msg=ok_msg, data={"user_id": row["id"]})
+    return ApiResp(code=ErrCode.OK, msg=ok_msg, data={"user_id": user_id})
 
 
 @router.get("/")
