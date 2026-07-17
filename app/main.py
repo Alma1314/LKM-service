@@ -6,7 +6,7 @@ from fastapi.exceptions import RequestValidationError
 
 from app.api.router import api_router
 from app.core.config import settings
-from app.core.err import BizError, map_err
+from app.core.err import BizError, map_err, respond
 from app.db.init_db import init_db
 
 
@@ -33,16 +33,10 @@ def create_app() -> FastAPI:
     return app
 
 
+@respond
 async def _on_err(request, exc):
-    from fastapi.responses import JSONResponse
-
-    from app.modules.common import ApiResp
-
-    status, errcode, detail = map_err(exc)
-    return JSONResponse(
-        status_code=status,
-        content=ApiResp(code=errcode, msg=detail).model_dump(),
-    )
+    _, errcode, detail = map_err(exc)
+    return errcode, detail
 
 
 app = create_app()

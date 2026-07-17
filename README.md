@@ -37,8 +37,22 @@ GET  /                             # 健康探活
 GET  /api/v1/health                # 健康检查
 POST /api/v1/auth/reg              # 注册
 POST /api/v1/auth/login            # 登录
+GET  /api/v1/auth/{user_id}        # 用户展示信息
+PUT  /api/v1/auth/{user_id}/profile # 更新展示信息
 GET  /api/v1/boards/status         # 板块状态
 ```
+
+## 错误处理
+
+`ERRTABLE` 集中映射错误码 → HTTP 状态 + 默认消息。`@respond` 装饰器动态包装返回值：
+
+- 返回 `dict` → 自动包成 `OK` 响应
+- 返回 `(ErrCode, str)` → 按该错误码包，str 作为 detail
+- 返回 `(ErrCode, dict)` → 按该错误码包，dict 作为 data
+
+## 技术选型
+
+- **`users` / `profiles` 分表**：注册信息和展示信息独立存储，注册时自动创建空 profile。
 
 ## 运行
 
