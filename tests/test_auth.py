@@ -2,17 +2,17 @@ import sqlite3
 
 import pytest
 
-from db import initdb
-from err import BizError, ErrCode
-from model import UserLoginInfo, UserRegInfo
-from svc import login, register
+from app.core.err import BizError, ErrCode
+from app.db.init_db import init_db
+from app.modules.auth.schemas import UserLoginInfo, UserRegInfo
+from app.modules.auth.service import login, register
 
 
 @pytest.fixture
 def conn():
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    initdb(c)
+    init_db(c)
     return c
 
 

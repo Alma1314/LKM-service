@@ -12,7 +12,6 @@ class ErrCode(IntEnum):
     INTERNAL_ERROR = 9999
 
 
-# (http_status, default_message)
 ERRTABLE: dict[ErrCode, tuple[int, str]] = {
     ErrCode.OK:                  (200, "OK"),
     ErrCode.INVALID_INPUT:       (422, "Invalid input"),
@@ -30,7 +29,6 @@ class BizError(Exception):
 
 
 def map_err(exc: Exception) -> tuple[int, int, str]:
-    """Dispatch exception -> (http_status, errcode, detail)."""
     if isinstance(exc, BizError):
         status, _ = ERRTABLE[exc.errcode]
         return status, exc.errcode, exc.detail

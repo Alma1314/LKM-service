@@ -1,8 +1,8 @@
 import sqlite3
 
-from err import BizError, ErrCode
-from model import UserLoginInfo, UserRegInfo
-from passwd import hashpwd, verifypwd
+from app.core.err import BizError, ErrCode
+from app.modules.auth.schemas import UserLoginInfo, UserRegInfo
+from app.modules.auth.security import hashpwd, verifypwd
 
 
 def register(conn: sqlite3.Connection, info: UserRegInfo) -> int:

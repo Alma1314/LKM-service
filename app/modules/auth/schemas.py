@@ -3,8 +3,6 @@ from pydantic_core import core_schema
 
 
 class Password(str):
-    """Password value object. Validates min length, delegates hashing to passwd module."""
-
     @classmethod
     def validate(cls, v: str) -> str:
         if len(v) < 6:
@@ -27,11 +25,4 @@ class UserRegInfo(BaseModel):
 
 class UserLoginInfo(BaseModel):
     username: str = Field(..., min_length=1)
-
     password: str
-
-
-class ApiResp(BaseModel):
-    code: int
-    msg: str
-    data: dict | None = None
