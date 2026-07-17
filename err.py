@@ -8,6 +8,7 @@ class ErrCode(IntEnum):
     INVALID_INPUT = 1001
     ALREADY_REGISTERED = 1002
     INVALID_CREDENTIALS = 1003
+    USER_NOT_FOUND = 1004
     INTERNAL_ERROR = 9999
 
 
@@ -17,6 +18,7 @@ ERRTABLE: dict[ErrCode, tuple[int, str]] = {
     ErrCode.INVALID_INPUT:       (422, "Invalid input"),
     ErrCode.ALREADY_REGISTERED:  (400, "Username or email already registered"),
     ErrCode.INVALID_CREDENTIALS: (401, "Invalid username or password"),
+    ErrCode.USER_NOT_FOUND:      (401, "User not found"),
     ErrCode.INTERNAL_ERROR:      (500, "Internal server error"),
 }
 

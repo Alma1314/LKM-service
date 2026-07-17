@@ -39,7 +39,7 @@ def login(user: UserLoginInfo):
         ).fetchone()
 
         if not row:
-            raise BizError(ErrCode.INVALID_CREDENTIALS)
+            raise BizError(ErrCode.USER_NOT_FOUND)
 
         if not verifypwd(user.password, row["hpwd"]):
             raise BizError(ErrCode.INVALID_CREDENTIALS)
