@@ -62,3 +62,14 @@ class ColumnPostInfo(BaseModel):
     created_at: str
     updated_at: str
     published_at: str | None = None
+
+
+class ReviewResultData(BaseModel):
+    application: ColumnApplicationInfo
+    column: ColumnInfo | None = None
+
+
+class ColumnPlanData(BaseModel):
+    status: str
+    tables: dict
+    next_steps: list[str]

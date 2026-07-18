@@ -44,3 +44,7 @@ class ProfileInfo(BaseModel):
 class ProfileUpdate(BaseModel):
     nickname: str | None = None
     avatar: str | None = None
+
+
+class UserIdData(BaseModel):
+    user_id: int

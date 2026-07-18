@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 
 from app.core.err import BizError, ErrCode, respond
 from app.db.session import getdb
-from app.modules.auth.schemas import ProfileUpdate, UserLoginInfo, UserRegInfo
+from app.modules.auth.schemas import ProfileInfo, ProfileUpdate, UserIdData, UserLoginInfo, UserRegInfo
 from app.modules.auth.security import get_current_user_id
 from app.modules.auth.service import get_profile, login, register, update_profile
 from app.modules.common import ApiResp
@@ -10,7 +10,7 @@ from app.modules.common import ApiResp
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/reg", response_model=ApiResp)
+@router.post("/reg", response_model=ApiResp[UserIdData])
 @respond
 def reg(user: UserRegInfo):
     with getdb() as conn:
@@ -18,7 +18,7 @@ def reg(user: UserRegInfo):
     return {"user_id": user_id}
 
 
-@router.post("/login", response_model=ApiResp)
+@router.post("/login", response_model=ApiResp[UserIdData])
 @respond
 def login_route(user: UserLoginInfo):
     with getdb() as conn:
@@ -26,7 +26,7 @@ def login_route(user: UserLoginInfo):
     return {"user_id": user_id}
 
 
-@router.get("/{user_id}", response_model=ApiResp)
+@router.get("/{user_id}", response_model=ApiResp[ProfileInfo])
 @respond
 def get_user(user_id: int):
     with getdb() as conn:
@@ -34,7 +34,7 @@ def get_user(user_id: int):
     return profile.model_dump()
 
 
-@router.put("/{user_id}/profile", response_model=ApiResp)
+@router.put("/{user_id}/profile", response_model=ApiResp[ProfileInfo])
 @respond
 def edit_profile(user_id: int, info: ProfileUpdate, cur: int = Depends(get_current_user_id)):
     if cur != user_id:

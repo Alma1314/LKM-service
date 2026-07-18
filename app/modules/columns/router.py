@@ -4,8 +4,13 @@ from app.core.err import respond
 from app.db.session import getdb
 from app.modules.columns.schemas import (
     ColumnApplicationCreate,
+    ColumnApplicationInfo,
     ColumnApplicationReview,
+    ColumnInfo,
+    ColumnPlanData,
     ColumnPostCreate,
+    ColumnPostInfo,
+    ReviewResultData,
 )
 from app.modules.columns.service import (
     create_application,
@@ -19,7 +24,7 @@ from app.modules.columns.service import (
     list_posts,
     review_application,
 )
-from app.modules.common import ApiResp, ModuleStatus
+from app.modules.common import ApiResp, ListData, ModuleStatus
 
 router = APIRouter(prefix="/columns", tags=["columns"])
 
@@ -38,13 +43,13 @@ def columns_status() -> ModuleStatus:
     )
 
 
-@router.get("/plan", response_model=ApiResp)
+@router.get("/plan", response_model=ApiResp[ColumnPlanData])
 @respond
 def column_plan():
     return get_column_plan()
 
 
-@router.post("/applications", response_model=ApiResp)
+@router.post("/applications", response_model=ApiResp[ColumnApplicationInfo])
 @respond
 def apply_column(info: ColumnApplicationCreate):
     with getdb() as conn:
@@ -52,7 +57,7 @@ def apply_column(info: ColumnApplicationCreate):
     return application.model_dump()
 
 
-@router.get("/applications", response_model=ApiResp)
+@router.get("/applications", response_model=ApiResp[ListData[ColumnApplicationInfo]])
 @respond
 def get_applications():
     with getdb() as conn:
@@ -60,7 +65,7 @@ def get_applications():
     return {"items": [item.model_dump() for item in applications]}
 
 
-@router.get("/applications/{application_id}", response_model=ApiResp)
+@router.get("/applications/{application_id}", response_model=ApiResp[ColumnApplicationInfo])
 @respond
 def get_application_detail(application_id: int):
     with getdb() as conn:
@@ -68,14 +73,14 @@ def get_application_detail(application_id: int):
     return application.model_dump()
 
 
-@router.post("/applications/{application_id}/review", response_model=ApiResp)
+@router.post("/applications/{application_id}/review", response_model=ApiResp[ReviewResultData])
 @respond
 def review_column_application(application_id: int, info: ColumnApplicationReview):
     with getdb() as conn:
         return review_application(conn, application_id, info)
 
 
-@router.get("", response_model=ApiResp)
+@router.get("", response_model=ApiResp[ListData[ColumnInfo]])
 @respond
 def get_columns():
     with getdb() as conn:
@@ -83,7 +88,7 @@ def get_columns():
     return {"items": [item.model_dump() for item in columns]}
 
 
-@router.get("/{column_id}", response_model=ApiResp)
+@router.get("/{column_id}", response_model=ApiResp[ColumnInfo])
 @respond
 def get_column_detail(column_id: int):
     with getdb() as conn:
@@ -91,7 +96,7 @@ def get_column_detail(column_id: int):
     return column.model_dump()
 
 
-@router.post("/{column_id}/posts", response_model=ApiResp)
+@router.post("/{column_id}/posts", response_model=ApiResp[ColumnPostInfo])
 @respond
 def publish_column_post(column_id: int, info: ColumnPostCreate):
     with getdb() as conn:
@@ -99,7 +104,7 @@ def publish_column_post(column_id: int, info: ColumnPostCreate):
     return post.model_dump()
 
 
-@router.get("/{column_id}/posts", response_model=ApiResp)
+@router.get("/{column_id}/posts", response_model=ApiResp[ListData[ColumnPostInfo]])
 @respond
 def get_column_posts(column_id: int):
     with getdb() as conn:
@@ -107,7 +112,7 @@ def get_column_posts(column_id: int):
     return {"items": [item.model_dump() for item in posts]}
 
 
-@router.get("/{column_id}/posts/{post_id}", response_model=ApiResp)
+@router.get("/{column_id}/posts/{post_id}", response_model=ApiResp[ColumnPostInfo])
 @respond
 def get_column_post_detail(column_id: int, post_id: int):
     with getdb() as conn:
