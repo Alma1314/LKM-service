@@ -24,6 +24,7 @@
 │       │   ├── security.py  # hashpwd, verifypwd
 │       │   └── service.py   # register, login 业务逻辑
 │       ├── boards/
+│       ├── columns/         # 专栏申请、专栏、专栏文章框架
 │       └── health/
 ├── tests/test_auth.py
 ├── pyproject.toml
@@ -40,6 +41,17 @@ POST /api/v1/auth/login            # 登录
 GET  /api/v1/auth/{user_id}        # 用户展示信息
 PUT  /api/v1/auth/{user_id}/profile # 更新展示信息
 GET  /api/v1/boards/status         # 板块状态
+GET  /api/v1/columns/status        # 专栏模块状态
+GET  /api/v1/columns/plan          # 专栏数据表和开发计划
+POST /api/v1/columns/applications # 提交专栏申请
+GET  /api/v1/columns/applications # 专栏申请列表
+GET  /api/v1/columns/applications/{application_id} # 专栏申请详情
+POST /api/v1/columns/applications/{application_id}/review # 审核专栏申请
+GET  /api/v1/columns              # 专栏列表
+GET  /api/v1/columns/{column_id}  # 专栏详情
+POST /api/v1/columns/{column_id}/posts # 发布专栏文章
+GET  /api/v1/columns/{column_id}/posts # 专栏文章列表
+GET  /api/v1/columns/{column_id}/posts/{post_id} # 专栏文章详情
 ```
 
 ## 错误处理
@@ -53,6 +65,7 @@ GET  /api/v1/boards/status         # 板块状态
 ## 技术选型
 
 - **`users` / `profiles` 分表**：注册信息和展示信息独立存储，注册时自动创建空 profile。
+- **`columns` 最小业务闭环**：当前已支持专栏申请、审核通过后自动创建专栏、专栏列表/详情、专栏文章发布/列表/详情；暂不接角色权限。
 
 ## 运行
 
