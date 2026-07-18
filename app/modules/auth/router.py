@@ -1,8 +1,9 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-from app.core.err import respond
+from app.core.err import BizError, ErrCode, respond
 from app.db.session import getdb
 from app.modules.auth.schemas import ProfileUpdate, UserLoginInfo, UserRegInfo
+from app.modules.auth.security import get_current_user_id
 from app.modules.auth.service import get_profile, login, register, update_profile
 from app.modules.common import ApiResp
 
@@ -35,7 +36,9 @@ def get_user(user_id: int):
 
 @router.put("/{user_id}/profile", response_model=ApiResp)
 @respond
-def edit_profile(user_id: int, info: ProfileUpdate):
+def edit_profile(user_id: int, info: ProfileUpdate, cur: int = Depends(get_current_user_id)):
+    if cur != user_id:
+        raise BizError(ErrCode.FORBIDDEN)
     with getdb() as conn:
         update_profile(conn, user_id, info)
         profile = get_profile(conn, user_id)
