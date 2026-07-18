@@ -54,6 +54,24 @@ GET  /api/v1/columns/{column_id}/posts # 专栏文章列表
 GET  /api/v1/columns/{column_id}/posts/{post_id} # 专栏文章详情
 ```
 
+## 响应结构
+
+普通业务接口统一返回 `ApiResp`：
+
+```json
+{
+  "code": 0,
+  "msg": "OK",
+  "data": {}
+}
+```
+
+错误响应也使用同一结构，`code` 为业务错误码，`msg` 为错误说明，HTTP 状态码由 `ERRTABLE` 映射。
+
+模块状态接口（如 `/api/v1/boards/status`、`/api/v1/columns/status`）直接返回 `ModuleStatus`，包含 `module`、`status`、`responsibility`、`next_steps`。
+
+根路径 `/` 不走统一响应结构，仅返回 `{"message": "OK"}`。
+
 ## 错误处理
 
 `ERRTABLE` 集中映射错误码 → HTTP 状态 + 默认消息。`@respond` 装饰器动态包装返回值：
