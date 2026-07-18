@@ -1,0 +1,19 @@
+health:
+  get:
+    tags: [health]
+    summary: 健康检查
+    operationId: healthCheck
+    responses:
+      "200":
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code: { type: integer, example: 0 }
+                msg: { type: string, example: "OK" }
+                data:
+                  type: object
+                  properties:
+                    status: { type: string, example: "ok" }
