@@ -11,6 +11,7 @@ class ErrCode(IntEnum):
     ALREADY_REGISTERED = 1002
     INVALID_CREDENTIALS = 1003
     USER_NOT_FOUND = 1004
+    FORBIDDEN = 1005
     COLUMN_APPLICATION_NOT_FOUND = 2001
     COLUMN_NOT_FOUND = 2002
     COLUMN_POST_NOT_FOUND = 2003
@@ -23,6 +24,7 @@ ERRTABLE: dict[ErrCode, tuple[int, str]] = {
     ErrCode.ALREADY_REGISTERED:  (400, "Username or email already registered"),
     ErrCode.INVALID_CREDENTIALS: (401, "Invalid username or password"),
     ErrCode.USER_NOT_FOUND:      (401, "User not found"),
+    ErrCode.FORBIDDEN:           (403, "Forbidden"),
     ErrCode.COLUMN_APPLICATION_NOT_FOUND: (404, "Column application not found"),
     ErrCode.COLUMN_NOT_FOUND:             (404, "Column not found"),
     ErrCode.COLUMN_POST_NOT_FOUND:        (404, "Column post not found"),
