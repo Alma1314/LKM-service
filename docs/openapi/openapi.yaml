@@ -1,0 +1,59 @@
+openapi: "3.1.0"
+info:
+  title: LKM-service API
+  version: "0.0.1"
+
+servers:
+  - url: http://localhost:8000/api/v1
+    description: 本地开发
+
+tags:
+  - name: auth
+    description: 注册、登录、个人资料
+  - name: columns
+    description: 专栏申请、审核、发文
+  - name: boards
+    description: 分科板块
+
+paths:
+  /health:
+    $ref: "paths/health.yaml#/health"
+
+  /auth/reg:
+    $ref: "paths/auth.yaml#/reg"
+  /auth/login:
+    $ref: "paths/auth.yaml#/login"
+  /auth/{user_id}:
+    $ref: "paths/auth.yaml#/profile"
+  /auth/{user_id}/profile:
+    $ref: "paths/auth.yaml#/editProfile"
+
+  /boards/status:
+    $ref: "paths/boards.yaml#/status"
+
+  /columns/status:
+    $ref: "paths/columns.yaml#/status"
+  /columns/plan:
+    $ref: "paths/columns.yaml#/plan"
+  /columns/applications:
+    $ref: "paths/columns.yaml#/applications"
+  /columns/applications/{application_id}:
+    $ref: "paths/columns.yaml#/applicationDetail"
+  /columns/applications/{application_id}/review:
+    $ref: "paths/columns.yaml#/review"
+  /columns:
+    $ref: "paths/columns.yaml#/columns"
+  /columns/{column_id}:
+    $ref: "paths/columns.yaml#/columnDetail"
+  /columns/{column_id}/posts:
+    $ref: "paths/columns.yaml#/posts"
+  /columns/{column_id}/posts/{post_id}:
+    $ref: "paths/columns.yaml#/postDetail"
+
+components:
+  securitySchemes:
+    UserIdHeader:
+      type: apiKey
+      in: header
+      name: X-User-Id
+      description: 当前用户 ID
