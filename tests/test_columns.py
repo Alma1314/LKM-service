@@ -1,9 +1,9 @@
-import sqlite3
-
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from app.core.err import BizError, ErrCode
-from app.db.init_db import init_db
+from app.db.models import Base
 from app.modules.auth.schemas import UserRegInfo
 from app.modules.auth.service import register
 from app.modules.columns.models import ColumnApplicationStatus
@@ -25,25 +25,29 @@ from app.modules.columns.service import (
 )
 
 
-# 使用内存数据库，让每个测试都从干净表结构开始。
-# 这样测试不会依赖本地开发库 lkm.db。
 @pytest.fixture
-def conn():
-    c = sqlite3.connect(":memory:")
-    c.row_factory = sqlite3.Row
-    init_db(c)
-    return c
+def db():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    SessionLocal: sessionmaker = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
-# 当前还没有请求头身份校验，所以 columns 测试先显式传 user_id。
-def _user(conn, username="alice", email="alice@example.com"):
-    return register(conn, UserRegInfo(username=username, email=email, password="secret123"))
+def _user(db, username="alice", email="alice@example.com"):
+    return register(db, UserRegInfo(username=username, email=email, password="secret123")) # type: ignore[arg-type]
 
 
-# 构造一个待审核的专栏申请，复用正常申请流程。
-def _application(conn, user_id=1):
+def _application(db, user_id=1):
     return create_application(
-        conn,
+        db,
         ColumnApplicationCreate(
             user_id=user_id,
             title="数学思维训练",
@@ -53,11 +57,10 @@ def _application(conn, user_id=1):
     )
 
 
-# 审核通过后应当为申请创建且只创建一个 active 专栏。
-def _approved_column(conn, user_id=1):
-    application = _application(conn, user_id=user_id)
+def _approved_column(db, user_id=1):
+    application = _application(db, user_id=user_id)
     result = review_application(
-        conn,
+        db,
         application.id,
         ColumnApplicationReview(
             reviewer_id=user_id,
@@ -68,10 +71,9 @@ def _approved_column(conn, user_id=1):
     return result["column"]
 
 
-# 文章必须隶属于某个专栏，因此测试 helper 始终传入 column_id。
-def _post(conn, column_id=1, author_id=1):
+def _post(db, column_id=1, author_id=1):
     return create_post(
-        conn,
+        db,
         column_id,
         ColumnPostCreate(
             author_id=author_id,
@@ -83,48 +85,46 @@ def _post(conn, column_id=1, author_id=1):
 
 
 class TestColumnApplications:
-    # 创建申请是专栏业务流程的第一步。
-    def should_create_application(self, conn):
-        user_id = _user(conn)
+    def should_create_application(self, db):
+        user_id = _user(db)
 
-        application = _application(conn, user_id=user_id)
+        application = _application(db, user_id=user_id)
 
         assert application.id == 1
         assert application.user_id == user_id
         assert application.status == ColumnApplicationStatus.PENDING
 
-    def should_list_applications(self, conn):
-        user_id = _user(conn)
-        _application(conn, user_id=user_id)
+    def should_list_applications(self, db):
+        user_id = _user(db)
+        _application(db, user_id=user_id)
 
-        applications = list_applications(conn)
+        applications = list_applications(db)
 
         assert len(applications) == 1
         assert applications[0].title == "数学思维训练"
 
-    def should_get_application(self, conn):
-        user_id = _user(conn)
-        application = _application(conn, user_id=user_id)
+    def should_get_application(self, db):
+        user_id = _user(db)
+        application = _application(db, user_id=user_id)
 
-        found = get_application(conn, application.id)
+        found = get_application(db, application.id)
 
         assert found.id == application.id
 
-    def should_reject_nonexistent_application(self, conn):
+    def should_reject_nonexistent_application(self, db):
         with pytest.raises(BizError) as exc:
-            get_application(conn, 999)
+            get_application(db, 999)
 
         assert exc.value.errcode == ErrCode.COLUMN_APPLICATION_NOT_FOUND
 
 
 class TestColumnReview:
-    # 最小审核流程：只有审核通过后才真正生成专栏。
-    def should_create_column_when_application_is_approved(self, conn):
-        user_id = _user(conn)
-        application = _application(conn, user_id=user_id)
+    def should_create_column_when_application_is_approved(self, db):
+        user_id = _user(db)
+        application = _application(db, user_id=user_id)
 
         result = review_application(
-            conn,
+            db,
             application.id,
             ColumnApplicationReview(
                 reviewer_id=user_id,
@@ -137,12 +137,12 @@ class TestColumnReview:
         assert result["column"]["owner_id"] == user_id
         assert result["column"]["application_id"] == application.id
 
-    def should_not_create_column_when_application_is_rejected(self, conn):
-        user_id = _user(conn)
-        application = _application(conn, user_id=user_id)
+    def should_not_create_column_when_application_is_rejected(self, db):
+        user_id = _user(db)
+        application = _application(db, user_id=user_id)
 
         result = review_application(
-            conn,
+            db,
             application.id,
             ColumnApplicationReview(
                 reviewer_id=user_id,
@@ -153,97 +153,97 @@ class TestColumnReview:
 
         assert result["application"]["status"] == ColumnApplicationStatus.REJECTED
         assert result["column"] is None
-        assert list_columns(conn) == []
+        assert list_columns(db) == []
 
-    def should_not_duplicate_column_when_approving_twice(self, conn):
-        user_id = _user(conn)
-        application = _application(conn, user_id=user_id)
+    def should_not_duplicate_column_when_approving_twice(self, db):
+        user_id = _user(db)
+        application = _application(db, user_id=user_id)
         review = ColumnApplicationReview(
             reviewer_id=user_id,
             status=ColumnApplicationStatus.APPROVED,
         )
 
-        first = review_application(conn, application.id, review)
-        second = review_application(conn, application.id, review)
+        first = review_application(db, application.id, review)
+        second = review_application(db, application.id, review)
 
         assert first["column"]["id"] == second["column"]["id"]
-        assert len(list_columns(conn)) == 1
+        assert len(list_columns(db)) == 1
 
 
 class TestColumns:
-    def should_list_columns(self, conn):
-        user_id = _user(conn)
-        _approved_column(conn, user_id=user_id)
+    def should_list_columns(self, db):
+        user_id = _user(db)
+        _approved_column(db, user_id=user_id)
 
-        columns = list_columns(conn)
+        columns = list_columns(db)
 
         assert len(columns) == 1
         assert columns[0].title == "数学思维训练"
 
-    def should_get_column(self, conn):
-        user_id = _user(conn)
-        column = _approved_column(conn, user_id=user_id)
+    def should_get_column(self, db):
+        user_id = _user(db)
+        column = _approved_column(db, user_id=user_id)
 
-        found = get_column(conn, column["id"])
+        found = get_column(db, column["id"])
 
         assert found.id == column["id"]
 
-    def should_reject_nonexistent_column(self, conn):
+    def should_reject_nonexistent_column(self, db):
         with pytest.raises(BizError) as exc:
-            get_column(conn, 999)
+            get_column(db, 999)
 
         assert exc.value.errcode == ErrCode.COLUMN_NOT_FOUND
 
 
 class TestColumnPosts:
-    # 文章只能发布到已经存在的专栏下。
-    def should_create_post(self, conn):
-        user_id = _user(conn)
-        column = _approved_column(conn, user_id=user_id)
+    def should_create_post(self, db):
+        user_id = _user(db)
+        column = _approved_column(db, user_id=user_id)
 
-        post = _post(conn, column_id=column["id"], author_id=user_id)
+        post = _post(db, column_id=column["id"], author_id=user_id)
 
         assert post.id == 1
         assert post.column_id == column["id"]
         assert post.author_id == user_id
         assert post.status == "published"
 
-    def should_list_posts_under_column(self, conn):
-        user_id = _user(conn)
-        column = _approved_column(conn, user_id=user_id)
-        _post(conn, column_id=column["id"], author_id=user_id)
+    def should_list_posts_under_column(self, db):
+        user_id = _user(db)
+        column = _approved_column(db, user_id=user_id)
+        _post(db, column_id=column["id"], author_id=user_id)
 
-        posts = list_posts(conn, column["id"])
+        posts = list_posts(db, column["id"])
 
         assert len(posts) == 1
         assert posts[0].title == "如何建立函数思想"
 
-    def should_get_post_with_column_scope(self, conn):
-        user_id = _user(conn)
-        column = _approved_column(conn, user_id=user_id)
-        post = _post(conn, column_id=column["id"], author_id=user_id)
+    def should_get_post_with_column_scope(self, db):
+        user_id = _user(db)
+        column = _approved_column(db, user_id=user_id)
+        post = _post(db, column_id=column["id"], author_id=user_id)
 
-        found = get_post(conn, post.id, column_id=column["id"])
+        found = get_post(db, post.id, column_id=column["id"])
 
         assert found.id == post.id
 
-    def should_reject_post_from_wrong_column_scope(self, conn):
-        user_id = _user(conn)
-        column = _approved_column(conn, user_id=user_id)
-        post = _post(conn, column_id=column["id"], author_id=user_id)
+    def should_reject_post_from_wrong_column_scope(self, db):
+        user_id = _user(db)
+        column = _approved_column(db, user_id=user_id)
+        post = _post(db, column_id=column["id"], author_id=user_id)
 
         with pytest.raises(BizError) as exc:
-            get_post(conn, post.id, column_id=999)
+            get_post(db, post.id, column_id=999)
 
         assert exc.value.errcode == ErrCode.COLUMN_POST_NOT_FOUND
 
-    def should_reject_post_for_nonexistent_column(self, conn):
-        user_id = _user(conn)
+    def should_reject_post_for_nonexistent_column(self, db):
+        user_id = _user(db)
 
         with pytest.raises(BizError) as exc:
-            _post(conn, column_id=999, author_id=user_id)
+            _post(db, column_id=999, author_id=user_id)
 
         assert exc.value.errcode == ErrCode.COLUMN_NOT_FOUND
+
 
 def should_test():
     pass
