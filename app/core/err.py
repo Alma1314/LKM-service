@@ -38,7 +38,7 @@ class BizError(Exception):
         self.detail = detail or ERRTABLE[errcode][1]
 
 
-def map_err(exc: Exception) -> tuple[int, int, str]:
+def map_err(exc: Exception) -> tuple[int, ErrCode, str]:
     if isinstance(exc, BizError):
         status, _ = ERRTABLE[exc.errcode]
         return status, exc.errcode, exc.detail

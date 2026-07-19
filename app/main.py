@@ -11,9 +11,11 @@ from app.db.init_db import init_db
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     init_db()
-    yield
+    yield  # type: ignore[redefined-outer-name]
+    from app.db.session import dispose_engine
+    dispose_engine()
 
 
 def create_app() -> FastAPI:
