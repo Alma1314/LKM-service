@@ -23,11 +23,16 @@ from app.modules.columns.service import (
     list_posts,
     review_application,
 )
+#以下是为user请求头校验新增的导入
+from fastapi.testclient import TestClient
+from app.main import app
+from app.db.session import get_session
+from sqlalchemy.pool import StaticPool
 
 
 @pytest.fixture
 def db():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},poolclass=StaticPool)
     Base.metadata.create_all(bind=engine)
     SessionLocal: sessionmaker = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = SessionLocal()
@@ -39,6 +44,22 @@ def db():
         raise
     finally:
         session.close()
+
+@pytest.fixture
+def client(db):
+    def override_get_session():
+        try:
+            yield db
+        finally:
+            pass
+
+    app.dependency_overrides[get_session] = override_get_session
+    
+    try:
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        app.dependency_overrides.clear()
 
 
 def _user(db, username="alice", email="alice@example.com"):
@@ -243,7 +264,52 @@ class TestColumnPosts:
             _post(db, column_id=999, author_id=user_id)
 
         assert exc.value.errcode == ErrCode.COLUMN_NOT_FOUND
+class TestColumnRoutes:
+    def should_reject_application_without_user_header(self, client, db):
+        application_data = {
+            "user_id": 1,
+            "title": "数学思维训练",
+            "description": "面向高中生的数学思维和解题方法专栏。",
+            "reason": "希望长期整理数学学习笔记。",
+        }
 
+        response = client.post(
+            "/api/v1/columns/applications", 
+            json=application_data)
+
+        assert response.status_code == 422
+        assert response.json()["code"] == 1001
+
+    def should_reject_application_when_header_user_mismatches_body_user(self, client):
+        resp = client.post(
+            "/api/v1/columns/applications",
+            headers={"X-User-Id": "2"},
+            json={
+                "user_id": 1,
+                "title": "数学专栏",
+                "description": "整理数学学习内容。",
+                "reason": "长期输出学习笔记。",
+            },
+        )
+
+        assert resp.status_code == 403
+        assert resp.json()["code"] == 1005
+
+    def should_accept_application_when_header_user_matches_body_user(self, client):
+        resp = client.post(
+            "/api/v1/columns/applications",
+            headers={"X-User-Id": "1"},
+            json={
+                "user_id": 1,
+                "title": "数学专栏",
+                "description": "整理数学学习内容。",
+                "reason": "长期输出学习笔记。",
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["code"] == 0
+        assert resp.json()["data"]["user_id"] == 1
 
 def should_test():
     pass
