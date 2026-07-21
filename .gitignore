@@ -8,10 +8,13 @@ wheels/
 
 # Virtual environments
 .venv
+.idea
 
 # Development environment files
 .env
 DeveloperLog.md
+AUTH_DESIGN.md
+SQLALCHEMY_MIGRATION.md
 
 # database when developing locally
 lkm.db

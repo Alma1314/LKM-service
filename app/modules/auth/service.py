@@ -1,76 +1,55 @@
-import sqlite3
+from sqlalchemy.orm import Session
 
 from app.core.err import BizError, ErrCode
+from app.db.models import Profile, User
 from app.modules.auth.schemas import ProfileInfo, ProfileUpdate, UserLoginInfo, UserRegInfo
 from app.modules.auth.security import hashpwd, verifypwd
 
 
-def register(conn: sqlite3.Connection, info: UserRegInfo) -> int:
-    cur = conn.execute(
-        "SELECT id FROM users WHERE username = ? OR email = ?",
-        (info.username, info.email),
+def register(db: Session, info: UserRegInfo) -> int:
+    existing = (
+        db.query(User)
+        .filter((User.username == info.username) | (User.email == info.email))
+        .first()
     )
-    if cur.fetchone():
+    if existing:
         raise BizError(ErrCode.ALREADY_REGISTERED)
 
-    hashed = hashpwd(info.password)
-    cur = conn.execute(
-        "INSERT INTO users (username, email, hpwd) VALUES (?, ?, ?)",
-        (info.username, info.email, hashed),
-    )
-    user_id = cur.lastrowid
-    conn.execute("INSERT INTO profiles (user_id) VALUES (?)", (user_id,))
-    return user_id
+    user = User(username=info.username, email=info.email, hashed_password=hashpwd(info.password))
+    db.add(user)
+    db.flush()
+
+    db.add(Profile(user_id=user.id))
+    db.flush()
+    return user.id
 
 
-def login(conn: sqlite3.Connection, info: UserLoginInfo) -> int:
-    row = conn.execute(
-        "SELECT id, hpwd FROM users WHERE username = ?",
-        (info.username,),
-    ).fetchone()
-
-    if not row:
+def login(db: Session, info: UserLoginInfo) -> int:
+    user = db.query(User).filter(User.username == info.username).first()
+    if not user:
         raise BizError(ErrCode.USER_NOT_FOUND)
-
-    if not verifypwd(info.password, row["hpwd"]):
+    if not verifypwd(info.password, user.hashed_password): # type: ignore[arg-type]
         raise BizError(ErrCode.INVALID_CREDENTIALS)
+    return user.id # type: ignore[return-value]
 
-    return row["id"]
 
-
-def get_profile(conn: sqlite3.Connection, user_id: int) -> ProfileInfo:
-    row = conn.execute(
-        "SELECT p.nickname, p.avatar, p.role, u.username "
-        "FROM profiles p JOIN users u ON u.id = p.user_id "
-        "WHERE p.user_id = ?",
-        (user_id,),
-    ).fetchone()
-
-    if not row:
+def get_profile(db: Session, user_id: int) -> ProfileInfo:
+    profile = db.query(Profile).filter(Profile.user_id == user_id).first()
+    if not profile:
         raise BizError(ErrCode.USER_NOT_FOUND)
+    return ProfileInfo(
+        nickname=profile.nickname,  # type: ignore[arg-type]
+        avatar=profile.avatar,  # type: ignore[arg-type]
+        role=profile.role,  # type: ignore[arg-type]
+    )
 
-    return ProfileInfo(nickname=row["nickname"], avatar=row["avatar"], role=row["role"])
 
-
-def update_profile(conn: sqlite3.Connection, user_id: int, info: ProfileUpdate) -> None:
-    row = conn.execute(
-        "SELECT user_id FROM profiles WHERE user_id = ?", (user_id,)
-    ).fetchone()
-
-    if not row:
+def update_profile(db: Session, user_id: int, info: ProfileUpdate) -> None:
+    profile = db.query(Profile).filter(Profile.user_id == user_id).first()
+    if not profile:
         raise BizError(ErrCode.USER_NOT_FOUND)
-
-    fields = []
-    vals = []
-    for key in ("nickname", "avatar"):
-        val = getattr(info, key)
-        if val is not None:
-            fields.append(f"{key} = ?")
-            vals.append(val)
-
-    if fields:
-        vals.append(user_id)
-        conn.execute(
-            f"UPDATE profiles SET {', '.join(fields)} WHERE user_id = ?",
-            vals,
-        )
+    if info.nickname is not None:
+        profile.nickname = info.nickname
+    if info.avatar is not None:
+        profile.avatar = info.avatar
+    db.flush()
