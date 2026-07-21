@@ -1,6 +1,9 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.core.err import BizError,ErrCode,respond
+from app.modules.auth.security import get_current_user_id
+
 from app.core.err import respond
 from app.db.session import get_session
 from app.modules.columns.schemas import (
@@ -52,7 +55,13 @@ def column_plan():
 
 @router.post("/applications", response_model=ApiResp[ColumnApplicationInfo])
 @respond
-def apply_column(info: ColumnApplicationCreate, db: Session = Depends(get_session)):
+def apply_column(
+    info: ColumnApplicationCreate, 
+    cur: int =Depends(get_current_user_id),
+    db: Session = Depends(get_session)
+):
+    if cur != info.user_id:
+        raise BizError(ErrCode.FORBIDDEN)
     application = create_application(db, info)
     return application.model_dump()
 
@@ -76,8 +85,11 @@ def get_application_detail(application_id: int, db: Session = Depends(get_sessio
 def review_column_application(
     application_id: int,
     info: ColumnApplicationReview,
+    cur: int = Depends(get_current_user_id),
     db: Session = Depends(get_session),
 ):
+    if cur != info.reviewer_id:
+        raise BizError(ErrCode.FORBIDDEN)
     return review_application(db, application_id, info)
 
 
@@ -97,7 +109,14 @@ def get_column_detail(column_id: int, db: Session = Depends(get_session)):
 
 @router.post("/{column_id}/posts", response_model=ApiResp[ColumnPostInfo])
 @respond
-def publish_column_post(column_id: int, info: ColumnPostCreate, db: Session = Depends(get_session)):
+def publish_column_post(
+    column_id: int, 
+    info: ColumnPostCreate, 
+    cur: int = Depends(get_current_user_id),
+    db: Session = Depends(get_session)
+):
+    if cur != info.author_id:
+        raise BizError(ErrCode.FORBIDDEN)
     post = create_post(db, column_id, info)
     return post.model_dump()
 
