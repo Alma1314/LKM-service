@@ -1,5 +1,5 @@
-"""Global pytest fixtures and configuration."""
+"""全局 pytest fixtures 和配置。"""
 import os
 
-# Ensure tests always run with the test flag to allow weak JWT secrets
+# 确保测试始终以 test 标志运行，允许弱 JWT 密钥
 os.environ["PYTEST_RUNNING"] = "1"

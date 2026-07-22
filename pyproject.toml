@@ -15,11 +15,16 @@ dependencies = [
     "cryptography>=43.0.0",
     "httpx>=0.28.0",
     "cbor2>=5.6.0",
+    "httpx2>=2.7.0",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 python_functions = ["test_*", "should_*"]
+filterwarnings = [
+    "error",
+    "ignore::ResourceWarning",
+]
 
 [dependency-groups]
 dev = [
