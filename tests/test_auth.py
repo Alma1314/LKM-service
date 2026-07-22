@@ -4,6 +4,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.err import BizError, ErrCode
 from app.db.models import Base
+import app.modules.auth.models  # noqa: F401 ensure auth tables registered
 from app.modules.auth.schemas import ProfileUpdate, UserLoginInfo, UserRegInfo
 from app.modules.auth.service import get_profile, login, register, update_profile
 
@@ -23,11 +24,11 @@ def db():
     finally:
         session.close()
 
-def _reg(db, username="alice", email="alice@example.com", password="secret123"):
+def _reg(db, username="alice", email="alice@example.com", password="secret123456"):
     return register(db, UserRegInfo(username=username, email=email, password=password)) # type: ignore[arg-type]
 
 
-def _login(db, username="alice", password="secret123"):
+def _login(db, username="alice", password="secret123456"):
     return login(db, UserLoginInfo(username=username, password=password))
 
 
@@ -71,7 +72,7 @@ class TestLogin:
         with pytest.raises(BizError) as exc:
             _login(db)
 
-        assert exc.value.errcode == ErrCode.USER_NOT_FOUND
+        assert exc.value.errcode == ErrCode.INVALID_CREDENTIALS
 
     def should_reject_wrong_password(self, db):
         _reg(db)

@@ -24,9 +24,12 @@ from app.modules.columns.service import (
     review_application,
 )
 #以下是为user请求头校验新增的导入
+import app.modules.auth.models  # noqa: F401 ensure auth tables registered
 from fastapi.testclient import TestClient
 from app.main import app
+from app.db.models import User
 from app.db.session import get_session
+from app.modules.auth.security import create_access_token
 from sqlalchemy.pool import StaticPool
 
 
@@ -63,7 +66,7 @@ def client(db):
 
 
 def _user(db, username="alice", email="alice@example.com"):
-    return register(db, UserRegInfo(username=username, email=email, password="secret123")) # type: ignore[arg-type]
+    return register(db, UserRegInfo(username=username, email=email, password="secret123456")) # type: ignore[arg-type]
 
 
 def _application(db, user_id=1):
@@ -265,7 +268,17 @@ class TestColumnPosts:
 
         assert exc.value.errcode == ErrCode.COLUMN_NOT_FOUND
 class TestColumnRoutes:
-    def should_reject_application_without_user_header(self, client, db):
+    def _setup_user(self, db):
+        """Create a user in DB and return (user_id, bearer_token)."""
+        from app.modules.auth.service import register
+        from app.modules.auth.schemas import UserRegInfo
+
+        user_id = register(db, UserRegInfo(username="testuser", email="test@example.com", password="secret123456"))
+        token = create_access_token(user_id=user_id, account_level="normal", role="member")
+        return user_id, token
+
+    def should_reject_application_without_auth_header(self, client, db):
+        self._setup_user(db)
         application_data = {
             "user_id": 1,
             "title": "数学思维训练",
@@ -274,18 +287,25 @@ class TestColumnRoutes:
         }
 
         response = client.post(
-            "/api/v1/columns/applications", 
+            "/api/v1/columns/applications",
             json=application_data)
 
-        assert response.status_code == 422
-        assert response.json()["code"] == 1001
+        assert response.status_code == 403
+        assert response.json()["code"] == 1005
 
-    def should_reject_application_when_header_user_mismatches_body_user(self, client):
+    def should_reject_application_when_token_user_mismatches_body_user(self, client, db):
+        user_id_1, token = self._setup_user(db)
+        # Create a second user so token for user_id=2 is valid
+        from app.modules.auth.service import register
+        from app.modules.auth.schemas import UserRegInfo
+
+        register(db, UserRegInfo(username="other", email="other@example.com", password="secret123456"))
+        token_2 = create_access_token(user_id=2, account_level="normal", role="member")
         resp = client.post(
             "/api/v1/columns/applications",
-            headers={"X-User-Id": "2"},
+            headers={"Authorization": f"Bearer {token_2}"},
             json={
-                "user_id": 1,
+                "user_id": user_id_1,
                 "title": "数学专栏",
                 "description": "整理数学学习内容。",
                 "reason": "长期输出学习笔记。",
@@ -295,12 +315,13 @@ class TestColumnRoutes:
         assert resp.status_code == 403
         assert resp.json()["code"] == 1005
 
-    def should_accept_application_when_header_user_matches_body_user(self, client):
+    def should_accept_application_when_token_user_matches_body_user(self, client, db):
+        user_id, token = self._setup_user(db)
         resp = client.post(
             "/api/v1/columns/applications",
-            headers={"X-User-Id": "1"},
+            headers={"Authorization": f"Bearer {token}"},
             json={
-                "user_id": 1,
+                "user_id": user_id,
                 "title": "数学专栏",
                 "description": "整理数学学习内容。",
                 "reason": "长期输出学习笔记。",
@@ -309,7 +330,7 @@ class TestColumnRoutes:
 
         assert resp.status_code == 200
         assert resp.json()["code"] == 0
-        assert resp.json()["data"]["user_id"] == 1
+        assert resp.json()["data"]["user_id"] == user_id
 
 def should_test():
     pass

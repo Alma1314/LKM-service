@@ -27,7 +27,8 @@ def register(db: Session, info: UserRegInfo) -> int:
 def login(db: Session, info: UserLoginInfo) -> int:
     user = db.query(User).filter(User.username == info.username).first()
     if not user:
-        raise BizError(ErrCode.USER_NOT_FOUND)
+        verifypwd(info.password, "$dummy$" + "a" * 64)
+        raise BizError(ErrCode.INVALID_CREDENTIALS)
     if not verifypwd(info.password, user.hashed_password): # type: ignore[arg-type]
         raise BizError(ErrCode.INVALID_CREDENTIALS)
     return user.id # type: ignore[return-value]

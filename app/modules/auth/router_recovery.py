@@ -1,0 +1,241 @@
+"""密码恢复路由。
+
+端点
+---------
+POST /auth/recover/check              – 检查可用的恢复方式
+POST /auth/recover/phone              – 发送手机验证码
+POST /auth/recover/phone/verify       – 通过手机号+验证码重置
+POST /auth/recover/email              – 发送邮箱验证码
+POST /auth/recover/email/verify       – 通过邮箱+验证码重置
+POST /auth/recover/magic-link         – 发送用于密码重置的魔法链接
+POST /auth/recover/magic-link/verify  – 通过魔法链接令牌重置
+"""
+
+import asyncio
+
+from fastapi import APIRouter, BackgroundTasks, Depends
+from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field, EmailStr
+
+from app.core.config import settings
+from app.core.err import respond
+from app.db.session import get_session
+from app.modules.auth import service_recovery
+from app.modules.auth.deps import get_email_provider, get_sms_provider
+from app.modules.auth.providers.base import EmailProvider, SmsProvider
+from app.modules.auth.service_auth import request_magic_link
+from app.modules.auth.service_verify import (
+    check_code_rate_limit,
+    create_email_verification,
+    create_phone_verification,
+)
+from app.modules.common import ApiResp
+
+router = APIRouter(prefix="/auth/recover", tags=["auth-recovery"])
+
+# 请求 Schema（仅限本模块）
+
+class RecoverCheckRequest(BaseModel):
+    account: str = Field(..., min_length=1)
+
+
+class RecoverPhoneRequest(BaseModel):
+    phone: str = Field(..., min_length=5, max_length=20)
+
+
+class RecoverPhoneVerifyRequest(BaseModel):
+    phone: str = Field(..., min_length=5, max_length=20)
+    code: str = Field(..., min_length=6, max_length=6)
+    # 此处不接受 new_password — recover_user_complete 步骤
+    # 在 2FA 验证通过后才接收密码
+    new_password: str | None = Field(None, min_length=12, deprecated=True)
+
+
+class RecoverEmailRequest(BaseModel):
+    email: EmailStr
+
+
+class RecoverEmailVerifyRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(..., min_length=6, max_length=6)
+    # 此处不接受 new_password — recover_user_complete 步骤
+    # 在 2FA 验证通过后才接收密码
+    new_password: str | None = Field(None, min_length=12, deprecated=True)
+
+
+class RecoverMagicLinkRequest(BaseModel):
+    email: EmailStr
+
+
+class RecoverMagicLinkVerifyRequest(BaseModel):
+    token: str = Field(..., min_length=1)
+    new_password: str | None = Field(None, min_length=12)
+
+@router.post("/check", response_model=ApiResp[dict])
+@respond
+def recover_check(info: RecoverCheckRequest, db: Session = Depends(get_session)):
+    return service_recovery.check_recovery_methods(db, info.account)
+
+
+@router.post("/phone", response_model=ApiResp[dict])
+@respond
+def recover_phone(info: RecoverPhoneRequest, db: Session = Depends(get_session)):
+    check_code_rate_limit(f"recover:phone:{info.phone}", max_count=5, window=3600)
+    code, _ = create_phone_verification(db, info.phone, "reset")
+    provider = get_sms_provider()
+    asyncio.create_task(provider.send_code(info.phone, code))
+    return {"message": "Verification code sent"}
+
+
+@router.post("/phone/verify", response_model=ApiResp[dict])
+@respond
+def recover_phone_verify(
+    info: RecoverPhoneVerifyRequest, db: Session = Depends(get_session)
+):
+    return service_recovery.recover_by_phone(
+        db, info.phone, info.code, info.new_password
+    )
+
+
+@router.post("/email", response_model=ApiResp[dict])
+@respond
+def recover_email(info: RecoverEmailRequest, db: Session = Depends(get_session)):
+    check_code_rate_limit(f"recover:email:{info.email}", max_count=5, window=3600)
+    code, _ = create_email_verification(db, info.email, "reset")
+    provider = get_email_provider()
+    asyncio.create_task(provider.send_code(info.email, code))
+    return {"message": "Verification code sent"}
+
+
+@router.post("/email/verify", response_model=ApiResp[dict])
+@respond
+def recover_email_verify(
+    info: RecoverEmailVerifyRequest, db: Session = Depends(get_session)
+):
+    return service_recovery.recover_by_email_code(
+        db, info.email, info.code, info.new_password
+    )
+
+
+@router.post("/magic-link", response_model=ApiResp[dict])
+@respond
+def recover_magic_link(
+    info: RecoverMagicLinkRequest,
+    db: Session = Depends(get_session),
+    email_provider: EmailProvider = Depends(get_email_provider),
+):
+    request_magic_link(
+        db,
+        info.email,
+        email_provider,
+        purpose="reset",
+        frontend_url=settings.frontend_callback,
+    )
+    return {"message": "If email exists, magic link sent"}
+
+
+@router.post("/magic-link/verify", response_model=ApiResp[dict])
+@respond
+def recover_magic_link_verify(
+    info: RecoverMagicLinkVerifyRequest, db: Session = Depends(get_session)
+):
+    return service_recovery.recover_by_magic_link(
+        db, info.token, info.new_password
+    )
+
+class RecoverUserVerifyTOTPRequest(BaseModel):
+    txn_id: str = Field(..., min_length=1)
+    temp_token: str = Field(..., min_length=1)
+
+
+class RecoverUserCompleteRequest(BaseModel):
+    txn_id: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=12)
+
+
+@router.post("/verify-totp", response_model=ApiResp[dict])
+@respond
+def recover_user_verify_totp(
+    info: RecoverUserVerifyTOTPRequest, db: Session = Depends(get_session)
+):
+    """确认用户恢复事务的 2FA。需要用户在完成 2FA 后从 /auth/2fa/verify 获取的 temp_token。"""
+    return service_recovery.recover_admin_verify_totp(db, info.txn_id, info.temp_token)
+
+
+@router.post("/complete", response_model=ApiResp[dict])
+@respond
+def recover_user_complete(
+    info: RecoverUserCompleteRequest, db: Session = Depends(get_session)
+):
+    """使用新密码完成用户恢复。需要已验证的联系方式+2FA。"""
+    return service_recovery.recover_user_complete(db, info.txn_id, info.new_password)
+
+class RecoverAdminRequest(BaseModel):
+    contact: str = Field(..., min_length=1, description="Email or phone of the admin")
+
+
+class RecoverAdminVerifyContactRequest(BaseModel):
+    txn_id: str = Field(..., min_length=1)
+    code: str = Field(..., min_length=6, max_length=6)
+
+
+class RecoverAdminVerifyTOTPRequest(BaseModel):
+    txn_id: str = Field(..., min_length=1)
+    temp_token: str = Field(..., min_length=1)
+
+
+class RecoverAdminCompleteRequest(BaseModel):
+    txn_id: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=12)
+
+
+@router.post("/admin/begin", response_model=ApiResp[dict])
+@respond
+def recover_admin_begin(
+    info: RecoverAdminRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_session),
+):
+    """第1步：发起管理员恢复。返回 txn_id 并在后台通过带外渠道发送验证码。"""
+    result = service_recovery.recover_admin_begin(db, info.contact)
+
+    # 通过后台任务进行带外发送（不阻塞响应）
+    if result.get("_send_code"):
+        contact = result.pop("_contact")
+        code = result.pop("_code")
+        result.pop("_send_code")
+        if "@" in contact:
+            provider = get_email_provider()
+            background_tasks.add_task(provider.send_code, contact, code)
+        else:
+            provider = get_sms_provider()
+            background_tasks.add_task(provider.send_code, contact, code)
+
+    return result
+
+
+@router.post("/admin/verify-contact", response_model=ApiResp[dict])
+@respond
+def recover_admin_verify_contact(
+    info: RecoverAdminVerifyContactRequest, db: Session = Depends(get_session)
+):
+    """第2步：验证联系方式验证码。返回用于 2FA 的 temp_token。"""
+    return service_recovery.recover_admin_verify_contact(db, info.txn_id, info.code)
+
+
+@router.post("/admin/verify-totp", response_model=ApiResp[dict])
+@respond
+def recover_admin_verify_totp(
+    info: RecoverAdminVerifyTOTPRequest, db: Session = Depends(get_session)
+):
+    """第3步：确认 2FA 已完成。需要从 /auth/2fa/verify 获取的 temp_token。"""
+    return service_recovery.recover_admin_verify_totp(db, info.txn_id, info.temp_token)
+
+
+@router.post("/admin/complete", response_model=ApiResp[dict])
+@respond
+def recover_admin_complete(
+    info: RecoverAdminCompleteRequest, db: Session = Depends(get_session)
+):
+    """第4步：设置新密码。需要前面所有步骤已完成。"""
+    return service_recovery.recover_admin_complete(db, info.txn_id, info.new_password)

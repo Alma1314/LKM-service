@@ -12,6 +12,27 @@ class ErrCode(IntEnum):
     INVALID_CREDENTIALS = 1003
     USER_NOT_FOUND = 1004
     FORBIDDEN = 1005
+    ACCOUNT_LOCKED = 1006
+    ACCOUNT_LEVEL_INSUFFICIENT = 1007
+    VERIFICATION_CODE_INVALID = 1008
+    VERIFICATION_CODE_EXPIRED = 1009
+    VERIFICATION_CODE_RATE_LIMIT = 1010
+    TOKEN_EXPIRED = 1011
+    TOKEN_INVALID = 1012
+    REFRESH_TOKEN_REVOKED = 1013
+    TOTP_NOT_ENABLED = 1101
+    TOTP_ALREADY_ENABLED = 1102
+    TOTP_SETUP_REQUIRED = 1103
+    TOTP_CODE_INVALID = 1104
+    RECOVERY_CODE_INVALID = 1105
+    RECOVERY_CODE_USED = 1106
+    OAUTH_CANCELED = 1201
+    OAUTH_PROVIDER_ERROR = 1202
+    OAUTH_EMAIL_TAKEN = 1203
+    PASSKEY_REGISTRATION_FAILED = 1301
+    PASSKEY_VERIFICATION_FAILED = 1302
+    RECOVERY_NOT_SUPPORTED = 1401
+    RECOVERY_METHOD_UNAVAILABLE = 1402
     COLUMN_APPLICATION_NOT_FOUND = 2001
     COLUMN_NOT_FOUND = 2002
     COLUMN_POST_NOT_FOUND = 2003
@@ -24,7 +45,28 @@ ERRTABLE: dict[ErrCode, tuple[int, str]] = {
     ErrCode.ALREADY_REGISTERED:  (400, "Username or email already registered"),
     ErrCode.INVALID_CREDENTIALS: (401, "Invalid username or password"),
     ErrCode.USER_NOT_FOUND:      (401, "User not found"),
-    ErrCode.FORBIDDEN:           (403, "Forbidden"),
+    ErrCode.FORBIDDEN:                    (403, "Forbidden"),
+    ErrCode.ACCOUNT_LOCKED:               (423, "Account is locked"),
+    ErrCode.ACCOUNT_LEVEL_INSUFFICIENT:   (403, "Account level insufficient"),
+    ErrCode.VERIFICATION_CODE_INVALID:    (400, "Verification code invalid"),
+    ErrCode.VERIFICATION_CODE_EXPIRED:    (400, "Verification code expired"),
+    ErrCode.VERIFICATION_CODE_RATE_LIMIT: (429, "Verification code rate limit exceeded"),
+    ErrCode.TOKEN_EXPIRED:                (401, "Token expired"),
+    ErrCode.TOKEN_INVALID:                (401, "Token invalid"),
+    ErrCode.REFRESH_TOKEN_REVOKED:        (401, "Refresh token revoked"),
+    ErrCode.TOTP_NOT_ENABLED:             (400, "TOTP not enabled"),
+    ErrCode.TOTP_ALREADY_ENABLED:         (400, "TOTP already enabled"),
+    ErrCode.TOTP_SETUP_REQUIRED:          (400, "TOTP setup required"),
+    ErrCode.TOTP_CODE_INVALID:            (400, "TOTP code invalid"),
+    ErrCode.RECOVERY_CODE_INVALID:        (400, "Recovery code invalid"),
+    ErrCode.RECOVERY_CODE_USED:           (400, "Recovery code already used"),
+    ErrCode.OAUTH_CANCELED:               (400, "OAuth login canceled"),
+    ErrCode.OAUTH_PROVIDER_ERROR:         (502, "OAuth provider error"),
+    ErrCode.OAUTH_EMAIL_TAKEN:            (409, "OAuth email already taken"),
+    ErrCode.PASSKEY_REGISTRATION_FAILED:  (400, "Passkey registration failed"),
+    ErrCode.PASSKEY_VERIFICATION_FAILED:  (400, "Passkey verification failed"),
+    ErrCode.RECOVERY_NOT_SUPPORTED:       (400, "Recovery not supported"),
+    ErrCode.RECOVERY_METHOD_UNAVAILABLE:  (400, "Recovery method unavailable"),
     ErrCode.COLUMN_APPLICATION_NOT_FOUND: (404, "Column application not found"),
     ErrCode.COLUMN_NOT_FOUND:             (404, "Column not found"),
     ErrCode.COLUMN_POST_NOT_FOUND:        (404, "Column post not found"),
@@ -69,12 +111,7 @@ def resp_json(errcode: ErrCode, *, data=None, detail=None):
 
 
 def respond(func):
-    """Decorator: wrap return value through ERRTABLE.
-
-    - bare dict/list/None -> OK + data
-    - (ErrCode, str)      -> given errcode, string as detail
-    - (ErrCode, dict)     -> given errcode, dict as data
-    """
+    """装饰器：将返回值通过 ERRTABLE 包装。 """
 
     if inspect.iscoroutinefunction(func):
         @functools.wraps(func)
