@@ -514,12 +514,6 @@ def login_code(db: Session, contact: str, code: str) -> dict:
 
     return _create_auth_response(db, user, requires_2fa=requires_2fa)
 
-
-# ---------------------------------------------------------------------------
-# 公开 API —— 魔法链接
-# ---------------------------------------------------------------------------
-
-
 def request_magic_link(
     db: Session,
     email: str,
@@ -570,8 +564,8 @@ def verify_magic_link(
     token: str,
     purpose: str = "login",
 ) -> dict:
-    """验证魔法链接令牌并返回认证响应。
-
+    """
+    验证魔法链接令牌并返回认证响应。
     可能抛出的异常：
         BizError(TOKEN_INVALID)  – 令牌未找到、用途不匹配或已被使用
         BizError(TOKEN_EXPIRED)  – 令牌已过期
@@ -645,12 +639,6 @@ def verify_magic_link(
 
     return _create_auth_response(db, user, requires_2fa=requires_2fa)
 
-
-# ---------------------------------------------------------------------------
-# 公开 API —— 升级
-# ---------------------------------------------------------------------------
-
-
 def upgrade_to_normal(db: Session, user: User) -> None:
     """将 ``local`` 用户升级为 ``normal``。对于已是 normal 或 admin 的用户无操作。"""
     if user.account_level == "local":
@@ -659,18 +647,7 @@ def upgrade_to_normal(db: Session, user: User) -> None:
         log_audit(db, user.id, "level_change", "local -> normal")
 
 
-# ---------------------------------------------------------------------------
-# 公开 API —— 刷新令牌
-# ---------------------------------------------------------------------------
-
-
 def refresh_access_token(db: Session, raw_refresh: str) -> dict:
-    """轮换刷新令牌：原子地撤销旧令牌，发放新的一对令牌。
-
-    使用带有 WHERE 条件的原子 UPDATE 来防止并发重放攻击。
-    令牌族通过 mfa_verified 标志得以保留。
-    """
-
     tok_hash = _hash_refresh_token(raw_refresh)
     now = _now()
 
@@ -721,12 +698,6 @@ def refresh_access_token(db: Session, raw_refresh: str) -> dict:
 
     return {"access_token": access_token, "refresh_token": raw_new}
 
-
-# ---------------------------------------------------------------------------
-# 公开 API —— 全部撤销
-# ---------------------------------------------------------------------------
-
-
 def revoke_all_refresh_tokens(db: Session, user_id: int) -> None:
     """撤销指定用户所有未撤销的刷新令牌，并使其所有访问令牌失效。"""
     db.query(RefreshToken).filter(
@@ -739,11 +710,6 @@ def revoke_all_refresh_tokens(db: Session, user_id: int) -> None:
         {"uid": user_id},
     )
     db.flush()
-
-
-# ---------------------------------------------------------------------------
-# 公开 API —— 审计日志
-# ---------------------------------------------------------------------------
 
 
 def log_audit(
