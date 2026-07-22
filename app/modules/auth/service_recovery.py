@@ -326,7 +326,7 @@ def recover_user_complete(
         ),
         {"tid": txn_id, "now": now},
     )
-    if result.rowcount != 1:
+    if result.rowcount != 1:  # pyright: ignore[reportAttributeAccessIssue]
         raise BizError(ErrCode.TOKEN_INVALID, "Recovery transaction invalid or already consumed")
 
     # 重新获取以得到 user_id
@@ -367,7 +367,7 @@ def recover_admin_complete(
         ),
         {"tid": txn_id, "now": now},
     )
-    if result.rowcount != 1:
+    if result.rowcount != 1:  # pyright: ignore[reportAttributeAccessIssue]
         raise BizError(ErrCode.TOKEN_INVALID, "Recovery transaction invalid or already consumed")
 
     from app.modules.auth.models import RecoveryTransaction

@@ -222,7 +222,7 @@ def verify_2fa(
             ),
             {"uid": user_id, "hash": code_hash},
         )
-        if result.rowcount != 1:
+        if result.rowcount != 1:  # pyright: ignore[reportAttributeAccessIssue]
             raise BizError(ErrCode.RECOVERY_CODE_INVALID)
         db.flush()
     elif code:
@@ -249,7 +249,7 @@ def verify_2fa(
             ),
             {"counter": actual_counter, "uid": user_id},
         )
-        if result.rowcount != 1:
+        if result.rowcount != 1:  # pyright: ignore[reportAttributeAccessIssue]
             raise BizError(ErrCode.TOTP_CODE_INVALID, "TOTP code already used")
         db.flush()
     else:
@@ -311,8 +311,9 @@ def disable_2fa(db: Session, user_id: int, code: str) -> dict:
 
     if level == "admin":
         user = db.query(User).filter(User.id == user_id).first()
-        user.account_level = "normal"
-        db.flush()
-        log_audit(db, user_id, "level_change", "admin -> normal (2FA disabled)")
+        if user:
+            user.account_level = "normal"
+            db.flush()
+            log_audit(db, user_id, "level_change", "admin -> normal (2FA disabled)")
 
     return {"message": "2FA disabled"}

@@ -272,11 +272,14 @@ def complete_passkey_registration(
 
         if x5c:
             try:
-                cert = x509.load_der_x509_certificate(x5c[0])
+                x5c_0: bytes = x5c[0]  # pyright: ignore[reportAssignmentType]
+                cert = x509.load_der_x509_certificate(x5c_0)
                 signed_data_part = auth_data_bytes + hashlib.sha256(
                     _b64decode(client_data_json_b64)
                 ).digest()
-                cert.public_key().verify(sig, signed_data_part, ec.ECDSA(hashes.SHA256()))
+                pubkey = cert.public_key()
+                if isinstance(pubkey, ec.EllipticCurvePublicKey):
+                    pubkey.verify(sig, signed_data_part, ec.ECDSA(hashes.SHA256()))  # pyright: ignore[reportArgumentType]
             except Exception:
                 raise BizError(ErrCode.PASSKEY_REGISTRATION_FAILED, "Attestation signature invalid")
 

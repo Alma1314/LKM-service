@@ -61,7 +61,7 @@ def setup_2fa_temp(
     if not user_id:
         raise BizError(ErrCode.TOKEN_INVALID)
 
-    # 原子性地声明设置令牌 — 只有一个 begin 调用会成功（R2-005）
+    # 原子性地声明设置令牌 — 只有一个 begin 调用会成功
     token_hash = hashlib.sha256(temp_token.encode()).hexdigest()
     expires_at = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=10)).isoformat()
 
@@ -113,7 +113,7 @@ def setup_2fa_complete_temp(
         ),
         {"hash": token_hash, "now": now},
     )
-    if result.rowcount != 1:
+    if result.rowcount != 1:  # pyright: ignore[reportAttributeAccessIssue]
         raise BizError(ErrCode.TOKEN_INVALID, "Setup token not found, already used, or expired")
 
     txn = db.query(SetupTransaction).filter(SetupTransaction.token_hash == token_hash).first()

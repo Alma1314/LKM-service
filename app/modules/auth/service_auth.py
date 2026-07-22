@@ -346,8 +346,10 @@ def _consume_pending_normal_registration(
     sp = db.begin_nested()
     try:
         if pending.email:
+            assert email_code is not None
             consume_email_code(db, pending.email, email_code, "register")
         if pending.phone:
+            assert phone_code is not None
             consume_phone_code(db, pending.phone, phone_code, "register")
         sp.commit()
     except Exception:
@@ -593,7 +595,7 @@ def verify_magic_link(
         ),
         {"hash": token_hash, "purpose": purpose, "now": now_iso},
     )
-    if result.rowcount != 1:
+    if result.rowcount != 1:  # pyright: ignore[reportAttributeAccessIssue]
         # 令牌可能已过期或不存在 —— 检查具体是哪一种情况
         link_record = (
             db.query(MagicLink)
@@ -617,6 +619,9 @@ def verify_magic_link(
         .filter(MagicLink.token_hash == token_hash)
         .first()
     )
+
+    if not link_record:
+        raise BizError(ErrCode.TOKEN_INVALID)
 
     user = db.query(User).filter(User.email == link_record.email).first()
     if not user:
@@ -677,7 +682,7 @@ def refresh_access_token(db: Session, raw_refresh: str) -> dict:
         ),
         {"now": now, "hash": tok_hash},
     )
-    if result.rowcount != 1:
+    if result.rowcount != 1:  # pyright: ignore[reportAttributeAccessIssue]
         # 令牌已被使用、不存在或已被撤销
         raise BizError(ErrCode.TOKEN_INVALID)
 

@@ -33,7 +33,7 @@ def _consume_oauth_state(db: Session, state: str, purpose: str) -> None:
         ),
         {"st": state, "purpose": purpose, "now": now},
     )
-    if result.rowcount != 1:
+    if result.rowcount != 1:  # pyright: ignore[reportAttributeAccessIssue]
         raise BizError(ErrCode.OAUTH_PROVIDER_ERROR, "Invalid or expired OAuth state")
 
 

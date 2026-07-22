@@ -26,8 +26,23 @@ filterwarnings = [
     "ignore::ResourceWarning",
 ]
 
+[tool.pyright]
+include = ["app"]
+typeCheckingMode = "standard"
+reportUnknownArgumentType = false
+reportUnknownParameterType = false
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownLambdaType = false
+reportMissingParameterType = false
+reportMissingTypeStubs = false
+reportUnannotatedClassAttribute = false
+reportUnusedCallResult = false
+reportUnusedImport = false
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
     "alembic>=1.13.0",
+    "basedpyright>=1.39.9",
 ]
