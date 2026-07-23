@@ -8,6 +8,7 @@ from app.core.err import respond
 from app.db.session import get_session
 from app.modules.auth.deps import CurrentUser, get_current_user
 from app.modules.auth import service_oauth
+from app.modules.auth.schemas import AuthTokenData, MessageResponse, OAuthRedirectResponse
 from app.modules.common import ApiResp
 
 router = APIRouter(prefix="/auth/oauth", tags=["oauth"])
@@ -20,7 +21,7 @@ def github_login(db: Session = Depends(get_session)):
     return RedirectResponse(url=url)
 
 
-@router.get("/github/callback", response_model=ApiResp[dict])
+@router.get("/github/callback", response_model=ApiResp[AuthTokenData])
 @respond
 async def github_callback(
     code: str = Query(...),
@@ -31,15 +32,15 @@ async def github_callback(
     return await service_oauth.handle_github_callback(db, code, state)
 
 
-@router.post("/github/login/redirect", response_model=ApiResp[dict])
+@router.post("/github/login/redirect", response_model=ApiResp[OAuthRedirectResponse])
 @respond
-def github_bind_redirect(cur: CurrentUser = Depends(get_current_user), db: Session = Depends(get_session)):
+def github_bind_redirect(_cur: CurrentUser = Depends(get_current_user), db: Session = Depends(get_session)):
     """返回用于绑定的 OAuth 授权 URL（从 JS 客户端调用）。"""
     url = service_oauth.get_github_auth_url(db, purpose="bind")
     return {"url": url}
 
 
-@router.get("/github/bind-callback", response_model=ApiResp[dict])
+@router.get("/github/bind-callback", response_model=ApiResp[MessageResponse])
 @respond
 async def github_bind_callback(
     code: str = Query(...),

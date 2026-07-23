@@ -100,10 +100,10 @@ class TestRegisterNormal:
     def should_create_normal_user_with_verified_email_and_phone(self, db):
         from app.db.models import User
 
-        user_id = _reg_normal(db, username="bob", email="bob@example.com", phone="13800001111")
-        assert user_id == 1
+        result = _reg_normal(db, username="bob", email="bob@example.com", phone="13800001111")
+        assert result["user_id"] == 1
 
-        user = db.query(User).filter(User.id == user_id).first()
+        user = db.query(User).filter(User.id == result["user_id"]).first()
         assert user.username == "bob"
         assert user.email == "bob@example.com"
         assert user.phone == "13800001111"
@@ -385,7 +385,7 @@ class TestRefresh:
 
         # manually expire the token in DB
         tok_hash = hashlib.sha256(raw.encode()).hexdigest()
-        from app.db.models import _now
+        from app.db.models import now_iso as _now
         import datetime as dt
 
         tok = db.query(RefreshToken).filter(RefreshToken.token_hash == tok_hash).first()

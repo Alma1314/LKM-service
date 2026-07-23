@@ -10,16 +10,15 @@ import struct
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from cryptography.hazmat.primitives.asymmetric import ec
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.err import BizError, ErrCode
 from app.db.models import User
-from app.modules.auth.models import PasskeyCredential, TOTP
-from app.modules.auth.service_auth import _create_auth_response, upgrade_to_normal
+from app.modules.auth.models import PasskeyChallenge, PasskeyCredential
 
-_challenges: dict[str, str] = {}
+_CHALLENGE_TTL_MINUTES = 5
 
 
 def _b64(data: bytes) -> str:
@@ -31,23 +30,85 @@ def _b64decode(s: str) -> bytes:
     return base64.urlsafe_b64decode(s)
 
 
-def _generate_challenge() -> tuple[str, str]:
+def _store_challenge(db: Session) -> tuple[str, str]:
+    """将 WebAuthn 挑战码持久化到数据库（跨 worker 共享，过期自动失效）。"""
+    import datetime as _dt
     challenge_id = secrets.token_hex(16)
     challenge = _b64(os.urandom(32))
-    _challenges[challenge_id] = challenge
+    expires_at = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=_CHALLENGE_TTL_MINUTES)).isoformat()
+    db.add(PasskeyChallenge(
+        challenge_id=challenge_id,
+        challenge=challenge,
+        expires_at=expires_at,
+    ))
+    db.flush()
     return challenge_id, challenge
 
 
-def _get_challenge(challenge_id: str) -> str:
-    return _challenges.pop(challenge_id, "")
+def _consume_challenge(db: Session, challenge_id: str) -> str:
+    """原子地消费挑战码 —— 使用条件 UPDATE 防止重放。"""
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    from sqlalchemy import update as sa_update
+    result = db.execute(
+        sa_update(PasskeyChallenge)
+        .where(
+            PasskeyChallenge.challenge_id == challenge_id,
+            PasskeyChallenge.consumed.is_(False),
+            PasskeyChallenge.expires_at > now,
+        )
+        .values(consumed=True)
+    )
+    if result.rowcount != 1:  # type: ignore[union-attr]
+        return ""
+    row = db.query(PasskeyChallenge).filter(PasskeyChallenge.challenge_id == challenge_id).first()
+    return str(row.challenge) if row else ""
+
+
+_CLEANUP_INTERVAL_SECONDS = 300  # 5 分钟
+
+
+async def cleanup_expired_challenges() -> None:
+    """后台任务：定期清理已过期或已被消费的挑战码。"""
+    import asyncio
+    import logging
+    from app.db.session import new_session
+
+    _log = logging.getLogger("passkey.cleanup")
+
+    while True:
+        await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
+        try:
+            db = new_session()
+            try:
+                import datetime as _dt
+                from sqlalchemy import delete as sa_delete, or_
+                now = _dt.datetime.now(_dt.timezone.utc).isoformat()
+                result = db.execute(
+                    sa_delete(PasskeyChallenge).where(
+                        or_(PasskeyChallenge.consumed.is_(True), PasskeyChallenge.expires_at <= now)
+                    )
+                )
+                db.commit()
+                deleted = int(result.rowcount) if result.rowcount else 0  # type: ignore[union-attr]
+                if deleted:
+                    _log.info("Cleaned up %d expired/consumed passkey challenges", deleted)
+            except (OSError, RuntimeError):
+                db.rollback()
+                _log.exception("Failed to clean up expired passkey challenges")
+            finally:
+                db.close()
+        except Exception:  # noqa: BLE001
+            _log.exception("cleanup_expired_challenges: unexpected error outside DB session")
+
 
 def _parse_client_data(client_data_json_b64: str) -> dict:
     """将 clientDataJSON 解码并解析为 UTF-8 JSON。出现任何错误时抛出 PASSKEY_VERIFICATION_FAILED。"""
     try:
         raw = _b64decode(client_data_json_b64)
         return json.loads(raw.decode("utf-8"))
-    except Exception:
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Invalid clientDataJSON")
+    except Exception as exc:
+        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Invalid clientDataJSON") from exc
 
 
 def _parse_authenticator_data(auth_data: bytes) -> dict:
@@ -152,8 +213,8 @@ def _verify_ecdsa_signature(
         pubkey = ec.EllipticCurvePublicKey.from_encoded_point(
             ec.SECP256R1(), public_key_bytes
         )
-    except Exception:
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Invalid public key")
+    except Exception as exc:
+        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Invalid public key") from exc
 
     try:
         pubkey.verify(signature, signed_data, ec.ECDSA(hashes.SHA256()))
@@ -186,7 +247,7 @@ def begin_passkey_registration(db: Session, user_id: int) -> dict:
     if not user:
         raise BizError(ErrCode.USER_NOT_FOUND)
 
-    challenge_id, challenge = _generate_challenge()
+    challenge_id, challenge = _store_challenge(db)
     user_handle = user_id.to_bytes(8, "big")
 
     existing = (
@@ -223,36 +284,45 @@ def begin_passkey_registration(db: Session, user_id: int) -> dict:
         },
     }
 
+def _prep_passkey_credential(db: Session, credential: dict, err: ErrCode) -> tuple[str, str, dict, str, dict]:
+    """从 credential dict 提取并校验基础字段，消费 challenge。返回 (raw_id, challenge, response, client_data_json, client_data)。"""
+    raw_id: str = credential.get("rawId")  # type: ignore[assignment]
+    challenge_id: str | None = credential.get("challenge_id")
+    response: dict = credential.get("response", {})  # type: ignore[assignment]
+
+    if not raw_id or not challenge_id:
+        raise BizError(err, "rawId and challenge_id required")
+
+    challenge = _consume_challenge(db, challenge_id)  # type: ignore[union-attr]
+    if not challenge:
+        raise BizError(err, "Challenge expired or invalid")
+
+    client_data_json_b64: str = response.get("clientDataJSON")  # type: ignore[assignment]
+    client_data = _parse_client_data(client_data_json_b64)
+    _verify_origin(settings.origin, client_data)
+    _verify_challenge(challenge, client_data)
+
+    return raw_id, challenge, response, client_data_json_b64, client_data
+
+
 def complete_passkey_registration(
     db: Session, user_id: int, credential: dict
 ) -> dict:
-    raw_id = credential.get("rawId")
-    challenge_id = credential.get("challenge_id")
-    response = credential.get("response", {})
+    raw_id, _challenge, response, client_data_json_b64, _client_data = _prep_passkey_credential(
+        db, credential, ErrCode.PASSKEY_REGISTRATION_FAILED
+    )
 
-    if not raw_id or not challenge_id:
-        raise BizError(ErrCode.PASSKEY_REGISTRATION_FAILED, "rawId and challenge_id required")
-
-    expected_challenge = _get_challenge(challenge_id)
-    if not expected_challenge:
-        raise BizError(ErrCode.PASSKEY_REGISTRATION_FAILED, "Challenge expired or invalid")
-
-    client_data_json_b64 = response.get("clientDataJSON")
     attestation_object_b64 = response.get("attestationObject")
 
     if not client_data_json_b64 or not attestation_object_b64:
         raise BizError(ErrCode.PASSKEY_REGISTRATION_FAILED, "clientDataJSON and attestationObject required")
 
-    client_data = _parse_client_data(client_data_json_b64)
-    _verify_origin(settings.origin, client_data)
-    _verify_challenge(expected_challenge, client_data)
-
     try:
-        attestation_bytes = _b64decode(attestation_object_b64)
+        attestation_bytes = _b64decode(str(attestation_object_b64))
         import cbor2
         att_obj = cbor2.loads(attestation_bytes)
-    except Exception:
-        raise BizError(ErrCode.PASSKEY_REGISTRATION_FAILED, "Invalid attestationObject")
+    except Exception as exc:
+        raise BizError(ErrCode.PASSKEY_REGISTRATION_FAILED, "Invalid attestationObject") from exc
 
     fmt = att_obj.get("fmt", "")
     auth_data_bytes = att_obj.get("authData", b"")
@@ -261,7 +331,7 @@ def complete_passkey_registration(
     _verify_rp_id_hash(auth_data)
     _verify_user_presence(auth_data)
 
-    ata = auth_data.get("attested_credential_data")
+    ata: dict = auth_data.get("attested_credential_data")  # type: ignore[assignment]
     if not ata:
         raise BizError(ErrCode.PASSKEY_REGISTRATION_FAILED, "No attested credential data")
 
@@ -280,8 +350,8 @@ def complete_passkey_registration(
                 pubkey = cert.public_key()
                 if isinstance(pubkey, ec.EllipticCurvePublicKey):
                     pubkey.verify(sig, signed_data_part, ec.ECDSA(hashes.SHA256()))  # pyright: ignore[reportArgumentType]
-            except Exception:
-                raise BizError(ErrCode.PASSKEY_REGISTRATION_FAILED, "Attestation signature invalid")
+            except Exception as exc:
+                raise BizError(ErrCode.PASSKEY_REGISTRATION_FAILED, "Attestation signature invalid") from exc
 
     cose_key = ata["cose_key"]
     x, y = cose_key["x"], cose_key["y"]
@@ -297,7 +367,7 @@ def complete_passkey_registration(
 
     cred = PasskeyCredential(
         user_id=user_id,
-        credential_id=raw_id,
+        credential_id=raw_id, # type: ignore[union-attr]
         public_key=_b64(public_key_bytes),
         sign_count=auth_data["sign_count"],
         device_name=device_name,
@@ -305,12 +375,12 @@ def complete_passkey_registration(
     db.add(cred)
 
     user = db.query(User).filter(User.id == user_id).first()
-    if user and user.account_level == "local":
+    if user and str(user.account_level) == "local":
         db.flush()
     return {"message": "Passkey registered successfully", "device_name": device_name}
 
 def begin_passkey_login(db: Session) -> dict:
-    challenge_id, challenge = _generate_challenge()
+    challenge_id, challenge = _store_challenge(db)
     return {
         "challenge_id": challenge_id,
         "public_key": {
@@ -322,32 +392,20 @@ def begin_passkey_login(db: Session) -> dict:
     }
 
 def complete_passkey_login(db: Session, credential: dict) -> dict:
-    raw_id = credential.get("rawId")
-    challenge_id = credential.get("challenge_id")
-    response = credential.get("response", {})
-
-    if not raw_id or not challenge_id:
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "rawId and challenge_id required")
-
-    expected_challenge = _get_challenge(challenge_id)
-    if not expected_challenge:
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Challenge expired or invalid")
+    raw_id, _challenge, response, client_data_json_b64, _client_data = _prep_passkey_credential(
+        db, credential, ErrCode.PASSKEY_VERIFICATION_FAILED
+    )
 
     authenticator_data_b64 = response.get("authenticatorData")
-    client_data_json_b64 = response.get("clientDataJSON")
     signature_b64 = response.get("signature")
 
-    if not authenticator_data_b64 or not client_data_json_b64 or not signature_b64:
+    if not authenticator_data_b64 or not signature_b64:
         raise BizError(
             ErrCode.PASSKEY_VERIFICATION_FAILED,
-            "authenticatorData, clientDataJSON, and signature required",
+            "authenticatorData and signature required",
         )
 
-    client_data = _parse_client_data(client_data_json_b64)
-    _verify_origin(settings.origin, client_data)
-    _verify_challenge(expected_challenge, client_data)
-
-    auth_data_bytes = _b64decode(authenticator_data_b64)
+    auth_data_bytes = _b64decode(str(authenticator_data_b64))
     auth_data = _parse_authenticator_data(auth_data_bytes)
     _verify_rp_id_hash(auth_data)
     _verify_user_presence(auth_data)
@@ -358,9 +416,9 @@ def complete_passkey_login(db: Session, credential: dict) -> dict:
     if not passkey:
         raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Credential not found")
 
-    public_key_bytes = _b64decode(passkey.public_key)
+    public_key_bytes = _b64decode(str(passkey.public_key))
     signed_data = _build_signed_data(auth_data_bytes, client_data_json_b64)
-    signature_raw = _b64decode(signature_b64)
+    signature_raw = _b64decode(str(signature_b64))
     signature_der = _signature_to_der(signature_raw)
 
     try:
@@ -381,30 +439,8 @@ def complete_passkey_login(db: Session, credential: dict) -> dict:
     if user.account_level == "local":
         raise BizError(ErrCode.ACCOUNT_LEVEL_INSUFFICIENT)
 
-    if user.account_level == "admin":
-        totp = db.query(TOTP).filter(TOTP.user_id == user.id).first()
-        if not totp or not totp.enabled:
-            from app.modules.auth.security import create_temp_token
-            setup_token = create_temp_token(user.id)
-            return {
-                "access_token": None,
-                "refresh_token": None,
-                "user_id": user.id,
-                "account_level": user.account_level,
-                "requires_2fa": True,
-                "setup_required": True,
-                "temp_token": setup_token,
-            }
-
-    requires_2fa = False
-    if user.account_level in ("normal", "admin"):
-        totp = db.query(TOTP).filter(
-            TOTP.user_id == user.id, TOTP.enabled.is_(True)
-        ).first()
-        if totp:
-            requires_2fa = True
-
-    return _create_auth_response(db, user, requires_2fa=requires_2fa)
+    from app.modules.auth.service_auth import _finalize_auth_response
+    return _finalize_auth_response(db, user) # type: ignore[union-attr]
 
 def list_credentials(db: Session, user_id: int) -> list[dict]:
     creds = db.query(PasskeyCredential).filter(

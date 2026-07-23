@@ -11,8 +11,6 @@ POST /auth/recover/magic-link         – 发送用于密码重置的魔法链�
 POST /auth/recover/magic-link/verify  – 通过魔法链接令牌重置
 """
 
-import asyncio
-
 from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, EmailStr
@@ -22,12 +20,20 @@ from app.core.err import respond
 from app.db.session import get_session
 from app.modules.auth import service_recovery
 from app.modules.auth.deps import get_email_provider, get_sms_provider
-from app.modules.auth.providers.base import EmailProvider, SmsProvider
+from app.modules.auth.providers.base import EmailProvider
 from app.modules.auth.service_auth import request_magic_link
 from app.modules.auth.service_verify import (
     check_code_rate_limit,
     create_email_verification,
     create_phone_verification,
+)
+from app.modules.auth.schemas import (
+    AdminRecoverBeginResponse,
+    AdminRecoverVerifyContactResponse,
+    AdminRecoverVerifyTOTPResponse,
+    MessageResponse,
+    RecoverCheckResponse,
+    RecoverRequires2FAResponse,
 )
 from app.modules.common import ApiResp
 
@@ -71,56 +77,65 @@ class RecoverMagicLinkVerifyRequest(BaseModel):
     token: str = Field(..., min_length=1)
     new_password: str | None = Field(None, min_length=12)
 
-@router.post("/check", response_model=ApiResp[dict])
+@router.post("/check", response_model=ApiResp[RecoverCheckResponse])
 @respond
 def recover_check(info: RecoverCheckRequest, db: Session = Depends(get_session)):
     return service_recovery.check_recovery_methods(db, info.account)
 
 
-@router.post("/phone", response_model=ApiResp[dict])
+@router.post("/phone", response_model=ApiResp[MessageResponse])
 @respond
-def recover_phone(info: RecoverPhoneRequest, db: Session = Depends(get_session)):
+def recover_phone(
+    info: RecoverPhoneRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_session),
+):
     check_code_rate_limit(f"recover:phone:{info.phone}", max_count=5, window=3600)
     code, _ = create_phone_verification(db, info.phone, "reset")
-    provider = get_sms_provider()
-    asyncio.create_task(provider.send_code(info.phone, code))
+    background_tasks.add_task(get_sms_provider().send_code, info.phone, code)
     return {"message": "Verification code sent"}
 
 
-@router.post("/phone/verify", response_model=ApiResp[dict])
+@router.post("/phone/verify", response_model=ApiResp[RecoverRequires2FAResponse])
 @respond
 def recover_phone_verify(
     info: RecoverPhoneVerifyRequest, db: Session = Depends(get_session)
 ):
+    check_code_rate_limit(f"recover:phone:verify:{info.phone}", max_count=5, window=3600)
     return service_recovery.recover_by_phone(
         db, info.phone, info.code, info.new_password
     )
 
 
-@router.post("/email", response_model=ApiResp[dict])
+@router.post("/email", response_model=ApiResp[MessageResponse])
 @respond
-def recover_email(info: RecoverEmailRequest, db: Session = Depends(get_session)):
+def recover_email(
+    info: RecoverEmailRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_session),
+):
     check_code_rate_limit(f"recover:email:{info.email}", max_count=5, window=3600)
     code, _ = create_email_verification(db, info.email, "reset")
-    provider = get_email_provider()
-    asyncio.create_task(provider.send_code(info.email, code))
+    background_tasks.add_task(get_email_provider().send_code, info.email, code)
     return {"message": "Verification code sent"}
 
 
-@router.post("/email/verify", response_model=ApiResp[dict])
+@router.post("/email/verify", response_model=ApiResp[RecoverRequires2FAResponse])
 @respond
 def recover_email_verify(
     info: RecoverEmailVerifyRequest, db: Session = Depends(get_session)
 ):
+    check_code_rate_limit(f"recover:email:verify:{info.email}", max_count=5, window=3600)
     return service_recovery.recover_by_email_code(
         db, info.email, info.code, info.new_password
     )
 
 
-@router.post("/magic-link", response_model=ApiResp[dict])
+@router.post("/magic-link", response_model=ApiResp[MessageResponse])
 @respond
 def recover_magic_link(
     info: RecoverMagicLinkRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_session),
     email_provider: EmailProvider = Depends(get_email_provider),
 ):
@@ -130,15 +145,17 @@ def recover_magic_link(
         email_provider,
         purpose="reset",
         frontend_url=settings.frontend_callback,
+        background_tasks=background_tasks,
     )
     return {"message": "If email exists, magic link sent"}
 
 
-@router.post("/magic-link/verify", response_model=ApiResp[dict])
+@router.post("/magic-link/verify", response_model=ApiResp[RecoverRequires2FAResponse])
 @respond
 def recover_magic_link_verify(
     info: RecoverMagicLinkVerifyRequest, db: Session = Depends(get_session)
 ):
+    check_code_rate_limit("recover:magic-link:verify:global", max_count=10, window=3600)
     return service_recovery.recover_by_magic_link(
         db, info.token, info.new_password
     )
@@ -153,7 +170,7 @@ class RecoverUserCompleteRequest(BaseModel):
     new_password: str = Field(..., min_length=12)
 
 
-@router.post("/verify-totp", response_model=ApiResp[dict])
+@router.post("/verify-totp", response_model=ApiResp[AdminRecoverVerifyTOTPResponse])
 @respond
 def recover_user_verify_totp(
     info: RecoverUserVerifyTOTPRequest, db: Session = Depends(get_session)
@@ -162,7 +179,7 @@ def recover_user_verify_totp(
     return service_recovery.recover_admin_verify_totp(db, info.txn_id, info.temp_token)
 
 
-@router.post("/complete", response_model=ApiResp[dict])
+@router.post("/complete", response_model=ApiResp[MessageResponse])
 @respond
 def recover_user_complete(
     info: RecoverUserCompleteRequest, db: Session = Depends(get_session)
@@ -189,41 +206,28 @@ class RecoverAdminCompleteRequest(BaseModel):
     new_password: str = Field(..., min_length=12)
 
 
-@router.post("/admin/begin", response_model=ApiResp[dict])
+@router.post("/admin/begin", response_model=ApiResp[AdminRecoverBeginResponse])
 @respond
 def recover_admin_begin(
     info: RecoverAdminRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_session),
 ):
-    """第1步：发起管理员恢复。返回 txn_id 并在后台通过带外渠道发送验证码。"""
-    result = service_recovery.recover_admin_begin(db, info.contact)
-
-    # 通过后台任务进行带外发送（不阻塞响应）
-    if result.get("_send_code"):
-        contact = result.pop("_contact")
-        code = result.pop("_code")
-        result.pop("_send_code")
-        if "@" in contact:
-            provider = get_email_provider()
-            background_tasks.add_task(provider.send_code, contact, code)
-        else:
-            provider = get_sms_provider()
-            background_tasks.add_task(provider.send_code, contact, code)
-
-    return result
+    """第1步：发起管理员恢复。服务层负责生成并发送验证码。"""
+    return service_recovery.recover_admin_begin(db, info.contact, background_tasks=background_tasks)
 
 
-@router.post("/admin/verify-contact", response_model=ApiResp[dict])
+@router.post("/admin/verify-contact", response_model=ApiResp[AdminRecoverVerifyContactResponse])
 @respond
 def recover_admin_verify_contact(
     info: RecoverAdminVerifyContactRequest, db: Session = Depends(get_session)
 ):
     """第2步：验证联系方式验证码。返回用于 2FA 的 temp_token。"""
+    check_code_rate_limit(f"recover:admin:verify-contact:{info.txn_id}", max_count=3, window=600)
     return service_recovery.recover_admin_verify_contact(db, info.txn_id, info.code)
 
 
-@router.post("/admin/verify-totp", response_model=ApiResp[dict])
+@router.post("/admin/verify-totp", response_model=ApiResp[AdminRecoverVerifyTOTPResponse])
 @respond
 def recover_admin_verify_totp(
     info: RecoverAdminVerifyTOTPRequest, db: Session = Depends(get_session)
@@ -232,7 +236,7 @@ def recover_admin_verify_totp(
     return service_recovery.recover_admin_verify_totp(db, info.txn_id, info.temp_token)
 
 
-@router.post("/admin/complete", response_model=ApiResp[dict])
+@router.post("/admin/complete", response_model=ApiResp[MessageResponse])
 @respond
 def recover_admin_complete(
     info: RecoverAdminCompleteRequest, db: Session = Depends(get_session)

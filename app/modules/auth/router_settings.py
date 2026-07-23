@@ -8,7 +8,7 @@ POST /auth/settings/bind-phone/request  {phone}  -> 通过 SmsProvider 发送验
 POST /auth/settings/bind-phone/verify   {phone, code} -> 绑定 + 如果是本地用户则升级
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
@@ -23,6 +23,7 @@ from app.modules.auth.deps import (
     get_sms_provider,
 )
 from app.modules.auth.providers.base import EmailProvider, SmsProvider
+from app.modules.auth.schemas import BindCodeRequestResponse, BindCodeVerifyResponse
 from app.modules.auth.service_verify import (
     check_code_rate_limit,
     consume_email_code,
@@ -30,6 +31,7 @@ from app.modules.auth.service_verify import (
     create_email_verification,
     create_phone_verification,
 )
+from app.modules.common import ApiResp
 
 router = APIRouter(prefix="/auth/settings", tags=["auth-settings"])
 
@@ -52,11 +54,12 @@ class BindPhoneVerify(BaseModel):
     phone: str = Field(..., min_length=5, max_length=20)
     code: str = Field(..., min_length=6, max_length=6)
 
-@router.post("/bind-email/request", response_model=dict)
+@router.post("/bind-email/request", response_model=ApiResp[BindCodeRequestResponse])
 @respond
 def bind_email_request(
     body: BindEmailRequest,
-    cur: CurrentUser = Depends(get_current_user),
+    background_tasks: BackgroundTasks,
+    _cur: CurrentUser = Depends(get_current_user),
     email_provider: EmailProvider = Depends(get_email_provider),
     db: Session = Depends(get_session),
 ):
@@ -70,13 +73,12 @@ def bind_email_request(
     check_code_rate_limit(rate_limit_key)
 
     code, record_id = create_email_verification(db, body.email, _BIND_PURPOSE)
-    import asyncio
-    asyncio.create_task(email_provider.send_code(body.email, code))
+    background_tasks.add_task(email_provider.send_code, body.email, code)
 
     return {"message": "Verification code sent to email", "record_id": record_id}
 
 
-@router.post("/bind-email/verify", response_model=dict)
+@router.post("/bind-email/verify", response_model=ApiResp[BindCodeVerifyResponse])
 @respond
 def bind_email_verify(
     body: BindEmailVerify,
@@ -99,15 +101,16 @@ def bind_email_verify(
     db.flush()
 
     # 如果适用，将本地用户升级为普通用户
-    service_auth.upgrade_to_normal(db, user)
+    service_auth.upgrade_to_normal(db, user) # type: ignore[arg-type]
 
     return {"message": "Email bound successfully"}
 
-@router.post("/bind-phone/request", response_model=dict)
+@router.post("/bind-phone/request", response_model=ApiResp[BindCodeRequestResponse])
 @respond
 def bind_phone_request(
     body: BindPhoneRequest,
-    cur: CurrentUser = Depends(get_current_user),
+    background_tasks: BackgroundTasks,
+    _cur: CurrentUser = Depends(get_current_user),
     sms_provider: SmsProvider = Depends(get_sms_provider),
     db: Session = Depends(get_session),
 ):
@@ -121,13 +124,12 @@ def bind_phone_request(
     check_code_rate_limit(rate_limit_key)
 
     code, record_id = create_phone_verification(db, body.phone, _BIND_PURPOSE)
-    import asyncio
-    asyncio.create_task(sms_provider.send_code(body.phone, code))
+    background_tasks.add_task(sms_provider.send_code, body.phone, code)
 
     return {"message": "Verification code sent to phone", "record_id": record_id}
 
 
-@router.post("/bind-phone/verify", response_model=dict)
+@router.post("/bind-phone/verify", response_model=ApiResp[BindCodeVerifyResponse])
 @respond
 def bind_phone_verify(
     body: BindPhoneVerify,
@@ -150,6 +152,6 @@ def bind_phone_verify(
     db.flush()
 
     # 如果适用，将本地用户升级为普通用户
-    service_auth.upgrade_to_normal(db, user)
+    service_auth.upgrade_to_normal(db, user) # type: ignore[arg-type]
 
     return {"message": "Phone bound successfully"}

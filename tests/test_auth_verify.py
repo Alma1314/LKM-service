@@ -149,11 +149,11 @@ class TestConsumeEmailCode:
         assert exc.value.errcode == ErrCode.VERIFICATION_CODE_INVALID
 
     def should_not_consume_expired_code(self, db):
-        with patch("app.modules.auth.service_verify._now") as mock_now:
+        with patch("app.modules.auth.service_verify.now_iso") as mock_now:
             mock_now.return_value = "2026-01-01T00:00:00+00:00"
             code, _ = create_email_verification(db, "alice@example.com", "register")
 
-        with patch("app.modules.auth.service_verify._now") as mock_now:
+        with patch("app.modules.auth.service_verify.now_iso") as mock_now:
             mock_now.return_value = "2026-01-02T00:00:00+00:00"
             with pytest.raises(BizError) as exc:
                 consume_email_code(db, "alice@example.com", code, "register")
@@ -196,11 +196,11 @@ class TestConsumePhoneCode:
         assert exc.value.errcode == ErrCode.VERIFICATION_CODE_INVALID
 
     def should_not_consume_expired_code(self, db):
-        with patch("app.modules.auth.service_verify._now") as mock_now:
+        with patch("app.modules.auth.service_verify.now_iso") as mock_now:
             mock_now.return_value = "2026-01-01T00:00:00+00:00"
             code, _ = create_phone_verification(db, "13800138000", "login")
 
-        with patch("app.modules.auth.service_verify._now") as mock_now:
+        with patch("app.modules.auth.service_verify.now_iso") as mock_now:
             mock_now.return_value = "2026-01-02T00:00:00+00:00"
             with pytest.raises(BizError) as exc:
                 consume_phone_code(db, "13800138000", code, "login")

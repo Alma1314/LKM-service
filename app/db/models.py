@@ -22,7 +22,7 @@ class Base(DeclarativeBase):
     pass
 
 
-def _now() -> str:
+def now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
@@ -39,8 +39,8 @@ class User(Base):
     locked_until: Mapped[str | None] = mapped_column(Text, nullable=True)
     failed_login_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
-    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
     profile: Mapped["Profile"] = relationship(
         back_populates="user", uselist=False, cascade="all, delete-orphan"
@@ -83,7 +83,7 @@ class ColumnApplication(Base):
     )
     reviewer_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
     reviewed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     user: Mapped["User"] = relationship(
         foreign_keys=[user_id], back_populates="column_applications"
@@ -110,8 +110,8 @@ class Column(Base):
     status: Mapped[ColumnStatus] = mapped_column(
         String(20), nullable=False, default=ColumnStatus.ACTIVE
     )
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
-    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
     owner: Mapped["User"] = relationship(back_populates="owned_columns")
     application: Mapped["ColumnApplication | None"] = relationship(back_populates="column")
@@ -132,8 +132,8 @@ class ColumnPost(Base):
     status: Mapped[ColumnPostStatus] = mapped_column(
         String(20), nullable=False, default=ColumnPostStatus.PUBLISHED
     )
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
-    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
     published_at: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     column: Mapped["Column"] = relationship(back_populates="posts")

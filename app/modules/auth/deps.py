@@ -52,8 +52,9 @@ def _resolve_current_user(token: str, db: Session) -> CurrentUser:
     if user.is_locked:
         import datetime as dt
 
-        if user.locked_until:
-            locked = dt.datetime.fromisoformat(user.locked_until)
+        locked_until: str | None = user.locked_until  # type: ignore[assignment]
+        if locked_until:
+            locked = dt.datetime.fromisoformat(locked_until)
             if dt.datetime.now(dt.timezone.utc) < locked:
                 raise BizError(ErrCode.ACCOUNT_LOCKED)
 
@@ -69,16 +70,25 @@ def _resolve_current_user(token: str, db: Session) -> CurrentUser:
             token_iat = payload.get("iat")
             if token_iat is not None:
                 import datetime as _dt
-                updated = _dt.datetime.fromisoformat(user.updated_at)
-                token_time = _dt.datetime.fromtimestamp(token_iat, tz=_dt.timezone.utc)
+                updated_at: str = user.updated_at  # type: ignore[assignment]
+                updated = _dt.datetime.fromisoformat(updated_at)
+                iat = float(token_iat)  # type: ignore[arg-type]
+                token_time = _dt.datetime.fromtimestamp(iat, tz=_dt.timezone.utc)
                 if updated - token_time > _dt.timedelta(seconds=5):
                     raise BizError(ErrCode.TOKEN_EXPIRED, "Password changed – please login again")
         except ValueError:
-            pass
+            import logging
+            logging.getLogger("auth.deps").warning(
+                "Failed to parse updated_at/iat for token revocation check (user_id=%s)", user.id
+            )
 
     profile = user.profile
-    role = profile.role if profile else "member"
-    return CurrentUser(id=user.id, account_level=user.account_level, role=role)
+    role: str = profile.role if profile else "member"
+    return CurrentUser(
+        id=int(user.id), # type: ignore[arg-type]
+        account_level=str(user.account_level),
+        role=role,
+    )
 
 
 def get_current_user(token: str = Depends(_parse_bearer), db: Session = Depends(get_session)) -> CurrentUser:

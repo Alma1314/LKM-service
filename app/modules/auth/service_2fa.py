@@ -1,10 +1,8 @@
 """双因素认证（TOTP）服务。"""
 
-import datetime as dt
 import hashlib
 
 import jwt
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -20,7 +18,7 @@ from app.modules.auth.security import (
     get_totp_uri,
     verify_totp,
 )
-from app.modules.auth.service_auth import _generate_refresh_token, _store_refresh_token, log_audit
+from app.modules.auth.service_auth import _generate_refresh_token, _isolated_update, _store_refresh_token, log_audit
 
 _TOTP_MAX_FAILED = 3
 
@@ -35,16 +33,14 @@ def _record_totp_failure(db: Session, totp_record: TOTP | None) -> None:
     if not totp_record:
         return
 
-    sp = db.begin_nested()
-    try:
-        db.execute(
-            text("UPDATE totp SET failed_attempts = failed_attempts + 1 WHERE user_id = :uid"),
-            {"uid": totp_record.user_id},
-        )
-        db.flush()
-        sp.commit()
-    except Exception:
-        sp.rollback()
+    from sqlalchemy import update as sa_update
+
+    _isolated_update(
+        db,
+        sa_update(TOTP)
+        .where(TOTP.user_id == totp_record.user_id)
+        .values(failed_attempts=TOTP.failed_attempts + 1),
+    )
     db.refresh(totp_record)
 
 
@@ -65,8 +61,8 @@ def _decode_temp_token(raw_token: str) -> dict:
         )
         if payload.get("type") != "temp":
             raise ValueError("not a temp token")
-    except Exception:
-        raise BizError(ErrCode.TOKEN_INVALID)
+    except Exception as exc:
+        raise BizError(ErrCode.TOKEN_INVALID) from exc
 
     return payload
 
@@ -151,20 +147,20 @@ def setup_2fa_begin(db: Session, user_id: int) -> dict:
         db.add(totp_record)
     db.flush()
 
-    return {"secret": secret, "qr_code_uri": get_totp_uri(secret, user.username, settings.app_name)}
+    return {"secret": secret, "qr_code_uri": get_totp_uri(secret, user.username, settings.app_name)} # type: ignore[arg-type]
 
 def setup_2fa_complete(db: Session, user_id: int, code: str) -> dict:
     totp_record = db.query(TOTP).filter(TOTP.user_id == user_id).first()
     if not totp_record or totp_record.enabled:
         raise BizError(ErrCode.TOTP_NOT_ENABLED)
 
-    _check_totp_failed(totp_record)
+    _check_totp_failed(totp_record) # type: ignore[arg-type]
 
-    plain_secret = decrypt_secret(totp_record.secret)
+    plain_secret = decrypt_secret(str(totp_record.secret))
     if verify_totp(plain_secret, code) is None:
-        _record_totp_failure(db, totp_record)
+        _record_totp_failure(db, totp_record) # type: ignore[arg-type]
         raise BizError(ErrCode.TOTP_CODE_INVALID)
-    _reset_totp_failures(db, totp_record)
+    _reset_totp_failures(db, totp_record) # type: ignore[arg-type]
 
     totp_record.enabled = True
     totp_record.confirmed_saved = False
@@ -200,14 +196,14 @@ def verify_2fa(
     trust_device: bool = False,
 ) -> dict:
     # 仅解码 —— 不消费。消费在成功的第二因素验证*之后*进行，
-    # 这样错误的 TOTP/恢复码不会永久地消耗临时令牌或满足恢复检查。
+    # 错误的TOTP/恢复码不会永久地消耗临时令牌或满足恢复检查。
     payload = _decode_temp_token(raw_token=temp_token)
     user_id = payload["user_id"]
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise BizError(ErrCode.USER_NOT_FOUND)
 
-    if user.account_level == "admin":
+    if str(user.account_level) == "admin":
         trust_device = False
 
     txn_id = payload.get("txn_id")
@@ -215,14 +211,13 @@ def verify_2fa(
     if recovery_code:
         code_hash = hashlib.sha256(recovery_code.encode()).hexdigest()
         # 原子消费：仅在尚未使用时才标记为已使用
+        from sqlalchemy import update as sa_update
         result = db.execute(
-            text(
-                "UPDATE recovery_codes SET used = 1 "
-                "WHERE user_id = :uid AND code_hash = :hash AND used = 0"
-            ),
-            {"uid": user_id, "hash": code_hash},
+            sa_update(RecoveryCode)
+            .where(RecoveryCode.user_id == user_id, RecoveryCode.code_hash == code_hash, RecoveryCode.used.is_(False))
+            .values(used=True)
         )
-        if result.rowcount != 1:  # pyright: ignore[reportAttributeAccessIssue]
+        if result.rowcount != 1:  # type: ignore[union-attr]
             raise BizError(ErrCode.RECOVERY_CODE_INVALID)
         db.flush()
     elif code:
@@ -230,26 +225,28 @@ def verify_2fa(
         if not totp_record:
             raise BizError(ErrCode.TOTP_NOT_ENABLED)
 
-        _check_totp_failed(totp_record)
+        _check_totp_failed(totp_record) # type: ignore[arg-type]
 
-        plain_secret = decrypt_secret(totp_record.secret)
+        plain_secret = decrypt_secret(str(totp_record.secret))
         actual_counter = verify_totp(plain_secret, code)
         if actual_counter is None:
-            _record_totp_failure(db, totp_record)
+            _record_totp_failure(db, totp_record) # type: ignore[arg-type]
             raise BizError(ErrCode.TOTP_CODE_INVALID)
 
-        _reset_totp_failures(db, totp_record)
+        _reset_totp_failures(db, totp_record) # type: ignore[arg-type]
 
         # 重放保护：原子地存储匹配的计数器
+        from sqlalchemy import or_, update as sa_update
 
         result = db.execute(
-            text(
-                "UPDATE totp SET last_counter = :counter "
-                "WHERE user_id = :uid AND (last_counter IS NULL OR last_counter < :counter)"
-            ),
-            {"counter": actual_counter, "uid": user_id},
+            sa_update(TOTP)
+            .where(
+                TOTP.user_id == user_id,
+                or_(TOTP.last_counter.is_(None), TOTP.last_counter < actual_counter),
+            )
+            .values(last_counter=actual_counter)
         )
-        if result.rowcount != 1:  # pyright: ignore[reportAttributeAccessIssue]
+        if result.rowcount != 1:  # type: ignore[union-attr]
             raise BizError(ErrCode.TOTP_CODE_INVALID, "TOTP code already used")
         db.flush()
     else:
@@ -279,7 +276,7 @@ def verify_2fa(
         }
 
     # purpose == "2fa" —— 发放登录会话
-    result = _create_auth_tokens(db, user, trust_device=trust_device)
+    result = _create_auth_tokens(db, user, trust_device=trust_device) # type: ignore[arg-type]
     result["trust_device"] = trust_device
     return result
 
@@ -288,13 +285,13 @@ def disable_2fa(db: Session, user_id: int, code: str) -> dict:
     if not totp_record or not totp_record.enabled:
         raise BizError(ErrCode.TOTP_NOT_ENABLED)
 
-    _check_totp_failed(totp_record)
+    _check_totp_failed(totp_record) # type: ignore[arg-type]
 
-    plain_secret = decrypt_secret(totp_record.secret)
+    plain_secret = decrypt_secret(str(totp_record.secret))
     if verify_totp(plain_secret, code) is None:
-        _record_totp_failure(db, totp_record)
+        _record_totp_failure(db, totp_record) # type: ignore[arg-type]
         raise BizError(ErrCode.TOTP_CODE_INVALID)
-    _reset_totp_failures(db, totp_record)
+    _reset_totp_failures(db, totp_record) # type: ignore[arg-type]
 
     totp_record.enabled = False
     totp_record.secret = ""

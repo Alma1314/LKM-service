@@ -51,31 +51,44 @@ def _verify_production_secrets() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    import asyncio
+
     _verify_production_secrets()
     init_db()
+
+    from app.modules.auth.service_passkey import cleanup_expired_challenges
+    cleanup_task = asyncio.create_task(cleanup_expired_challenges())
+
     yield  # type: ignore[redefined-outer-name]
+
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
+
     from app.db.session import dispose_engine
     dispose_engine()
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(
+    application = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
         lifespan=lifespan,
     )
-    app.include_router(api_router, prefix=settings.api_prefix)
-    app.add_exception_handler(BizError, _on_err)
-    app.add_exception_handler(RequestValidationError, _on_err)
+    application.include_router(api_router, prefix=settings.api_prefix)
+    application.add_exception_handler(BizError, _on_err)
+    application.add_exception_handler(RequestValidationError, _on_err)
 
-    @app.get("/")
+    @application.get("/")
     async def root() -> dict[str, str]:
         return {"message": "OK"}
 
-    return app
+    return application
 
 
-async def _on_err(request, exc):
+async def _on_err(_request, exc):
     _, errcode, detail = map_err(exc)
     return resp_json(errcode, detail=detail)
 

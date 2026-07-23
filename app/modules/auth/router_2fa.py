@@ -8,24 +8,46 @@ DELETE /auth/2fa                  RequireLevel("normal")  禁用 2FA
 """
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import text
+from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from app.core.err import BizError, ErrCode, respond
 from app.db.session import get_session
 from app.modules.auth import service_2fa
 from app.modules.auth.deps import CurrentUser, RequireLevel
+from app.modules.auth.models import SetupTransaction
 from app.modules.auth.schemas import (
+    TOTPConfirmResponse,
     TOTPDisableRequest,
+    TOTPDisableResponse,
     TOTPSetupBeginData,
     TOTPSetupCompleteData,
     TOTPSetupCompleteRequest,
     TOTPSetupCompleteTempData,
     TOTPVerifyRequest,
+    TOTPVerifyResponse,
 )
 from app.modules.common import ApiResp
 
 router = APIRouter(prefix="/auth/2fa", tags=["auth-2fa"])
+
+
+def _decode_setup_temp_token(temp_token: str) -> tuple[str, int]:
+    """解码并验证 setup 临时令牌，返回 (token_hash, user_id)。"""
+    import hashlib
+    from app.modules.auth.security import decode_temp_token
+
+    try:
+        payload = decode_temp_token(temp_token)
+    except Exception as exc:
+        raise BizError(ErrCode.TOKEN_INVALID) from exc
+    if payload.get("purpose") != "setup":
+        raise BizError(ErrCode.TOKEN_INVALID, "Not a setup token")
+    user_id = payload.get("user_id")
+    if not user_id:
+        raise BizError(ErrCode.TOKEN_INVALID)
+    token_hash = hashlib.sha256(temp_token.encode()).hexdigest()
+    return token_hash, user_id # type: ignore[arg-type]
 
 
 @router.post("/setup/begin", response_model=ApiResp[TOTPSetupBeginData])
@@ -45,26 +67,13 @@ def setup_2fa_temp(
     db: Session = Depends(get_session),
 ):
     """使用登录时获得的临时令牌开始 TOTP 设置（管理员强制设置）。"""
-    from app.modules.auth.security import decode_temp_token
-    from app.modules.auth.models import SetupTransaction
-    from sqlalchemy.exc import IntegrityError
-    import hashlib
     import datetime as _dt
+    from sqlalchemy.exc import IntegrityError
 
-    try:
-        payload = decode_temp_token(temp_token)
-    except Exception:
-        raise BizError(ErrCode.TOKEN_INVALID)
-    if payload.get("purpose") != "setup":
-        raise BizError(ErrCode.TOKEN_INVALID, "Not a setup token")
-    user_id = payload.get("user_id")
-    if not user_id:
-        raise BizError(ErrCode.TOKEN_INVALID)
+    token_hash, user_id = _decode_setup_temp_token(temp_token)
 
     # 原子性地声明设置令牌 — 只有一个 begin 调用会成功
-    token_hash = hashlib.sha256(temp_token.encode()).hexdigest()
     expires_at = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=10)).isoformat()
-
     try:
         db.add(SetupTransaction(
             token_hash=token_hash,
@@ -87,40 +96,29 @@ def setup_2fa_complete_temp(
     db: Session = Depends(get_session),
 ):
     """使用临时令牌完成 TOTP 设置（管理员强制设置路径）。"""
-    from app.modules.auth.security import decode_temp_token
-    from app.modules.auth.models import SetupTransaction
-    import hashlib
     import datetime as _dt
 
-    try:
-        payload = decode_temp_token(temp_token)
-    except Exception:
-        raise BizError(ErrCode.TOKEN_INVALID)
-    if payload.get("purpose") != "setup":
-        raise BizError(ErrCode.TOKEN_INVALID, "Not a setup token")
-    user_id = payload.get("user_id")
-    if not user_id:
-        raise BizError(ErrCode.TOKEN_INVALID)
+    token_hash, user_id = _decode_setup_temp_token(temp_token)
 
-    # 原子性地消耗设置事务（R3-002）
-    token_hash = hashlib.sha256(temp_token.encode()).hexdigest()
+    # 原子性地消耗设置事务
     now = _dt.datetime.now(_dt.timezone.utc).isoformat()
     result = db.execute(
-        text(
-            "UPDATE setup_transactions SET consumed = 1 "
-            "WHERE token_hash = :hash AND consumed = 0 "
-            "AND expires_at > :now"
-        ),
-        {"hash": token_hash, "now": now},
+        sa_update(SetupTransaction)
+        .where(
+            SetupTransaction.token_hash == token_hash,
+            SetupTransaction.consumed.is_(False),
+            SetupTransaction.expires_at > now,
+        )
+        .values(consumed=True)
     )
-    if result.rowcount != 1:  # pyright: ignore[reportAttributeAccessIssue]
+    if result.rowcount != 1:  # type: ignore[union-attr]
         raise BizError(ErrCode.TOKEN_INVALID, "Setup token not found, already used, or expired")
 
     txn = db.query(SetupTransaction).filter(SetupTransaction.token_hash == token_hash).first()
     if not txn or txn.user_id != user_id:
         raise BizError(ErrCode.TOKEN_INVALID)
 
-    result_dict = service_2fa.setup_2fa_complete(db, user_id, code)
+    result_dict = service_2fa.setup_2fa_complete(db, user_id, code) # type: ignore[arg-type]
     from app.db.models import User
     user = db.query(User).filter(User.id == user_id).first()
     if user:
@@ -153,7 +151,7 @@ def setup_2fa_complete(
     result = service_2fa.setup_2fa_complete(db, cur.id, body.code)
     return result
 
-@router.post("/setup/confirm", response_model=ApiResp[dict])
+@router.post("/setup/confirm", response_model=ApiResp[TOTPConfirmResponse])
 @respond
 def confirm_recovery_codes(
     cur: CurrentUser = RequireLevel("normal"),
@@ -162,13 +160,15 @@ def confirm_recovery_codes(
     """确认用户已保存其恢复码。"""
     return service_2fa.confirm_recovery_codes_saved(db, cur.id)
 
-@router.post("/verify", response_model=ApiResp[dict])
+@router.post("/verify", response_model=ApiResp[TOTPVerifyResponse])
 @respond
 def verify_2fa(
     body: TOTPVerifyRequest,
     db: Session = Depends(get_session),
 ):
     """在登录时使用临时令牌和 TOTP / 恢复码验证 2FA。"""
+    from app.modules.auth.service_verify import check_code_rate_limit
+    check_code_rate_limit("2fa:verify:global", max_count=10, window=3600)
     result = service_2fa.verify_2fa(
         db,
         temp_token=body.temp_token,
@@ -178,7 +178,7 @@ def verify_2fa(
     )
     return result
 
-@router.delete("", response_model=ApiResp[dict])
+@router.delete("", response_model=ApiResp[TOTPDisableResponse])
 @respond
 def disable_2fa(
     body: TOTPDisableRequest,

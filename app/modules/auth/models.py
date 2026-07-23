@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.models import Base, _now
+from app.db.models import Base, now_iso
 
 if TYPE_CHECKING:
     from app.db.models import User
@@ -22,7 +22,7 @@ class RefreshToken(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     mfa_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     expires_at: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
     revoked_at: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="refresh_tokens")
@@ -42,7 +42,7 @@ class EmailVerification(Base):
     expires_at: Mapped[str] = mapped_column(Text, nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     failed_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
 
 class PhoneVerification(Base):
@@ -59,7 +59,7 @@ class PhoneVerification(Base):
     expires_at: Mapped[str] = mapped_column(Text, nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     failed_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
 
 class MagicLink(Base):
@@ -74,7 +74,7 @@ class MagicLink(Base):
     purpose: Mapped[str] = mapped_column(String(50), nullable=False)
     expires_at: Mapped[str] = mapped_column(Text, nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
 
 class UserOAuth(Base):
@@ -88,7 +88,7 @@ class UserOAuth(Base):
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
     provider_user_id: Mapped[str] = mapped_column(String(200), nullable=False)
     provider_email: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
     user: Mapped["User"] = relationship(back_populates="oauth_bindings")
 
@@ -102,7 +102,7 @@ class TOTP(Base):
     confirmed_saved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     failed_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_counter: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
     user: Mapped["User"] = relationship(back_populates="totp")
 
@@ -117,7 +117,7 @@ class RecoveryCode(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     code_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
     user: Mapped["User"] = relationship(back_populates="recovery_codes")
 
@@ -133,7 +133,7 @@ class TempTokenUsage(Base):
     purpose: Mapped[str] = mapped_column(String(20), nullable=False, default="2fa")
     txn_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
 
 class SetupTransaction(Base):
@@ -146,7 +146,7 @@ class SetupTransaction(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     expires_at: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
 
 class PendingRegistration(Base):
@@ -162,7 +162,7 @@ class PendingRegistration(Base):
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     expires_at: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
 
 class RecoveryTransaction(Base):
@@ -184,7 +184,7 @@ class RecoveryTransaction(Base):
     recovery_jti_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     completed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     expires_at: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
 
 class PasskeyCredential(Base):
@@ -196,7 +196,7 @@ class PasskeyCredential(Base):
     public_key: Mapped[str] = mapped_column(Text, nullable=False)
     sign_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     device_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
     user: Mapped["User"] = relationship(back_populates="passkey_credentials")
 
@@ -209,7 +209,20 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(200), nullable=False)
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+
+
+class PasskeyChallenge(Base):
+    """WebAuthn 挑战码，跨 worker 共享，过期自动失效。"""
+
+    __tablename__ = "passkey_challenges"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    challenge_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    challenge: Mapped[str] = mapped_column(Text, nullable=False)
+    consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    expires_at: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
 
 class OAuthState(Base):
@@ -222,4 +235,4 @@ class OAuthState(Base):
     purpose: Mapped[str] = mapped_column(String(20), nullable=False)  # "login" or "bind"
     consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     expires_at: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)

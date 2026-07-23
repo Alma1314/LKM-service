@@ -5,11 +5,12 @@ import hashlib
 import hmac
 import secrets
 
-from sqlalchemy import text
+from sqlalchemy import update as sa_update
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.core.err import BizError, ErrCode
 from app.core.throttle import RateLimiter
-from app.db.models import _now
+from app.db.models import now_iso
 from app.modules.auth.models import EmailVerification, PhoneVerification
 
 _CODE_EXPIRE_MINUTES = 10
@@ -77,7 +78,7 @@ def consume_email_code(
         .filter(
             EmailVerification.email == email,
             EmailVerification.purpose == purpose,
-            EmailVerification.used == False,  # noqa: E712
+            EmailVerification.used.is_(False),
         )
         .order_by(EmailVerification.created_at.desc())
         .first()
@@ -94,7 +95,7 @@ def consume_phone_code(
         .filter(
             PhoneVerification.phone == phone,
             PhoneVerification.purpose == purpose,
-            PhoneVerification.used == False,  # noqa: E712
+            PhoneVerification.used.is_(False),
         )
         .order_by(PhoneVerification.created_at.desc())
         .first()
@@ -106,7 +107,7 @@ def _consume(db, record, code: str) -> bool:
     if record is None:
         raise BizError(ErrCode.VERIFICATION_CODE_INVALID)
 
-    now = _now()
+    now = now_iso()
 
     # 过期检查
     if datetime.datetime.fromisoformat(record.expires_at) <= datetime.datetime.fromisoformat(now):
@@ -119,30 +120,33 @@ def _consume(db, record, code: str) -> bool:
     # 验证码不匹配 —— 通过子事务（保存点）递增计数器，
     contact = getattr(record, "email", None) or getattr(record, "phone", "")
     if not hmac.compare_digest(record.code_hash, hash_code(code, record.purpose, contact=contact, nonce=record.nonce)):
-        table_name = type(record).__tablename__
+        record_cls = type(record)
         sp = db.begin_nested()
         try:
             db.execute(
-                text(f"UPDATE {table_name} SET failed_attempts = failed_attempts + 1 WHERE id = :id"),
-                {"id": record.id},
+                sa_update(record_cls)
+                .where(record_cls.id == record.id)
+                .values(failed_attempts=record_cls.failed_attempts + 1)
             )
             db.flush()
             sp.commit()
-        except Exception:
+        except (IntegrityError, OperationalError):
             sp.rollback()
         db.refresh(record)
         raise BizError(ErrCode.VERIFICATION_CODE_INVALID)
 
-    table_name = type(record).__tablename__
+    record_cls = type(record)
     result = db.execute(
-        text(
-            f"UPDATE {table_name} SET used = 1 WHERE id = :id "
-            "AND used = 0 AND failed_attempts < :max_fail "
-            "AND expires_at > :now"
-        ),
-        {"id": record.id, "max_fail": _MAX_FAILED_ATTEMPTS, "now": now},
+        sa_update(record_cls)
+        .where(
+            record_cls.id == record.id,
+            record_cls.used.is_(False),
+            record_cls.failed_attempts < _MAX_FAILED_ATTEMPTS,
+            record_cls.expires_at > now,
+        )
+        .values(used=True)
     )
-    if result.rowcount != 1:
+    if result.rowcount != 1:  # type: ignore[union-attr]
         raise BizError(ErrCode.VERIFICATION_CODE_INVALID)
 
     db.flush()
@@ -160,6 +164,6 @@ def check_code_rate_limit(
 
 def _expires_at() -> str:
     return (
-        datetime.datetime.fromisoformat(_now())
+        datetime.datetime.fromisoformat(now_iso())
         + datetime.timedelta(minutes=_CODE_EXPIRE_MINUTES)
     ).isoformat()

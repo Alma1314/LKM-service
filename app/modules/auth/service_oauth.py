@@ -4,14 +4,14 @@ import datetime as dt
 import secrets
 
 import httpx
-from sqlalchemy import text
+from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.err import BizError, ErrCode
 from app.db.models import Profile, User
-from app.modules.auth.models import OAuthState, TOTP, UserOAuth
-from app.modules.auth.service_auth import _create_auth_response, log_audit, upgrade_to_normal
+from app.modules.auth.models import OAuthState, UserOAuth
+from app.modules.auth.service_auth import log_audit, upgrade_to_normal
 
 
 def _generate_oauth_state(db: Session, purpose: str) -> str:
@@ -26,14 +26,16 @@ def _generate_oauth_state(db: Session, purpose: str) -> str:
 def _consume_oauth_state(db: Session, state: str, purpose: str) -> None:
     now = dt.datetime.now(dt.timezone.utc).isoformat()
     result = db.execute(
-        text(
-            "UPDATE oauth_states SET consumed = 1 "
-            "WHERE state = :st AND consumed = 0 AND purpose = :purpose "
-            "AND expires_at > :now"
-        ),
-        {"st": state, "purpose": purpose, "now": now},
+        sa_update(OAuthState)
+        .where(
+            OAuthState.state == state,
+            OAuthState.consumed.is_(False),
+            OAuthState.purpose == purpose,
+            OAuthState.expires_at > now,
+        )
+        .values(consumed=True)
     )
-    if result.rowcount != 1:  # pyright: ignore[reportAttributeAccessIssue]
+    if result.rowcount != 1:  # type: ignore[union-attr]
         raise BizError(ErrCode.OAUTH_PROVIDER_ERROR, "Invalid or expired OAuth state")
 
 
@@ -115,10 +117,10 @@ async def handle_github_callback(db: Session, code: str, state: str) -> dict:
         .first()
     )
     if oauth:
-        user = db.query(User).filter(User.id == oauth.user_id).first()
+        user = db.query(User).filter(User.id == int(oauth.user_id)).first() # type: ignore[arg-type]
         if not user:
             raise BizError(ErrCode.USER_NOT_FOUND)
-        return _oauth_login_response(db, user)
+        return _oauth_login_response(db, user) # type: ignore[arg-type]
 
     # 2. 通过邮箱查找现有用户 -> 绑定
     if gh_user["provider_email"]:
@@ -126,15 +128,15 @@ async def handle_github_callback(db: Session, code: str, state: str) -> dict:
         if user:
             db.add(
                 UserOAuth(
-                    user_id=user.id,
+                    user_id=int(user.id), # type: ignore[arg-type]
                     provider="github",
                     provider_user_id=gh_user["provider_user_id"],
                     provider_email=gh_user["provider_email"],
                 )
             )
             db.flush()
-            upgrade_to_normal(db, user)
-            return _oauth_login_response(db, user)
+            upgrade_to_normal(db, user) # type: ignore[arg-type]
+            return _oauth_login_response(db, user) # type: ignore[arg-type]
 
     # 3. 创建新用户
     username = gh_user["login"]
@@ -154,12 +156,12 @@ async def handle_github_callback(db: Session, code: str, state: str) -> dict:
     db.add(user)
     db.flush()
 
-    db.add(Profile(user_id=user.id, role="member"))
+    db.add(Profile(user_id=int(user.id), role="member"))
     db.flush()
 
     db.add(
         UserOAuth(
-            user_id=user.id,
+            user_id=int(user.id),
             provider="github",
             provider_user_id=gh_user["provider_user_id"],
             provider_email=gh_user["provider_email"],
@@ -174,33 +176,9 @@ async def handle_github_callback(db: Session, code: str, state: str) -> dict:
 
 def _oauth_login_response(db: Session, user: User) -> dict:
     """检查 TOTP 要求并返回认证响应。"""
-    from app.modules.auth.security import create_temp_token
+    from app.modules.auth.service_auth import _finalize_auth_response
 
-    # 没有 TOTP 的管理员 —— 发放设置令牌（与 login_password 相同的模式）
-    if user.account_level == "admin":
-        totp = db.query(TOTP).filter(TOTP.user_id == user.id).first()
-        if not totp or not totp.enabled:
-            setup_token = create_temp_token(user.id, purpose="setup")
-            return {
-                "access_token": None,
-                "refresh_token": None,
-                "user_id": user.id,
-                "account_level": user.account_level,
-                "requires_2fa": True,
-                "setup_required": True,
-                "temp_token": setup_token,
-            }
-
-    # 检查 2FA
-    requires_2fa = False
-    if user.account_level in ("normal", "admin"):
-        totp = db.query(TOTP).filter(
-            TOTP.user_id == user.id, TOTP.enabled.is_(True)
-        ).first()
-        if totp:
-            requires_2fa = True
-
-    return _create_auth_response(db, user, requires_2fa=requires_2fa)
+    return _finalize_auth_response(db, user)
 
 
 async def bind_github(db: Session, user_id: int, code: str, state: str) -> dict:
@@ -225,7 +203,7 @@ async def bind_github(db: Session, user_id: int, code: str, state: str) -> dict:
 
     db.add(
         UserOAuth(
-            user_id=user.id,
+            user_id=int(user.id), # type: ignore[arg-type]
             provider="github",
             provider_user_id=gh_user["provider_user_id"],
             provider_email=gh_user["provider_email"],
@@ -233,6 +211,6 @@ async def bind_github(db: Session, user_id: int, code: str, state: str) -> dict:
     )
     db.flush()
 
-    upgrade_to_normal(db, user)
+    upgrade_to_normal(db, user) # type: ignore[arg-type]
 
     return {"message": "Github account bound"}

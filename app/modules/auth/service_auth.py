@@ -1,12 +1,16 @@
 """认证服务 —— 注册、密码登录、升级、刷新令牌。"""
 
-import asyncio
 import datetime as dt
 import hashlib
 import secrets
+from typing import Protocol, runtime_checkable
 
-from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+
+@runtime_checkable
+class BackgroundTasksLike(Protocol):
+    def add_task(self, func, *args, **kwargs) -> None: ...
 
 from app.core.config import settings
 from app.core.err import BizError, ErrCode
@@ -14,8 +18,6 @@ from app.db.models import User, Profile
 from app.modules.auth.models import AuditLog, MagicLink, RefreshToken, TOTP
 from app.modules.auth.schemas import (
     UserLoginPassword,
-    UserRegByEmail,
-    UserRegByPhone,
     UserRegLocal,
     UserRegNormal,
 )
@@ -56,15 +58,15 @@ def _hash_refresh_token(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def _store_refresh_token(db: Session, user_id: int, raw: str, mfa_verified: bool = False) -> str:
+def _store_refresh_token(db: Session, user_id: object, raw: str, mfa_verified: object = False) -> str:
     """持久化哈希后的刷新令牌并返回其过期时间戳字符串。"""
     days = settings.refresh_token_expire_days
     expires = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=days)
     expires_str = expires.isoformat()
     tok = RefreshToken(
-        user_id=user_id,
+        user_id=int(user_id),  # type: ignore[arg-type]
         token_hash=_hash_refresh_token(raw),
-        mfa_verified=mfa_verified,
+        mfa_verified=bool(mfa_verified),
         expires_at=expires_str,
     )
     db.add(tok)
@@ -126,50 +128,53 @@ def _check_account_locked(user: User) -> None:
         user.failed_login_attempts = 0
 
 
-def _record_failed_attempt(db: Session, user: User) -> None:
-    """通过子事务（保存点）递增登录失败计数器。"""
+def _isolated_update(db: Session, stmt) -> None:
+    """在子事务（savepoint）中执行一条 UPDATE，失败时静默回滚。"""
+    from sqlalchemy.exc import IntegrityError, OperationalError
 
-    # 在子事务中提交失败次数的递增
     sp = db.begin_nested()
     try:
-        db.execute(
-            text(
-                "UPDATE users SET failed_login_attempts = failed_login_attempts + 1 "
-                "WHERE id = :uid"
-            ),
-            {"uid": user.id},
-        )
+        db.execute(stmt)
         db.flush()
         sp.commit()
-    except Exception:
+    except (IntegrityError, OperationalError):
         sp.rollback()
 
-    # 刷新 ORM 对象，使调用方能看到新值
+
+def _record_failed_attempt(db: Session, user: User) -> None:
+    """通过子事务（保存点）递增登录失败计数器。"""
+    from sqlalchemy import update as sa_update
+
+    _isolated_update(
+        db,
+        sa_update(User)
+        .where(User.id == user.id)
+        .values(failed_login_attempts=User.failed_login_attempts + 1),
+    )
     db.refresh(user)
 
-    # 如果达到阈值，在另一个子事务中锁定账户
     if user.failed_login_attempts >= _FAIL_LOCK_THRESHOLD:
         locked_until = (
             dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=_FAIL_LOCK_MINUTES)
         ).isoformat()
-        sp2 = db.begin_nested()
-        try:
-            db.execute(
-                text("UPDATE users SET is_locked = 1, locked_until = :lu WHERE id = :uid"),
-                {"lu": locked_until, "uid": user.id},
-            )
-            db.flush()
-            sp2.commit()
-        except Exception:
-            sp2.rollback()
+        _isolated_update(
+            db,
+            sa_update(User)
+            .where(User.id == user.id)
+            .values(is_locked=True, locked_until=locked_until),
+        )
         db.refresh(user)
 
 def register_local(db: Session, info: UserRegLocal) -> dict:
-    """创建一个 ``local`` 账户并立即返回认证令牌。"""
+    """创建一个 ``local`` 账户，若已存在且密码正确则自动登录。"""
     username = _normalize_username(info.username)
     existing = db.query(User).filter(User.username == username).first()
     if existing:
-        raise BizError(ErrCode.ALREADY_REGISTERED)
+        hashed: str = existing.hashed_password  # type: ignore[assignment]
+        if not hashed or not verifypwd(info.password, hashed):
+            raise BizError(ErrCode.ALREADY_REGISTERED, "Account exists but password is incorrect")
+        upgrade_to_normal(db, existing) # type: ignore[arg-type]
+        return _create_auth_response(db, existing) # type: ignore[arg-type]
 
     user = User(
         username=username,
@@ -198,8 +203,8 @@ def register_normal_with_password(
     info: UserRegNormal,
     email_verified: bool = False,
     phone_verified: bool = False,
-) -> int:
-    """创建一个带密码的 ``normal`` 账户。"""
+) -> dict:
+    """创建一个带密码的 ``normal`` 账户，若已存在且密码正确则自动登录。"""
     has_email = info.email is not None
     has_phone = info.phone is not None
     if not has_email and not has_phone:
@@ -222,7 +227,16 @@ def register_normal_with_password(
         .first()
     )
     if existing:
-        raise BizError(ErrCode.ALREADY_REGISTERED)
+        hashed: str = existing.hashed_password  # type: ignore[assignment]
+        if not hashed or not verifypwd(info.password, hashed):
+            raise BizError(ErrCode.ALREADY_REGISTERED, "Account exists but password is incorrect")
+        if email_normalized and not existing.email:
+            existing.email = email_normalized
+        if info.phone and not existing.phone:
+            existing.phone = info.phone
+        upgrade_to_normal(db, existing) # type: ignore[arg-type]
+        db.flush()
+        return _create_auth_response(db, existing) # type: ignore[arg-type]
 
     user = User(
         username=username,
@@ -237,11 +251,11 @@ def register_normal_with_password(
     db.add(Profile(user_id=user.id, role="member"))
     db.flush()
 
-    return user.id
+    return _create_auth_response(db, user)
 
 
 def register_by_verify(db: Session, field: str, value: str) -> dict:
-    """通过邮箱或手机验证创建一个*无密码*的普通用户。"""
+    """通过邮箱或手机验证创建一个*无密码*的普通用户，若已存在则自动登录。"""
     if field not in ("email", "phone"):
         raise BizError(ErrCode.INVALID_INPUT, "field must be 'email' or 'phone'")
 
@@ -254,7 +268,10 @@ def register_by_verify(db: Session, field: str, value: str) -> dict:
         existing = db.query(User).filter(User.phone == normalized_value).first()
 
     if existing:
-        raise BizError(ErrCode.ALREADY_REGISTERED)
+        upgrade_to_normal(db, existing)  # type: ignore[arg-type]
+        db.flush()
+        log_audit(db, existing.id, "register_code", f"auto-login via {field}")
+        return _create_auth_response(db, existing)  # type: ignore[arg-type]
 
     # 从值中派生用户名
     if field == "email":
@@ -339,40 +356,53 @@ def _consume_pending_normal_registration(
     if pending.consumed:
         raise BizError(ErrCode.TOKEN_INVALID, "Registration already completed")
     now = dt.datetime.now(dt.timezone.utc)
-    if dt.datetime.fromisoformat(pending.expires_at) <= now:
+    if dt.datetime.fromisoformat(str(pending.expires_at)) <= now:
         raise BizError(ErrCode.TOKEN_EXPIRED, "Registration expired")
 
     # 验证所有提交的联系方式 —— 每个提供的联系方式都必须经过验证。
+    from sqlalchemy.exc import IntegrityError, OperationalError
     sp = db.begin_nested()
     try:
         if pending.email:
             assert email_code is not None
-            consume_email_code(db, pending.email, email_code, "register")
+            consume_email_code(db, str(pending.email), email_code, "register")
         if pending.phone:
             assert phone_code is not None
-            consume_phone_code(db, pending.phone, phone_code, "register")
+            consume_phone_code(db, str(pending.phone), phone_code, "register")
         sp.commit()
-    except Exception:
+    except (IntegrityError, OperationalError):
         sp.rollback()
         raise
 
     pending.consumed = True
     db.flush()
 
-    # 检查重复
+    # 检查重复 —— 如果已存在且密码正确则自动登录
     existing = db.query(User).filter(
         (User.username == pending.username)
         | ((User.email == pending.email) if pending.email else False)
         | ((User.phone == pending.phone) if pending.phone else False)
     ).first()
     if existing:
-        raise BizError(ErrCode.ALREADY_REGISTERED)
+        hashed: str = existing.hashed_password  # type: ignore[assignment]
+        pending_hashed: str = pending.hashed_password  # type: ignore[assignment]
+        if not hashed or not verifypwd(pending_hashed, hashed):
+            raise BizError(ErrCode.ALREADY_REGISTERED, "Account exists but password is incorrect")
+        # 将联系方式绑定到已有账户
+        if pending.email and not existing.email:
+            existing.email = pending.email
+        if pending.phone and not existing.phone:
+            existing.phone = pending.phone
+        upgrade_to_normal(db, existing) # type: ignore[arg-type]
+        db.flush()
+        log_audit(db, existing.id, "register_normal", "auto-login via registration")
+        return _create_auth_response(db, existing) # type: ignore[arg-type]
 
     user = User(
-        username=pending.username,
-        email=pending.email,
-        phone=pending.phone,
-        hashed_password=pending.hashed_password,
+        username=str(pending.username),
+        email=str(pending.email) if pending.email else None,
+        phone=str(pending.phone) if pending.phone else None,
+        hashed_password=str(pending.hashed_password),
         account_level="normal",
     )
     db.add(user)
@@ -393,6 +423,40 @@ def _consume_pending_normal_registration(
         "requires_2fa": False,
         "temp_token": None,
     }
+
+def _check_admin_totp_required(db: Session, user: User) -> dict | None:
+    """如果用户是管理员但尚未设置 TOTP，返回 setup 响应；否则返回 None。"""
+    if str(user.account_level) != "admin":
+        return None
+    totp = db.query(TOTP).filter(TOTP.user_id == user.id).first()
+    if totp and totp.enabled:
+        return None
+    setup_token = create_temp_token(user.id, purpose="setup")
+    return {
+        "access_token": None,
+        "refresh_token": None,
+        "user_id": int(user.id),
+        "account_level": str(user.account_level),
+        "requires_2fa": True,
+        "setup_required": True,
+        "temp_token": setup_token,
+    }
+
+
+def _finalize_auth_response(db: Session, user: User) -> dict:
+    """检查管理员 TOTP 和 2FA 要求，返回认证响应。"""
+    admin_setup = _check_admin_totp_required(db, user)
+    if admin_setup is not None:
+        return admin_setup
+
+    requires_2fa = False
+    if str(user.account_level) in ("normal", "admin"):
+        totp = db.query(TOTP).filter(TOTP.user_id == user.id, TOTP.enabled.is_(True)).first()
+        if totp:
+            requires_2fa = True
+
+    return _create_auth_response(db, user, requires_2fa=requires_2fa)  # type: ignore[arg-type]
+
 
 def login_password(db: Session, info: UserLoginPassword, ip_address: str = "") -> dict:
     """通过用户名、邮箱或手机号 + 密码进行认证。"""
@@ -418,62 +482,47 @@ def login_password(db: Session, info: UserLoginPassword, ip_address: str = "") -
         verifypwd(info.password, "$dummy$" + "a" * 64)
         raise BizError(ErrCode.INVALID_CREDENTIALS)
 
-    _check_account_locked(user)
+    _check_account_locked(user) # type: ignore[arg-type]
 
     try:
-        ok = verifypwd(info.password, user.hashed_password)
-    except Exception:
+        ok = verifypwd(info.password, str(user.hashed_password))
+    except (ValueError, TypeError):
+        import logging
+        logging.getLogger("auth.login").exception(
+            "verifypwd raised exception for user_id=%s (possible corrupted hash)", user.id
+        )
         ok = False
     if not ok:
-        _record_failed_attempt(db, user)
+        _record_failed_attempt(db, user) # type: ignore[arg-type]
         if user.failed_login_attempts >= _FAIL_LOCK_THRESHOLD:
             log_audit(db, user.id, "account_locked", "5 failed login attempts")
         raise BizError(ErrCode.INVALID_CREDENTIALS)
 
-    # 成功 —— 通过原子 SQL 重置计数器（提交操作不受调用方回滚影响）
-    db.execute(
-        text(
-            "UPDATE users SET failed_login_attempts = 0, is_locked = 0, "
-            "locked_until = NULL WHERE id = :uid"
-        ),
-        {"uid": user.id},
-    )
-    db.flush()
-    db.commit()
+    # 成功 —— 通过子事务（savepoint）原子性地重置计数器，
+    # 防止调用方回滚时把失败计数器也一并回滚。
+    from sqlalchemy import update as sa_update
+    from sqlalchemy.exc import IntegrityError, OperationalError
+    sp = db.begin_nested()
+    try:
+        db.execute(
+            sa_update(User)
+            .where(User.id == user.id)
+            .values(failed_login_attempts=0, is_locked=False, locked_until=None)
+        )
+        db.flush()
+        sp.commit()
+    except (IntegrityError, OperationalError):
+        sp.rollback()
     db.refresh(user)
 
     log_audit(db, user.id, "login_password", "success")
 
-    # 没有 TOTP 的管理员必须设置它 —— 发放一个受限的设置令牌，
-    # 以便管理员可以调用 /auth/2fa/setup/begin 而不被锁定。
-    if user.account_level == "admin":
-        totp = db.query(TOTP).filter(TOTP.user_id == user.id).first()
-        if not totp or not totp.enabled:
-            setup_token = create_temp_token(user.id, purpose="setup")
-            return {
-                "access_token": None,
-                "refresh_token": None,
-                "user_id": user.id,
-                "account_level": user.account_level,
-                "requires_2fa": True,
-                "setup_required": True,
-                "temp_token": setup_token,
-            }
-
-    # 检查 2FA
-    requires_2fa = False
-    if user.account_level in ("normal", "admin"):
-        totp = db.query(TOTP).filter(TOTP.user_id == user.id, TOTP.enabled.is_(True)).first()
-        if totp:
-            requires_2fa = True
-
-    return _create_auth_response(db, user, requires_2fa=requires_2fa)
+    return _finalize_auth_response(db, user) # type: ignore[arg-type]
 
 
 def login_code(db: Session, contact: str, code: str) -> dict:
     """使用有时效性的验证码进行认证。"""
     from app.modules.auth.service_verify import consume_email_code, consume_phone_code
-    from app.modules.auth.models import TOTP
 
     if "@" in contact:
         consume_email_code(db, contact, code, "login")
@@ -489,30 +538,10 @@ def login_code(db: Session, contact: str, code: str) -> dict:
         raise BizError(ErrCode.ACCOUNT_LEVEL_INSUFFICIENT)
 
     if user.is_locked:
-        _check_account_locked(user)
+        _check_account_locked(user) # type: ignore[arg-type]
 
     # 没有 TOTP 的管理员 —— 与密码登录相同的设置流程
-    if user.account_level == "admin":
-        totp = db.query(TOTP).filter(TOTP.user_id == user.id).first()
-        if not totp or not totp.enabled:
-            setup_token = create_temp_token(user.id, purpose="setup")
-            return {
-                "access_token": None,
-                "refresh_token": None,
-                "user_id": user.id,
-                "account_level": user.account_level,
-                "requires_2fa": True,
-                "setup_required": True,
-                "temp_token": setup_token,
-            }
-
-    requires_2fa = False
-    if user.account_level in ("normal", "admin"):
-        totp = db.query(TOTP).filter(TOTP.user_id == user.id, TOTP.enabled.is_(True)).first()
-        if totp:
-            requires_2fa = True
-
-    return _create_auth_response(db, user, requires_2fa=requires_2fa)
+    return _finalize_auth_response(db, user) # type: ignore[arg-type]
 
 def request_magic_link(
     db: Session,
@@ -520,6 +549,7 @@ def request_magic_link(
     email_provider: EmailProvider,
     purpose: str = "login",
     frontend_url: str = "",
+    background_tasks: BackgroundTasksLike | None = None,
 ) -> None:
     """仅在用户存在时为*邮箱*生成一个魔法链接。
 
@@ -556,7 +586,8 @@ def request_magic_link(
     base_url = frontend_url or settings.api_prefix
     link = f"{base_url}/auth/login/magic-link/verify?token={raw_token}"
 
-    asyncio.create_task(email_provider.send_magic_link(email, link))
+    if background_tasks is not None:
+        background_tasks.add_task(email_provider.send_magic_link, email, link)
 
 
 def verify_magic_link(
@@ -580,16 +611,19 @@ def verify_magic_link(
 
     # 原子消费：仅在尚未使用、未过期且用途匹配时才标记为已使用。
     # 这可防止并发重放攻击。
+    from sqlalchemy import update as sa_update
 
     result = db.execute(
-        text(
-            "UPDATE magic_links SET used = 1 "
-            "WHERE token_hash = :hash AND used = 0 AND purpose = :purpose "
-            "AND expires_at > :now"
-        ),
-        {"hash": token_hash, "purpose": purpose, "now": now_iso},
+        sa_update(MagicLink)
+        .where(
+            MagicLink.token_hash == token_hash,
+            MagicLink.used.is_(False),
+            MagicLink.purpose == purpose,
+            MagicLink.expires_at > now_iso,
+        )
+        .values(used=True)
     )
-    if result.rowcount != 1:  # pyright: ignore[reportAttributeAccessIssue]
+    if result.rowcount != 1:  # type: ignore[union-attr]
         # 令牌可能已过期或不存在 —— 检查具体是哪一种情况
         link_record = (
             db.query(MagicLink)
@@ -637,7 +671,7 @@ def verify_magic_link(
         if totp:
             requires_2fa = True
 
-    return _create_auth_response(db, user, requires_2fa=requires_2fa)
+    return _create_auth_response(db, user, requires_2fa=requires_2fa) # type: ignore[arg-type]
 
 def upgrade_to_normal(db: Session, user: User) -> None:
     """将 ``local`` 用户升级为 ``normal``。对于已是 normal 或 admin 的用户无操作。"""
@@ -652,14 +686,13 @@ def refresh_access_token(db: Session, raw_refresh: str) -> dict:
     now = _now()
 
     # 原子撤销：仅在令牌存在且尚未被撤销时才撤销
+    from sqlalchemy import update as sa_update
     result = db.execute(
-        text(
-            "UPDATE refresh_tokens SET revoked_at = :now "
-            "WHERE token_hash = :hash AND revoked_at IS NULL"
-        ),
-        {"now": now, "hash": tok_hash},
+        sa_update(RefreshToken)
+        .where(RefreshToken.token_hash == tok_hash, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=now)
     )
-    if result.rowcount != 1:  # pyright: ignore[reportAttributeAccessIssue]
+    if result.rowcount != 1:  # type: ignore[union-attr]
         # 令牌已被使用、不存在或已被撤销
         raise BizError(ErrCode.TOKEN_INVALID)
 
@@ -671,7 +704,7 @@ def refresh_access_token(db: Session, raw_refresh: str) -> dict:
         raise BizError(ErrCode.TOKEN_INVALID)
 
     # 过期检查
-    expires = dt.datetime.fromisoformat(stored.expires_at)
+    expires = dt.datetime.fromisoformat(str(stored.expires_at))
     if dt.datetime.now(dt.timezone.utc) >= expires:
         raise BizError(ErrCode.TOKEN_EXPIRED)
 
@@ -705,23 +738,26 @@ def revoke_all_refresh_tokens(db: Session, user_id: int) -> None:
         RefreshToken.revoked_at.is_(None),
     ).update({"revoked_at": _now()}, synchronize_session="fetch")
     # 递增 token_version 以使所有现有访问令牌失效
+    from sqlalchemy import update as sa_update
     db.execute(
-        text("UPDATE users SET token_version = token_version + 1 WHERE id = :uid"),
-        {"uid": user_id},
+        sa_update(User)
+        .where(User.id == user_id)
+        .values(token_version=User.token_version + 1)
     )
     db.flush()
 
 
 def log_audit(
     db: Session,
-    user_id: int | None,
+    user_id: object,
     action: str,
     detail: str | None = None,
     ip_address: str | None = None,
 ) -> None:
     """创建一条审计日志记录。"""
+    uid: int | None = int(user_id) if user_id is not None else None  # type: ignore[arg-type]
     entry = AuditLog(
-        user_id=user_id,
+        user_id=uid,
         action=action,
         detail=detail,
         ip_address=ip_address,

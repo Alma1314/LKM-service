@@ -1,4 +1,5 @@
 import base64
+import binascii
 import hashlib
 import hmac
 import os
@@ -50,20 +51,20 @@ _TEMP_TYPE = "temp"
 
 
 def create_access_token(
-    user_id: int,
-    account_level: str,
-    role: str,
+    user_id: object,
+    account_level: object,
+    role: object,
     trust_device: bool = False,
-    token_version: int = 0,
+    token_version: object = 0,
 ) -> str:
     now = int(time.time())
     payload = {
-        "user_id": user_id,
-        "account_level": account_level,
-        "role": role,
+        "user_id": int(user_id),  # type: ignore[arg-type]
+        "account_level": str(account_level),
+        "role": str(role),
         "trust_device": trust_device,
         "type": _ACCESS_TYPE,
-        "token_version": token_version,
+        "token_version": int(token_version),  # type: ignore[arg-type]
         "iat": now,
         "exp": now + settings.access_token_expire_minutes * 60,
     }
@@ -131,7 +132,7 @@ def _totp_code(key: bytes, counter: int) -> str:
 def verify_totp(secret: str, code: str, window: int = 1) -> int | None:
     try:
         key = base64.b32decode(secret, casefold=True)
-    except Exception:
+    except (binascii.Error, ValueError):
         return None
     now = _totp_now()
     for step in range(now - window, now + window + 1):

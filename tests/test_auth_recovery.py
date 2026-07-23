@@ -124,7 +124,7 @@ def _create_magic_link(db, email, purpose="reset"):
     import datetime as dt
     import secrets
 
-    from app.db.models import _now
+    from app.db.models import now_iso as _now
 
     raw = secrets.token_hex(32)
     token_hash = hashlib.sha256(raw.encode()).hexdigest()

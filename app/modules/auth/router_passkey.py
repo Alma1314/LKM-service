@@ -14,12 +14,22 @@ from sqlalchemy.orm import Session
 from app.core.err import respond
 from app.db.session import get_session
 from app.modules.auth import service_passkey
-from app.modules.auth.deps import CurrentUser, RequireLevel, get_current_user
+from app.modules.auth.deps import CurrentUser, get_current_user
+from app.modules.auth.schemas import (
+    AuthTokenData,
+    MessageResponse,
+    PasskeyCredentialItem,
+    PasskeyLoginCompleteRequest,
+    PasskeyLoginOptionsResponse,
+    PasskeyRegisterCompleteRequest,
+    PasskeyRegisterCompleteResponse,
+    PasskeyRegistrationOptionsResponse,
+)
 from app.modules.common import ApiResp
 
 router = APIRouter(prefix="/auth/passkey", tags=["auth-passkey"])
 
-@router.post("/register/begin", response_model=ApiResp[dict])
+@router.post("/register/begin", response_model=ApiResp[PasskeyRegistrationOptionsResponse])
 @respond
 def begin_passkey_registration(
     cur: CurrentUser = Depends(get_current_user),
@@ -29,18 +39,18 @@ def begin_passkey_registration(
     result = service_passkey.begin_passkey_registration(db, cur.id)
     return result
 
-@router.post("/register/complete", response_model=ApiResp[dict])
+@router.post("/register/complete", response_model=ApiResp[PasskeyRegisterCompleteResponse])
 @respond
 def complete_passkey_registration(
-    body: dict,
+    body: PasskeyRegisterCompleteRequest,
     cur: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_session),
 ):
     """使用客户端传来的凭据完成 Passkey 注册。"""
-    result = service_passkey.complete_passkey_registration(db, cur.id, body)
+    result = service_passkey.complete_passkey_registration(db, cur.id, body.model_dump())
     return result
 
-@router.post("/login/begin", response_model=ApiResp[dict])
+@router.post("/login/begin", response_model=ApiResp[PasskeyLoginOptionsResponse])
 @respond
 def begin_passkey_login(
     db: Session = Depends(get_session),
@@ -49,17 +59,17 @@ def begin_passkey_login(
     result = service_passkey.begin_passkey_login(db)
     return result
 
-@router.post("/login/complete", response_model=ApiResp[dict])
+@router.post("/login/complete", response_model=ApiResp[AuthTokenData])
 @respond
 def complete_passkey_login(
-    body: dict,
+    body: PasskeyLoginCompleteRequest,
     db: Session = Depends(get_session),
 ):
     """使用客户端传来的凭据完成 Passkey 登录。"""
-    result = service_passkey.complete_passkey_login(db, body)
+    result = service_passkey.complete_passkey_login(db, body.model_dump())
     return result
 
-@router.get("/credentials", response_model=ApiResp[list])
+@router.get("/credentials", response_model=ApiResp[list[PasskeyCredentialItem]])
 @respond
 def list_credentials(
     cur: CurrentUser = Depends(get_current_user),
@@ -69,7 +79,7 @@ def list_credentials(
     result = service_passkey.list_credentials(db, cur.id)
     return result
 
-@router.delete("/{cred_id}", response_model=ApiResp[dict])
+@router.delete("/{cred_id}", response_model=ApiResp[MessageResponse])
 @respond
 def delete_credential(
     cred_id: int,

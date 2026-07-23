@@ -1,19 +1,27 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.err import BizError, ErrCode, respond
+from app.db.models import User as UserModel, Profile
 from app.db.session import get_session
 from app.modules.auth import service_auth
 from app.modules.auth.deps import (
     CurrentUser,
     get_current_user,
+    get_email_provider,
     get_sms_provider,
 )
+from app.modules.auth.providers.base import EmailProvider
 from app.modules.auth.schemas import (
     AuthTokenData,
+    MessageResponse,
     ProfileInfo,
     ProfileUpdate,
     RefreshRequest,
+    RegByEmailResponse,
+    RegByPhoneResponse,
+    RegNormalResponse,
     TokenPair,
     UserIdData,
     UserLoginInfo,
@@ -24,20 +32,30 @@ from app.modules.auth.schemas import (
     UserRegLocal,
     UserRegNormal,
 )
+from app.modules.auth.security import hashpwd, verifypwd
 from app.modules.auth.service import get_profile, update_profile
+from app.modules.auth.service_auth import (
+    _consume_pending_normal_registration,
+    _create_auth_response,
+    _store_pending_normal_registration,
+    login_password,
+    upgrade_to_normal,
+)
+from app.modules.auth.service_verify import (
+    check_code_rate_limit,
+    consume_email_code,
+    consume_phone_code,
+    create_email_verification,
+    create_phone_verification,
+)
 from app.modules.common import ApiResp
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-@router.post("/reg", response_model=ApiResp[UserIdData])
+@router.post("/reg", response_model=ApiResp[AuthTokenData])
 @respond
 def reg(user: UserRegInfo, db: Session = Depends(get_session)):
-    """创建一个仅限本地的账号（无邮箱绑定）。"""
-    from app.core.err import BizError, ErrCode
-
-    # 强制设为 account_level="local"，无论输入如何，确保此旧端点无法在未验证的情况下绑定联系方式。
-    from app.modules.auth.security import hashpwd
-    from app.db.models import User as UserModel, Profile
+    """创建一个仅限本地的账号（无邮箱绑定），若已存在且密码正确则自动登录。"""
 
     existing = (
         db.query(UserModel)
@@ -45,7 +63,11 @@ def reg(user: UserRegInfo, db: Session = Depends(get_session)):
         .first()
     )
     if existing:
-        raise BizError(ErrCode.ALREADY_REGISTERED)
+        hashed: str = existing.hashed_password  # type: ignore[assignment]
+        if not hashed or not verifypwd(user.password, hashed):
+            raise BizError(ErrCode.ALREADY_REGISTERED, "Account exists but password is incorrect")
+        upgrade_to_normal(db, existing) # type: ignore[assignment]
+        return _create_auth_response(db, existing) # type: ignore[assignment]
 
     account = UserModel(
         username=user.username,
@@ -56,16 +78,13 @@ def reg(user: UserRegInfo, db: Session = Depends(get_session)):
     db.flush()
     db.add(Profile(user_id=account.id))
     db.flush()
-    return {"user_id": account.id}
+    return _create_auth_response(db, account)
 
 
 @router.post("/login", response_model=ApiResp[UserIdData])
 @respond
 def login_route(user: UserLoginInfo, db: Session = Depends(get_session)):
     """当需要 2FA 时，此端点返回错误。"""
-
-    from app.modules.auth.service_auth import login_password
-    from app.modules.auth.schemas import UserLoginPassword
 
     result = login_password(
         db, UserLoginPassword(account=user.username, password=user.password)
@@ -111,14 +130,14 @@ def register_local(info: UserRegLocal, db: Session = Depends(get_session)):
     return service_auth.register_local(db, info)
 
 
-@router.post("/reg/normal", response_model=ApiResp[dict])
+@router.post("/reg/normal", response_model=ApiResp[RegNormalResponse])
 @respond
 def register_normal_with_password_route(
-    info: UserRegNormal, db: Session = Depends(get_session)
+    info: UserRegNormal,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_session),
 ):
     """发起普通注册 """
-    from app.modules.auth.service_auth import _store_pending_normal_registration
-
     if not info.email and not info.phone:
         raise BizError(
             ErrCode.INVALID_INPUT,
@@ -138,19 +157,15 @@ def register_normal_with_password_route(
     }
 
     if info.email:
-        from app.modules.auth.service_verify import check_code_rate_limit, create_email_verification
         check_code_rate_limit(f"reg:email:{info.email}", max_count=5, window=3600)
         email_code, _ = create_email_verification(db, info.email, "register")
-        import asyncio
-        asyncio.create_task(get_email_provider().send_code(info.email, email_code))
+        background_tasks.add_task(get_email_provider().send_code, info.email, email_code)
         result["email_sent"] = True
 
     if info.phone:
-        from app.modules.auth.service_verify import check_code_rate_limit, create_phone_verification
         check_code_rate_limit(f"reg:phone:{info.phone}", max_count=5, window=3600)
         phone_code, _ = create_phone_verification(db, info.phone, "register")
-        import asyncio
-        asyncio.create_task(get_sms_provider().send_code(info.phone, phone_code))
+        background_tasks.add_task(get_sms_provider().send_code, info.phone, phone_code)
         result["phone_sent"] = True
 
     return result
@@ -165,26 +180,22 @@ def register_normal_verify(
     db: Session = Depends(get_session),
 ):
     """使用用户名+密码+联系方式完成普通注册。"""
-    from app.modules.auth.service_auth import _consume_pending_normal_registration
-
     return _consume_pending_normal_registration(
         db, txn_id, email_code=email_code, phone_code=phone_code
     )
 
 
-@router.post("/reg/phone", response_model=ApiResp[dict])
+@router.post("/reg/phone", response_model=ApiResp[RegByPhoneResponse])
 @respond
-def register_phone(info: UserRegByPhone, db: Session = Depends(get_session)):
+def register_phone(
+    info: UserRegByPhone,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_session),
+):
     """发起仅手机号的注册。发送短信验证码。"""
-    from app.modules.auth.service_verify import (
-        check_code_rate_limit,
-        create_phone_verification,
-    )
     check_code_rate_limit(f"reg:phone:{info.phone}", max_count=5, window=3600)
     code, _ = create_phone_verification(db, info.phone, "register")
-    sms_provider = get_sms_provider()
-    import asyncio
-    asyncio.create_task(sms_provider.send_code(info.phone, code))
+    background_tasks.add_task(get_sms_provider().send_code, info.phone, code)
     return {"phone": info.phone, "message": "SMS verification code sent"}
 
 
@@ -192,24 +203,22 @@ def register_phone(info: UserRegByPhone, db: Session = Depends(get_session)):
 @respond
 def register_phone_verify(phone: str, code: str, db: Session = Depends(get_session)):
     """完成仅手机号的注册 — 创建一个普通账号（无密码）。"""
-    from app.modules.auth.service_verify import consume_phone_code
+    check_code_rate_limit(f"reg:phone:verify:{phone}", max_count=5, window=3600)
     consume_phone_code(db, phone, code, "register")
     return service_auth.register_by_verify(db, "phone", phone)
 
 
-@router.post("/reg/email", response_model=ApiResp[dict])
+@router.post("/reg/email", response_model=ApiResp[RegByEmailResponse])
 @respond
-def register_email(info: UserRegByEmail, db: Session = Depends(get_session)):
+def register_email(
+    info: UserRegByEmail,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_session),
+):
     """发起仅邮箱的注册。发送邮箱验证码。"""
-    from app.modules.auth.service_verify import (
-        check_code_rate_limit,
-        create_email_verification,
-    )
     check_code_rate_limit(f"reg:email:{info.email}", max_count=5, window=3600)
     code, _ = create_email_verification(db, info.email, "register")
-    email_provider = get_email_provider()
-    import asyncio
-    asyncio.create_task(email_provider.send_code(info.email, code))
+    background_tasks.add_task(get_email_provider().send_code, info.email, code)
     return {"email": info.email, "message": "Email verification code sent"}
 
 
@@ -217,20 +226,19 @@ def register_email(info: UserRegByEmail, db: Session = Depends(get_session)):
 @respond
 def register_email_verify(email: str, code: str, db: Session = Depends(get_session)):
     """完成仅邮箱的注册 — 创建一个普通账号（无密码）。"""
-    from app.modules.auth.service_verify import consume_email_code
+    check_code_rate_limit(f"reg:email:verify:{email}", max_count=5, window=3600)
     consume_email_code(db, email, code, "register")
     return service_auth.register_by_verify(db, "email", email)
 
 
-@router.post("/login/code/request", response_model=ApiResp[dict])
+@router.post("/login/code/request", response_model=ApiResp[MessageResponse])
 @respond
 def login_code_request(
     contact: str,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_session),
 ):
     """请求登录验证码。自动检测邮箱还是手机号。"""
-    from app.modules.auth.service_verify import check_code_rate_limit
-    from app.db.models import User as UserModel
 
     # 无论用户是否存在，都进行速率限制
     check_code_rate_limit(f"login:code:{contact}", max_count=5, window=3600)
@@ -246,20 +254,12 @@ def login_code_request(
         return {"message": "If account exists, verification code sent"}
 
     # 用户存在 — 创建并发送验证码
-    from app.modules.auth.service_verify import (
-        create_email_verification,
-        create_phone_verification,
-    )
-    import asyncio
-
     if "@" in contact:
         code, _ = create_email_verification(db, contact, "login")
-        email_provider = get_email_provider()
-        asyncio.create_task(email_provider.send_code(contact, code))
+        background_tasks.add_task(get_email_provider().send_code, contact, code)
     else:
         code, _ = create_phone_verification(db, contact, "login")
-        sms_provider = get_sms_provider()
-        asyncio.create_task(sms_provider.send_code(contact, code))
+        background_tasks.add_task(get_sms_provider().send_code, contact, code)
 
     return {"message": "Verification code sent"}
 
@@ -272,6 +272,7 @@ def login_code(
     db: Session = Depends(get_session),
 ):
     """使用验证码登录。仅限普通/管理员用户。"""
+    check_code_rate_limit(f"login:code:verify:{contact}", max_count=5, window=3600)
     return service_auth.login_code(db, contact, code)
 
 
@@ -284,24 +285,21 @@ def login_password_route(info: UserLoginPassword, db: Session = Depends(get_sess
 @router.post("/refresh", response_model=ApiResp[TokenPair])
 @respond
 def refresh_access_token_route(info: RefreshRequest, db: Session = Depends(get_session)):
+    check_code_rate_limit("token:refresh:global", max_count=30, window=60)
     return service_auth.refresh_access_token(db, info.refresh_token)
 
 
-@router.post("/logout", response_model=ApiResp[dict])
+@router.post("/logout", response_model=ApiResp[MessageResponse])
 @respond
 def logout_route(cur: CurrentUser = Depends(get_current_user), db: Session = Depends(get_session)):
     service_auth.revoke_all_refresh_tokens(db, cur.id)
     return {"message": "Logged out successfully"}
 
 
-from app.core.config import settings as _settings
-from app.modules.auth.deps import get_email_provider
-from app.modules.auth.providers.base import EmailProvider
-
-
-@router.post("/login/magic-link/request", response_model=ApiResp[dict])
+@router.post("/login/magic-link/request", response_model=ApiResp[MessageResponse])
 @respond
 def magic_link_request(
+    background_tasks: BackgroundTasks,
     email: str = Query(...),
     email_provider: EmailProvider = Depends(get_email_provider),
     db: Session = Depends(get_session),
@@ -311,7 +309,8 @@ def magic_link_request(
         email,
         email_provider,
         purpose="login",
-        frontend_url=_settings.frontend_callback,
+        frontend_url=settings.frontend_callback,
+        background_tasks=background_tasks,
     )
     return {"message": "If email exists, magic link sent"}
 
@@ -322,4 +321,5 @@ def magic_link_verify(
     token: str,
     db: Session = Depends(get_session),
 ):
+    check_code_rate_limit("magic-link:verify:global", max_count=10, window=3600)
     return service_auth.verify_magic_link(db, token, purpose="login")

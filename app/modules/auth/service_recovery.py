@@ -1,13 +1,13 @@
 """密码恢复服务。"""
 
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.err import BizError, ErrCode
 from app.db.models import User
-from app.modules.auth.models import TOTP
+from app.modules.auth.models import RecoveryTransaction, TOTP
 from app.modules.auth.security import hashpwd
 from app.modules.auth.service_auth import (
+    BackgroundTasksLike,
     log_audit,
     revoke_all_refresh_tokens,
     verify_magic_link,
@@ -38,7 +38,7 @@ def _find_user_by_contact(db: Session, field: str, value: str) -> User:
             "Admin accounts must use the dedicated admin recovery flow",
         )
 
-    return user
+    return user # type: ignore[arg-type]
 
 
 def _user_requires_mfa(db: Session, user: User) -> bool:
@@ -51,7 +51,7 @@ def _user_requires_mfa(db: Session, user: User) -> bool:
 
 def _reset_password(db: Session, user: User, new_password: str) -> None:
     """哈希新密码、设置它、解锁账户、撤销所有令牌，并记录审计日志。"""
-    from app.db.models import _now
+    from app.db.models import now_iso as _now
 
     user.hashed_password = hashpwd(new_password)
     user.is_locked = False
@@ -64,7 +64,7 @@ def _reset_password(db: Session, user: User, new_password: str) -> None:
 
     log_audit(db, user.id, "password_reset", detail="recovery")
 
-def check_recovery_methods(db: Session, account: str) -> dict:
+def check_recovery_methods(_db: Session, _account: str) -> dict:
     """检查账户可用的恢复方法。 """
     # 始终统一 —— 不泄露账户是否存在、是否为 local 或 admin
     return {"recoverable": False}
@@ -121,12 +121,12 @@ def recover_by_magic_link(db: Session, token: str, new_password: str | None = No
             "Admin accounts must use the dedicated admin recovery flow",
         )
 
-    if _user_requires_mfa(db, user):
-        return _start_user_recovery_txn(db, user)
+    if _user_requires_mfa(db, user): # type: ignore[arg-type]
+        return _start_user_recovery_txn(db, user) # type: ignore[arg-type]
 
     if not new_password:
         raise BizError(ErrCode.INVALID_INPUT, "new_password is required")
-    _reset_password(db, user, new_password)
+    _reset_password(db, user, new_password) # type: ignore[arg-type]
     return {"message": "Password reset successful"}
 
 
@@ -137,7 +137,6 @@ def _start_user_recovery_txn(db: Session, user: User) -> dict:
     txn_id = _generate_recovery_txn_id()
     expires_at = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=15)).isoformat()
 
-    from app.modules.auth.models import RecoveryTransaction
     from app.modules.auth.security import create_temp_token
 
     contact = user.email or user.phone or ""
@@ -168,22 +167,27 @@ def _generate_recovery_txn_id() -> str:
     return secrets.token_hex(32)
 
 
-def recover_admin_begin(db: Session, contact: str) -> dict:
-    """第 1 步：启动管理员恢复。"""
+def recover_admin_begin(
+    db: Session, contact: str,
+    background_tasks: BackgroundTasksLike | None = None,
+) -> dict:
+    """第 1 步：启动管理员恢复。服务层负责生成验证码并通过 background_tasks 发送。"""
+
+    from app.modules.auth.deps import get_email_provider, get_sms_provider
+
     user = db.query(User).filter(
         (User.email == contact) | (User.phone == contact)
     ).first()
 
-    if user and user.account_level == "admin":
+    if user and str(user.account_level) == "admin":
         import datetime as _dt
 
         txn_id = _generate_recovery_txn_id()
         expires_at = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=15)).isoformat()
 
-        from app.modules.auth.models import RecoveryTransaction
         txn = RecoveryTransaction(
             txn_id=txn_id,
-            user_id=user.id,
+            user_id=user.id, # type: ignore[arg-type]
             contact=contact,
             contact_verified=False,
             totp_verified=False,
@@ -203,16 +207,17 @@ def recover_admin_begin(db: Session, contact: str) -> dict:
         if "@" in contact:
             check_code_rate_limit(f"recover:admin:{contact}", max_count=3, window=3600)
             code, _ = create_email_verification(db, contact, "reset")
+            if background_tasks is not None:
+                background_tasks.add_task(get_email_provider().send_code, contact, code)
         else:
             check_code_rate_limit(f"recover:admin:{contact}", max_count=3, window=3600)
             code, _ = create_phone_verification(db, contact, "reset")
+            if background_tasks is not None:
+                background_tasks.add_task(get_sms_provider().send_code, contact, code)
 
         return {
             "message": "If the account is eligible, recovery instructions have been sent.",
             "txn_id": txn_id,
-            "_send_code": True,
-            "_contact": contact,
-            "_code": code,
         }
 
     from app.modules.auth.security import verifypwd as _vpw
@@ -224,7 +229,6 @@ def recover_admin_begin(db: Session, contact: str) -> dict:
 
 
 def _get_recovery_txn(db: Session, txn_id: str):
-    from app.modules.auth.models import RecoveryTransaction
     import datetime as _dt
 
     txn = db.query(RecoveryTransaction).filter(
@@ -235,7 +239,7 @@ def _get_recovery_txn(db: Session, txn_id: str):
     if txn.consumed:
         raise BizError(ErrCode.TOKEN_INVALID, "Recovery transaction already used")
     now = _dt.datetime.now(_dt.timezone.utc)
-    if _dt.datetime.fromisoformat(txn.expires_at) <= now:
+    if _dt.datetime.fromisoformat(txn.expires_at) <= now: # type: ignore[arg-type]
         raise BizError(ErrCode.TOKEN_EXPIRED, "Recovery transaction expired")
     return txn
 
@@ -245,15 +249,15 @@ def recover_admin_verify_contact(db: Session, txn_id: str, code: str) -> dict:
     txn = _get_recovery_txn(db, txn_id)
 
     if "@" in txn.contact:
-        consume_email_code(db, txn.contact, code, "reset")
+        consume_email_code(db, txn.contact, code, "reset") # type: ignore[arg-type]
     else:
-        consume_phone_code(db, txn.contact, code, "reset")
+        consume_phone_code(db, txn.contact, code, "reset") # type: ignore[arg-type]
 
     txn.contact_verified = True
     db.flush()
 
     from app.modules.auth.security import create_temp_token
-    temp_token = create_temp_token(txn.user_id, purpose="recovery", txn_id=txn_id)
+    temp_token = create_temp_token(txn.user_id, purpose="recovery", txn_id=txn_id) # type: ignore[arg-type]
 
     return {
         "message": "Contact verified. Proceed to 2FA verification.",
@@ -275,8 +279,8 @@ def recover_admin_verify_totp(db: Session, txn_id: str, temp_token: str) -> dict
 
     try:
         payload = decode_temp_token(temp_token)
-    except Exception:
-        raise BizError(ErrCode.TOKEN_INVALID, "Invalid 2FA temp token")
+    except Exception as exc:
+        raise BizError(ErrCode.TOKEN_INVALID, "Invalid 2FA temp token") from exc
 
     user_id = payload.get("user_id", payload.get("sub"))
     if user_id != txn.user_id:
@@ -309,43 +313,51 @@ def recover_admin_verify_totp(db: Session, txn_id: str, temp_token: str) -> dict
     }
 
 
-def recover_user_complete(
-    db: Session, txn_id: str, new_password: str
-) -> dict:
-    """在 2FA 之后完成用户（非管理员）的恢复事务。"""
+def _consume_recovery_txn(db: Session, txn_id: str) -> User:
+    """原子消费恢复事务，返回关联的用户。"""
     import datetime as _dt
 
     now = _dt.datetime.now(_dt.timezone.utc).isoformat()
 
+    from sqlalchemy import update as sa_update
     result = db.execute(
-        text(
-            "UPDATE recovery_transactions SET consumed = 1, completed_at = :now "
-            "WHERE txn_id = :tid AND consumed = 0 "
-            "AND contact_verified = 1 AND totp_verified = 1 "
-            "AND expires_at > :now"
-        ),
-        {"tid": txn_id, "now": now},
+        sa_update(RecoveryTransaction)
+        .where(
+            RecoveryTransaction.txn_id == txn_id,
+            RecoveryTransaction.consumed.is_(False),
+            RecoveryTransaction.contact_verified.is_(True),
+            RecoveryTransaction.totp_verified.is_(True),
+            RecoveryTransaction.expires_at > now,
+        )
+        .values(consumed=True, completed_at=now)
     )
-    if result.rowcount != 1:  # pyright: ignore[reportAttributeAccessIssue]
+    if result.rowcount != 1:  # type: ignore[union-attr]
         raise BizError(ErrCode.TOKEN_INVALID, "Recovery transaction invalid or already consumed")
 
-    # 重新获取以得到 user_id
-    from app.modules.auth.models import RecoveryTransaction
     txn = db.query(RecoveryTransaction).filter(RecoveryTransaction.txn_id == txn_id).first()
     if not txn:
         raise BizError(ErrCode.TOKEN_INVALID)
 
-    user = db.query(User).filter(User.id == txn.user_id).first()
+    user = db.query(User).filter(User.id == int(txn.user_id)).first() # type: ignore[arg-type]
     if not user:
         raise BizError(ErrCode.USER_NOT_FOUND)
 
-    if user.account_level == "admin":
+    return user # type: ignore[arg-type]
+
+
+def recover_user_complete(
+    db: Session, txn_id: str, new_password: str
+) -> dict:
+    """在 2FA 之后完成用户（非管理员）的恢复事务。"""
+    user = _consume_recovery_txn(db, txn_id)
+
+    if str(user.account_level) == "admin":
         raise BizError(
             ErrCode.RECOVERY_METHOD_UNAVAILABLE,
             "Admin accounts must use the dedicated admin recovery flow",
         )
 
-    _reset_password(db, user, new_password)
+    _reset_password(db, user, new_password)  # type: ignore[arg-type]
 
     return {"message": "Password reset successful"}
 
@@ -354,32 +366,9 @@ def recover_admin_complete(
     db: Session, txn_id: str, new_password: str
 ) -> dict:
     """第 4 步：使用新密码原子地完成管理员恢复。使用条件 UPDATE 确保只有一个调用方会成功。"""
-    import datetime as _dt
+    user = _consume_recovery_txn(db, txn_id)
 
-    now = _dt.datetime.now(_dt.timezone.utc).isoformat()
-
-    result = db.execute(
-        text(
-            "UPDATE recovery_transactions SET consumed = 1, completed_at = :now "
-            "WHERE txn_id = :tid AND consumed = 0 "
-            "AND contact_verified = 1 AND totp_verified = 1 "
-            "AND expires_at > :now"
-        ),
-        {"tid": txn_id, "now": now},
-    )
-    if result.rowcount != 1:  # pyright: ignore[reportAttributeAccessIssue]
-        raise BizError(ErrCode.TOKEN_INVALID, "Recovery transaction invalid or already consumed")
-
-    from app.modules.auth.models import RecoveryTransaction
-    txn = db.query(RecoveryTransaction).filter(RecoveryTransaction.txn_id == txn_id).first()
-    if not txn:
-        raise BizError(ErrCode.TOKEN_INVALID)
-
-    user = db.query(User).filter(User.id == txn.user_id).first()
-    if not user:
-        raise BizError(ErrCode.USER_NOT_FOUND)
-
-    if user.account_level != "admin":
+    if str(user.account_level) != "admin":
         raise BizError(ErrCode.ACCOUNT_LEVEL_INSUFFICIENT)
 
     _reset_password(db, user, new_password)
