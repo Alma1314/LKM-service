@@ -11,14 +11,38 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     "psycopg2-binary>=2.9.0",
     "pydantic-settings>=2.0.0",
+    "pyjwt[crypto]>=2.9.0",
+    "cryptography>=43.0.0",
+    "httpx>=0.28.0",
+    "cbor2>=5.6.0",
+    "httpx2>=2.7.0",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 python_functions = ["test_*", "should_*"]
+filterwarnings = [
+    "error",
+    "ignore::ResourceWarning",
+]
+
+[tool.pyright]
+include = ["app"]
+typeCheckingMode = "standard"
+reportUnknownArgumentType = false
+reportUnknownParameterType = false
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownLambdaType = false
+reportMissingParameterType = false
+reportMissingTypeStubs = false
+reportUnannotatedClassAttribute = false
+reportUnusedCallResult = false
+reportUnusedImport = false
 
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
     "alembic>=1.13.0",
+    "basedpyright>=1.39.9",
 ]

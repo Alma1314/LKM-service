@@ -17,6 +17,29 @@ class Settings(BaseSettings):
     db_user: str = "postgres"
     db_password: str = ""
 
+    # JWT 签名密钥 — 所有非测试环境必须覆盖此值
+    jwt_secret: str = "change-me-to-a-random-secret-thats-at-least-32-bytes-long"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 15
+    refresh_token_expire_days: int = 7
+
+    # TOTP / 敏感数据加密密钥 — 必须与 jwt_secret 分开设置
+    totp_encryption_key: str = "change-me-totp-encryption-key-at-least-32-bytes"
+
+    # 验证码 HMAC 盐值 — 必须与 totp_encryption_key 和 jwt_secret 分开设置
+    verification_code_pepper: str = "change-me-verification-code-pepper-at-least-32-bytes"
+
+    # OAuth (GitHub)
+    github_client_id: str = ""
+    github_client_secret: str = ""
+    github_redirect_uri: str = "http://localhost:8000/api/v1/auth/oauth/github/callback"
+    frontend_callback: str = "http://localhost:5173/login/success"
+
+    # Passkey (WebAuthn)
+    rp_id: str = "localhost"
+    rp_name: str = "LKM Service"
+    origin: str = "http://localhost:5173"
+
     @property
     def database_url(self) -> str:
         if self.db_driver == "postgresql":

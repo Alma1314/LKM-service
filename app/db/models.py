@@ -1,8 +1,20 @@
-import datetime
+from __future__ import annotations
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+import datetime
+from typing import TYPE_CHECKING
+
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from app.modules.columns.models import ColumnApplicationStatus, ColumnPostStatus, ColumnStatus
+
+if TYPE_CHECKING:
+    from app.modules.auth.models import (
+        PasskeyCredential,
+        RecoveryCode,
+        RefreshToken,
+        TOTP,
+        UserOAuth,
+    )
 
 
 
@@ -10,7 +22,7 @@ class Base(DeclarativeBase):
     pass
 
 
-def _now() -> str:
+def now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
@@ -21,6 +33,14 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     email: Mapped[str | None] = mapped_column(String(200), unique=True, nullable=True)
     hashed_password: Mapped[str] = mapped_column(Text, nullable=False)
+    phone: Mapped[str | None] = mapped_column(String(20), unique=True, nullable=True)
+    account_level: Mapped[str] = mapped_column(String(10), nullable=False, default="local")
+    is_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    locked_until: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
     profile: Mapped["Profile"] = relationship(
         back_populates="user", uselist=False, cascade="all, delete-orphan"
@@ -30,6 +50,11 @@ class User(Base):
     )
     owned_columns: Mapped[list["Column"]] = relationship(back_populates="owner")
     posts: Mapped[list["ColumnPost"]] = relationship(back_populates="author")
+    refresh_tokens: Mapped[list["RefreshToken"]] = relationship(back_populates="user")
+    oauth_bindings: Mapped[list["UserOAuth"]] = relationship(back_populates="user")
+    totp: Mapped["TOTP | None"] = relationship(back_populates="user", uselist=False)
+    recovery_codes: Mapped[list["RecoveryCode"]] = relationship(back_populates="user")
+    passkey_credentials: Mapped[list["PasskeyCredential"]] = relationship(back_populates="user")
 
 
 class Profile(Base):
@@ -58,7 +83,7 @@ class ColumnApplication(Base):
     )
     reviewer_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
     reviewed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     user: Mapped["User"] = relationship(
         foreign_keys=[user_id], back_populates="column_applications"
@@ -85,8 +110,8 @@ class Column(Base):
     status: Mapped[ColumnStatus] = mapped_column(
         String(20), nullable=False, default=ColumnStatus.ACTIVE
     )
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
-    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
     owner: Mapped["User"] = relationship(back_populates="owned_columns")
     application: Mapped["ColumnApplication | None"] = relationship(back_populates="column")
@@ -107,8 +132,8 @@ class ColumnPost(Base):
     status: Mapped[ColumnPostStatus] = mapped_column(
         String(20), nullable=False, default=ColumnPostStatus.PUBLISHED
     )
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
-    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=_now)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
     published_at: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     column: Mapped["Column"] = relationship(back_populates="posts")
