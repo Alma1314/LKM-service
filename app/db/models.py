@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from app.modules.blog.models import BlogSeriesStatus
 from app.modules.columns.models import ColumnApplicationStatus, ColumnPostStatus, ColumnStatus
 
 if TYPE_CHECKING:
@@ -55,6 +56,7 @@ class User(Base):
     totp: Mapped["TOTP | None"] = relationship(back_populates="user", uselist=False)
     recovery_codes: Mapped[list["RecoveryCode"]] = relationship(back_populates="user")
     passkey_credentials: Mapped[list["PasskeyCredential"]] = relationship(back_populates="user")
+    blog_series: Mapped[list["BlogSeries"]] = relationship(back_populates="owner")
 
 
 class Profile(Base):
@@ -138,3 +140,59 @@ class ColumnPost(Base):
 
     column: Mapped["Column"] = relationship(back_populates="posts")
     author: Mapped["User"] = relationship(back_populates="posts")
+
+
+class BlogSeries(Base):
+    __tablename__ = "blog_series"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cover_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    repo_name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    status: Mapped[BlogSeriesStatus] = mapped_column(
+        String(20), nullable=False, default=BlogSeriesStatus.ACTIVE
+    )
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+
+    owner: Mapped["User"] = relationship(back_populates="blog_series")
+    comments: Mapped[list["BlogComment"]] = relationship(
+        back_populates="series", cascade="all, delete-orphan"
+    )
+    stars: Mapped[list["BlogStar"]] = relationship(
+        back_populates="series", cascade="all, delete-orphan"
+    )
+
+
+class BlogStar(Base):
+    __tablename__ = "blog_stars"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    series_id: Mapped[int] = mapped_column(ForeignKey("blog_series.id"), primary_key=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+
+    user: Mapped["User"] = relationship()
+    series: Mapped["BlogSeries"] = relationship(back_populates="stars")
+
+
+class BlogComment(Base):
+    __tablename__ = "blog_comments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    series_id: Mapped[int] = mapped_column(ForeignKey("blog_series.id"), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("blog_comments.id"), nullable=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+
+    user: Mapped["User"] = relationship()
+    series: Mapped["BlogSeries"] = relationship(back_populates="comments")
+    parent: Mapped["BlogComment | None"] = relationship(
+        remote_side=[id], back_populates="replies"
+    )
+    replies: Mapped[list["BlogComment"]] = relationship(
+        back_populates="parent", cascade="all, delete-orphan"
+    )

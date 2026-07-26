@@ -65,7 +65,6 @@ def new_session():
     """创建独立会话，与主会话共享同一引擎（数据库连接池）但使用独立事务。"""
     factory = _get_session_local()
     assert factory is not None
-    # 绑定相同的引擎，使 SQLite :memory: 模式共享数据库。
     return factory(bind=get_engine())
 
 
