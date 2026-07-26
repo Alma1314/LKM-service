@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     rp_name: str = "LKM Service"
     origin: str = "http://localhost:5173"
 
+    blog_repo_dir: str = "blog_repos"
+
     @property
     def database_url(self) -> str:
         if self.db_driver == "postgresql":

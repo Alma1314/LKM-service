@@ -36,15 +36,18 @@ class ErrCode(IntEnum):
     COLUMN_APPLICATION_NOT_FOUND = 2001
     COLUMN_NOT_FOUND = 2002
     COLUMN_POST_NOT_FOUND = 2003
+    BLOG_SERIES_NOT_FOUND = 3001
+    BLOG_COMMENT_NOT_FOUND = 3002
+    BLOG_GIT_ERROR = 3003
     INTERNAL_ERROR = 9999
 
 
 ERRTABLE: dict[ErrCode, tuple[int, str]] = {
-    ErrCode.OK:                  (200, "OK"),
-    ErrCode.INVALID_INPUT:       (422, "Invalid input"),
-    ErrCode.ALREADY_REGISTERED:  (400, "Username or email already registered"),
-    ErrCode.INVALID_CREDENTIALS: (401, "Invalid username or password"),
-    ErrCode.USER_NOT_FOUND:      (401, "User not found"),
+    ErrCode.OK:                           (200, "OK"),
+    ErrCode.INVALID_INPUT:                (422, "Invalid input"),
+    ErrCode.ALREADY_REGISTERED:           (400, "Username or email already registered"),
+    ErrCode.INVALID_CREDENTIALS:          (401, "Invalid username or password"),
+    ErrCode.USER_NOT_FOUND:               (401, "User not found"),
     ErrCode.FORBIDDEN:                    (403, "Forbidden"),
     ErrCode.ACCOUNT_LOCKED:               (423, "Account is locked"),
     ErrCode.ACCOUNT_LEVEL_INSUFFICIENT:   (403, "Account level insufficient"),
@@ -70,7 +73,10 @@ ERRTABLE: dict[ErrCode, tuple[int, str]] = {
     ErrCode.COLUMN_APPLICATION_NOT_FOUND: (404, "Column application not found"),
     ErrCode.COLUMN_NOT_FOUND:             (404, "Column not found"),
     ErrCode.COLUMN_POST_NOT_FOUND:        (404, "Column post not found"),
-    ErrCode.INTERNAL_ERROR:      (500, "Internal server error"),
+    ErrCode.BLOG_SERIES_NOT_FOUND:        (404, "Blog series not found"),
+    ErrCode.BLOG_COMMENT_NOT_FOUND:       (404, "Comment not found"),
+    ErrCode.BLOG_GIT_ERROR:               (500, "Git operation failed"),
+    ErrCode.INTERNAL_ERROR:               (500, "Internal server error"),
 }
 
 
