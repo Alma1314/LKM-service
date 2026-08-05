@@ -12,9 +12,9 @@ from app.core.err import BizError, ErrCode
 from app.db.models import Base
 from app.db.session import get_session
 from app.main import app
-from app.modules.auth.schemas import ProfileUpdate, UserRegInfo
-from app.modules.auth.security import create_access_token
-from app.modules.auth.service import register, update_profile
+from app.modules.auth.schemas import ProfileUpdate
+from app.modules.auth.security import create_access_token, hashpwd
+from app.modules.auth.service import update_profile
 from app.modules.blog.models import BlogSeriesStatus
 from app.modules.blog.schemas import (
     BlogCommentCreate,
@@ -84,9 +84,16 @@ def client(db):
 
 
 def _user(db, username="alice", email="alice@example.com"):
-    return register(
-        db, UserRegInfo(username=username, email=email, password="secret123456")  # type: ignore[arg-type]
+    from app.db.models import User, Profile
+    user = User(
+        username=username, email=email,
+        hashed_password=hashpwd("secret123456"), account_level="normal",
     )
+    db.add(user)
+    db.flush()
+    db.add(Profile(user_id=user.id))
+    db.flush()
+    return user.id
 
 
 def _series(db, user_id=1, repo_name="my-blog"):
@@ -483,10 +490,7 @@ class TestBlogFiles:
 class TestBlogRoutes:
     def _setup_user(self, db):
         """Create a user and return (user_id, bearer_token)."""
-        user_id = register(
-            db,
-            UserRegInfo(username="testuser", email="test@example.com", password="secret123456"),
-        )
+        user_id = _user(db, username="testuser", email="test@example.com")
         token = create_access_token(user_id=user_id, account_level="normal", role="member")
         return user_id, token
 
@@ -582,10 +586,7 @@ class TestBlogRoutes:
         )
 
         # create second user
-        register(
-            db,
-            UserRegInfo(username="other", email="other@example.com", password="secret123456"),
-        )
+        _user(db, username="other", email="other@example.com")
         token2 = create_access_token(user_id=2, account_level="normal", role="member")
 
         resp = client.put(

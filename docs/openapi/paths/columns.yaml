@@ -9,19 +9,12 @@ status:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                module: { type: string, example: "columns" }
-                status: { type: string, example: "implemented_minimal" }
-                responsibility: { type: string }
-                next_steps:
-                  type: array
-                  items: { type: string }
+              $ref: "../openapi.yaml#/components/schemas/ModuleStatus"
 
 plan:
   get:
     tags: [columns]
-    summary: 专栏数据库表结构规划
+    summary: 专栏数据表结构规划
     operationId: columnsPlan
     responses:
       "200":
@@ -29,19 +22,7 @@ plan:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                code: { type: integer, example: 0 }
-                msg: { type: string, example: "OK" }
-                data:
-                  type: object
-                  properties:
-                    status: { type: string }
-                    tables:
-                      type: object
-                    next_steps:
-                      type: array
-                      items: { type: string }
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
 
 applications:
   get:
@@ -54,23 +35,13 @@ applications:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                code: { type: integer, example: 0 }
-                msg: { type: string, example: "OK" }
-                data:
-                  type: object
-                  properties:
-                    items:
-                      type: array
-                      items:
-                        $ref: "#/components/schemas/ColumnApplication"
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
   post:
     tags: [columns]
     summary: 提交专栏申请
     operationId: createApplication
     security:
-      - UserIdHeader: []
+      - BearerAuth: []
     requestBody:
       required: true
       content:
@@ -79,22 +50,17 @@ applications:
             type: object
             required: [user_id, title, description, reason]
             properties:
-              user_id: { type: integer }
-              title: { type: string, maxLength: 80 }
+              user_id:     { type: integer }
+              title:       { type: string, maxLength: 80 }
               description: { type: string, maxLength: 300 }
-              reason: { type: string, maxLength: 500 }
+              reason:      { type: string, maxLength: 500 }
     responses:
       "200":
         description: 申请已提交
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                code: { type: integer, example: 0 }
-                msg: { type: string, example: "OK" }
-                data:
-                  $ref: "#/components/schemas/ColumnApplication"
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
 
 applicationDetail:
   get:
@@ -112,22 +78,16 @@ applicationDetail:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                code: { type: integer, example: 0 }
-                msg: { type: string, example: "OK" }
-                data:
-                  $ref: "#/components/schemas/ColumnApplication"
-      "404":
-        description: 申请不存在 (2001)
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
 
 review:
   post:
     tags: [columns]
     summary: 审核专栏申请
+    description: approved 时自动创建对应专栏。
     operationId: reviewApplication
     security:
-      - UserIdHeader: []
+      - BearerAuth: []
     parameters:
       - name: application_id
         in: path
@@ -142,27 +102,15 @@ review:
             required: [reviewer_id, status]
             properties:
               reviewer_id: { type: integer }
-              status: { type: string, enum: [approved, rejected] }
+              status:      { type: string, enum: [approved, rejected] }
               review_note: { type: string, maxLength: 300, nullable: true }
     responses:
       "200":
-        description: 审核完成；若 approved 则自动创建对应专栏
+        description: 审核完成
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                code: { type: integer, example: 0 }
-                msg: { type: string, example: "OK" }
-                data:
-                  type: object
-                  properties:
-                    application:
-                      $ref: "#/components/schemas/ColumnApplication"
-                    column:
-                      oneOf:
-                        - $ref: "#/components/schemas/Column"
-                        - type: "null"
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
 
 columns:
   get:
@@ -175,17 +123,7 @@ columns:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                code: { type: integer, example: 0 }
-                msg: { type: string, example: "OK" }
-                data:
-                  type: object
-                  properties:
-                    items:
-                      type: array
-                      items:
-                        $ref: "#/components/schemas/Column"
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
 
 columnDetail:
   get:
@@ -203,14 +141,7 @@ columnDetail:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                code: { type: integer, example: 0 }
-                msg: { type: string, example: "OK" }
-                data:
-                  $ref: "#/components/schemas/Column"
-      "404":
-        description: 专栏不存在 (2002)
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
 
 posts:
   get:
@@ -228,23 +159,13 @@ posts:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                code: { type: integer, example: 0 }
-                msg: { type: string, example: "OK" }
-                data:
-                  type: object
-                  properties:
-                    items:
-                      type: array
-                      items:
-                        $ref: "#/components/schemas/ColumnPost"
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
   post:
     tags: [columns]
     summary: 发布专栏文章
     operationId: createPost
     security:
-      - UserIdHeader: []
+      - BearerAuth: []
     parameters:
       - name: column_id
         in: path
@@ -259,21 +180,16 @@ posts:
             required: [author_id, title, content]
             properties:
               author_id: { type: integer }
-              title: { type: string, maxLength: 120 }
-              summary: { type: string, maxLength: 300, nullable: true }
-              content: { type: string, minLength: 1 }
+              title:     { type: string, maxLength: 120 }
+              summary:   { type: string, maxLength: 300, nullable: true }
+              content:   { type: string, minLength: 1 }
     responses:
       "200":
         description: 发布成功
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                code: { type: integer, example: 0 }
-                msg: { type: string, example: "OK" }
-                data:
-                  $ref: "#/components/schemas/ColumnPost"
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
 
 postDetail:
   get:
@@ -295,53 +211,46 @@ postDetail:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                code: { type: integer, example: 0 }
-                msg: { type: string, example: "OK" }
-                data:
-                  $ref: "#/components/schemas/ColumnPost"
-      "404":
-        description: 文章不存在 (2003)
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
 
 components:
   schemas:
     ColumnApplication:
       type: object
       properties:
-        id: { type: integer }
-        user_id: { type: integer }
-        title: { type: string }
-        description: { type: string }
-        reason: { type: string }
-        status: { type: string, enum: [pending, approved, rejected] }
-        reviewer_id: { type: integer, nullable: true }
-        review_note: { type: string, nullable: true }
-        created_at: { type: string }
-        reviewed_at: { type: string, nullable: true }
+        id:           { type: integer }
+        user_id:      { type: integer }
+        title:        { type: string }
+        description:  { type: string }
+        reason:       { type: string }
+        status:       { type: string, enum: [pending, approved, rejected] }
+        reviewer_id:  { type: integer, nullable: true }
+        review_note:  { type: string, nullable: true }
+        created_at:   { type: string }
+        reviewed_at:  { type: string, nullable: true }
 
     Column:
       type: object
       properties:
-        id: { type: integer }
-        owner_id: { type: integer }
+        id:             { type: integer }
+        owner_id:       { type: integer }
         application_id: { type: integer, nullable: true }
-        title: { type: string }
-        description: { type: string }
-        cover_url: { type: string, nullable: true }
-        status: { type: string, enum: [active, archived] }
-        created_at: { type: string }
-        updated_at: { type: string }
+        title:          { type: string }
+        description:    { type: string }
+        cover_url:      { type: string, nullable: true }
+        status:         { type: string, enum: [active, archived] }
+        created_at:     { type: string }
+        updated_at:     { type: string }
 
     ColumnPost:
       type: object
       properties:
-        id: { type: integer }
-        column_id: { type: integer }
-        author_id: { type: integer }
-        title: { type: string }
-        summary: { type: string, nullable: true }
-        status: { type: string, enum: [draft, published, archived] }
-        created_at: { type: string }
-        updated_at: { type: string }
+        id:           { type: integer }
+        column_id:    { type: integer }
+        author_id:    { type: integer }
+        title:        { type: string }
+        summary:      { type: string, nullable: true }
+        status:       { type: string, enum: [draft, published, archived] }
+        created_at:   { type: string }
+        updated_at:   { type: string }
         published_at: { type: string, nullable: true }

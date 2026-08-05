@@ -9,11 +9,4 @@ status:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                module: { type: string }
-                status: { type: string }
-                responsibility: { type: string }
-                next_steps:
-                  type: array
-                  items: { type: string }
+              $ref: "../openapi.yaml#/components/schemas/ModuleStatus"

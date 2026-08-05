@@ -1,95 +1,22 @@
-reg:
-  post:
+me:
+  get:
     tags: [auth]
-    summary: 用户注册
-    operationId: register
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            required: [username, email, password]
-            properties:
-              username:
-                type: string
-                minLength: 1
-                maxLength: 100
-              email:
-                type: string
-                format: email
-              password:
-                type: string
-                minLength: 6
+    summary: 获取当前 JWT 用户
+    operationId: getMe
+    security:
+      - BearerAuth: []
     responses:
       "200":
-        description: 注册成功
+        description: 当前用户信息
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                code: { type: integer, example: 0 }
-                msg: { type: string, example: "OK" }
-                data:
-                  type: object
-                  properties:
-                    user_id: { type: integer }
-      "400":
-        description: 用户名或邮箱已注册
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                code: { type: integer, example: 1002 }
-                msg: { type: string }
-
-login:
-  post:
-    tags: [auth]
-    summary: 用户登录
-    operationId: login
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            required: [username, password]
-            properties:
-              username:
-                type: string
-                minLength: 1
-              password:
-                type: string
-    responses:
-      "200":
-        description: 登录成功，返回用户 ID（调用方需保存并在后续请求中通过 X-User-Id Header 传递）
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                code: { type: integer, example: 0 }
-                msg: { type: string, example: "OK" }
-                data:
-                  type: object
-                  properties:
-                    user_id: { type: integer }
-      "401":
-        description: 用户不存在或密码错误
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                code: { type: integer, example: 1004 }
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
 
 profile:
   get:
     tags: [auth]
-    summary: 获取用户资料
+    summary: 获取用户展示信息
     operationId: getProfile
     parameters:
       - name: user_id
@@ -102,36 +29,20 @@ profile:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                code: { type: integer, example: 0 }
-                msg: { type: string, example: "OK" }
-                data:
-                  type: object
-                  properties:
-                    nickname: { type: string, nullable: true }
-                    avatar: { type: string, nullable: true }
-                    role: { type: string, enum: [member, admin] }
-      "401":
-        description: 用户不存在
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
 
 editProfile:
   put:
     tags: [auth]
-    summary: 修改个人资料（只能改自己的）
+    summary: 修改自己的展示信息
     operationId: updateProfile
     security:
-      - UserIdHeader: []
+      - BearerAuth: []
     parameters:
       - name: user_id
         in: path
         required: true
         schema: { type: integer }
-      - name: X-User-Id
-        in: header
-        required: true
-        schema: { type: integer }
-        description: 必须与路径中的 user_id 一致
     requestBody:
       required: true
       content:
@@ -140,29 +51,322 @@ editProfile:
             type: object
             properties:
               nickname: { type: string, nullable: true }
-              avatar: { type: string, nullable: true }
+              avatar:   { type: string, nullable: true }
     responses:
       "200":
         description: 更新成功
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                code: { type: integer, example: 0 }
-                msg: { type: string, example: "OK" }
-                data:
-                  type: object
-                  properties:
-                    nickname: { type: string, nullable: true }
-                    avatar: { type: string, nullable: true }
-                    role: { type: string, enum: [member, admin] }
-      "403":
-        description: X-User-Id 与路径 user_id 不匹配
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+regLocal:
+  post:
+    tags: [auth]
+    summary: 创建本地账号
+    operationId: registerLocal
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [username, password]
+            properties:
+              username: { type: string }
+              password: { type: string, minLength: 6 }
+    responses:
+      "200":
+        description: 注册成功，返回 JWT token 对
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                code: { type: integer, example: 1005 }
-                msg: { type: string }
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+regNormal:
+  post:
+    tags: [auth]
+    summary: 发起普通账号注册
+    description: 发送邮箱/手机号验证码。至少需要 email 或 phone 之一。
+    operationId: registerNormal
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [username, password]
+            properties:
+              username: { type: string }
+              password: { type: string, minLength: 6 }
+              email:    { type: string, format: email }
+              phone:    { type: string }
+    responses:
+      "200":
+        description: 验证码已发送，返回 txn_id
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+regNormalVerify:
+  post:
+    tags: [auth]
+    summary: 完成普通账号注册
+    description: 使用 txn_id 和验证码完成注册。
+    operationId: registerNormalVerify
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [txn_id]
+            properties:
+              txn_id:     { type: string }
+              email_code: { type: string }
+              phone_code: { type: string }
+    responses:
+      "200":
+        description: 注册完成，返回 JWT token 对
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+regPhone:
+  post:
+    tags: [auth]
+    summary: 发起手机号注册
+    description: 发送短信验证码到指定手机号。
+    operationId: registerPhone
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [phone]
+            properties:
+              phone: { type: string }
+    responses:
+      "200":
+        description: 验证码已发送
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+regPhoneVerify:
+  post:
+    tags: [auth]
+    summary: 完成手机号注册
+    description: 验证短信码，创建无密码普通账号。
+    operationId: registerPhoneVerify
+    requestBody:
+      required: true
+      content:
+        application/x-www-form-urlencoded:
+          schema:
+            type: object
+            required: [phone, code]
+            properties:
+              phone: { type: string }
+              code:  { type: string, minLength: 6, maxLength: 6 }
+    responses:
+      "200":
+        description: 注册完成，返回 JWT token 对
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+regEmail:
+  post:
+    tags: [auth]
+    summary: 发起邮箱注册
+    description: 发送验证码到指定邮箱。
+    operationId: registerEmail
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [email]
+            properties:
+              email: { type: string, format: email }
+    responses:
+      "200":
+        description: 验证码已发送
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+regEmailVerify:
+  post:
+    tags: [auth]
+    summary: 完成邮箱注册
+    description: 验证邮箱验证码，创建无密码普通账号。
+    operationId: registerEmailVerify
+    requestBody:
+      required: true
+      content:
+        application/x-www-form-urlencoded:
+          schema:
+            type: object
+            required: [email, code]
+            properties:
+              email: { type: string, format: email }
+              code:  { type: string, minLength: 6, maxLength: 6 }
+    responses:
+      "200":
+        description: 注册完成，返回 JWT token 对
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+loginPassword:
+  post:
+    tags: [auth]
+    summary: 密码登录（完整 2FA 流程）
+    operationId: loginPassword
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [account, password]
+            properties:
+              account:  { type: string, description: 用户名/邮箱/手机号 }
+              password: { type: string }
+    responses:
+      "200":
+        description: 登录成功，或返回 2FA 临时 token
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+loginCodeRequest:
+  post:
+    tags: [auth]
+    summary: 请求登录验证码
+    description: 向邮箱或手机号发送登录验证码。
+    operationId: loginCodeRequest
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [contact]
+            properties:
+              contact: { type: string, description: 邮箱或手机号 }
+    responses:
+      "200":
+        description: 验证码已发送
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+loginCode:
+  post:
+    tags: [auth]
+    summary: 验证码登录
+    operationId: loginCode
+    requestBody:
+      required: true
+      content:
+        application/x-www-form-urlencoded:
+          schema:
+            type: object
+            required: [contact, code]
+            properties:
+              contact: { type: string }
+              code:    { type: string, minLength: 6, maxLength: 6 }
+    responses:
+      "200":
+        description: 登录成功，返回 JWT token 对
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+magicLinkRequest:
+  post:
+    tags: [auth]
+    summary: 请求登录魔法链接
+    operationId: magicLinkRequest
+    parameters:
+      - name: email
+        in: query
+        required: true
+        schema: { type: string, format: email }
+    responses:
+      "200":
+        description: 若邮箱存在，魔法链接已发送
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+magicLinkVerify:
+  get:
+    tags: [auth]
+    summary: 验证登录魔法链接
+    operationId: magicLinkVerify
+    parameters:
+      - name: token
+        in: query
+        required: true
+        schema: { type: string }
+    responses:
+      "200":
+        description: 验证成功，返回 JWT token 对
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+refresh:
+  post:
+    tags: [auth]
+    summary: 刷新 access token
+    operationId: refreshToken
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [refresh_token]
+            properties:
+              refresh_token: { type: string }
+    responses:
+      "200":
+        description: 新的 token 对
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+logout:
+  post:
+    tags: [auth]
+    summary: 登出
+    description: 吊销当前用户的所有 refresh token。
+    operationId: logout
+    security:
+      - BearerAuth: []
+    responses:
+      "200":
+        description: 登出成功
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
