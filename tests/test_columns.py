@@ -4,8 +4,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.err import BizError, ErrCode
 from app.db.models import Base
-from app.modules.auth.schemas import UserRegInfo
-from app.modules.auth.service import register
+from app.db.models import User
 from app.modules.columns.models import ColumnApplicationStatus
 from app.modules.columns.schemas import (
     ColumnApplicationCreate,
@@ -29,7 +28,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.db.models import User
 from app.db.session import get_session
-from app.modules.auth.security import create_access_token
+from app.modules.auth.security import create_access_token, hashpwd
 from sqlalchemy.pool import StaticPool
 
 
@@ -66,7 +65,16 @@ def client(db):
 
 
 def _user(db, username="alice", email="alice@example.com"):
-    return register(db, UserRegInfo(username=username, email=email, password="secret123456")) # type: ignore[arg-type]
+    from app.db.models import User, Profile
+    user = User(
+        username=username, email=email,
+        hashed_password=hashpwd("secret123456"), account_level="normal",
+    )
+    db.add(user)
+    db.flush()
+    db.add(Profile(user_id=user.id))
+    db.flush()
+    return user.id
 
 
 def _application(db, user_id=1):
@@ -270,10 +278,7 @@ class TestColumnPosts:
 class TestColumnRoutes:
     def _setup_user(self, db):
         """Create a user in DB and return (user_id, bearer_token)."""
-        from app.modules.auth.service import register
-        from app.modules.auth.schemas import UserRegInfo
-
-        user_id = register(db, UserRegInfo(username="testuser", email="test@example.com", password="secret123456"))
+        user_id = _user(db, username="testuser", email="test@example.com")
         token = create_access_token(user_id=user_id, account_level="normal", role="member")
         return user_id, token
 
@@ -296,10 +301,7 @@ class TestColumnRoutes:
     def should_reject_application_when_token_user_mismatches_body_user(self, client, db):
         user_id_1, token = self._setup_user(db)
         # Create a second user so token for user_id=2 is valid
-        from app.modules.auth.service import register
-        from app.modules.auth.schemas import UserRegInfo
-
-        register(db, UserRegInfo(username="other", email="other@example.com", password="secret123456"))
+        _user(db, username="other", email="other@example.com")
         token_2 = create_access_token(user_id=2, account_level="normal", role="member")
         resp = client.post(
             "/api/v1/columns/applications",

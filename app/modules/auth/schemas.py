@@ -19,17 +19,6 @@ def _validate_password(v: str) -> str:
 Password = Annotated[str, AfterValidator(_validate_password)]
 
 
-class UserRegInfo(BaseModel):
-    username: str = Field(..., min_length=1, max_length=100)
-    email: EmailStr
-    password: Password = Field(...)
-
-
-class UserLoginInfo(BaseModel):
-    username: str = Field(..., min_length=1)
-    password: str
-
-
 class ProfileInfo(BaseModel):
     nickname: str | None = None
     avatar: str | None = None
@@ -40,9 +29,6 @@ class ProfileUpdate(BaseModel):
     nickname: str | None = None
     avatar: str | None = None
 
-
-class UserIdData(BaseModel):
-    user_id: int
 
 class AccountLevel(str, enum.Enum):
     LOCAL = "local"

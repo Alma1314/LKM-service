@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.err import BizError, ErrCode, respond
-from app.db.models import User as UserModel, Profile
+from app.db.models import User as UserModel
 from app.db.session import get_session
 from app.modules.auth import service_auth
 from app.modules.auth.deps import (
@@ -23,23 +23,17 @@ from app.modules.auth.schemas import (
     RegByPhoneResponse,
     RegNormalResponse,
     TokenPair,
-    UserIdData,
-    UserLoginInfo,
     UserLoginPassword,
     UserRegByEmail,
     UserRegByPhone,
-    UserRegInfo,
     UserRegLocal,
     UserRegNormal,
 )
-from app.modules.auth.security import hashpwd, verifypwd
 from app.modules.auth.service import get_profile, update_profile
 from app.modules.auth.service_auth import (
     _consume_pending_normal_registration,
-    _create_auth_response,
     _store_pending_normal_registration,
     login_password,
-    upgrade_to_normal,
 )
 from app.modules.auth.service_verify import (
     check_code_rate_limit,
@@ -51,51 +45,6 @@ from app.modules.auth.service_verify import (
 from app.modules.common import ApiResp
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-@router.post("/reg", response_model=ApiResp[AuthTokenData])
-@respond
-def reg(user: UserRegInfo, db: Session = Depends(get_session)):
-    """创建一个仅限本地的账号（无邮箱绑定），若已存在且密码正确则自动登录。"""
-
-    existing = (
-        db.query(UserModel)
-        .filter((UserModel.username == user.username) | (UserModel.email == user.email))
-        .first()
-    )
-    if existing:
-        hashed: str = existing.hashed_password  # type: ignore[assignment]
-        if not hashed or not verifypwd(user.password, hashed):
-            raise BizError(ErrCode.ALREADY_REGISTERED, "Account exists but password is incorrect")
-        upgrade_to_normal(db, existing) # type: ignore[assignment]
-        return _create_auth_response(db, existing) # type: ignore[assignment]
-
-    account = UserModel(
-        username=user.username,
-        hashed_password=hashpwd(user.password),
-        account_level="local",
-    )
-    db.add(account)
-    db.flush()
-    db.add(Profile(user_id=account.id))
-    db.flush()
-    return _create_auth_response(db, account)
-
-
-@router.post("/login", response_model=ApiResp[UserIdData])
-@respond
-def login_route(user: UserLoginInfo, db: Session = Depends(get_session)):
-    """当需要 2FA 时，此端点返回错误。"""
-
-    result = login_password(
-        db, UserLoginPassword(account=user.username, password=user.password)
-    )
-    if result.get("requires_2fa"):
-        raise BizError(
-            ErrCode.TOTP_SETUP_REQUIRED,
-            "2FA required – use POST /auth/login/password for full 2FA flow",
-        )
-    return {"user_id": result["user_id"]}
-
 
 @router.get("/me", response_model=ApiResp[CurrentUser])
 @respond

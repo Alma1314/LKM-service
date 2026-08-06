@@ -1,0 +1,49 @@
+gitHttp:
+  get:
+    tags: [blog-git]
+    summary: Git HTTP 后端（读操作）
+    description: |
+      标准 Git HTTP 协议端点。支持 git clone/fetch 等读操作。
+      使用 HTTP Basic Auth 认证（用户名+密码）。
+    operationId: gitHttpBackendGet
+    parameters:
+      - name: repo_name
+        in: path
+        required: true
+        schema: { type: string }
+      - name: rest
+        in: path
+        required: true
+        schema: { type: string }
+        description: Git HTTP 后端路径（如 info/refs?service=git-upload-pack）
+    responses:
+      "200":
+        description: Git HTTP 响应
+      "401":
+        description: 认证失败
+      "404":
+        description: 仓库不存在
+  post:
+    tags: [blog-git]
+    summary: Git HTTP 后端（写操作）
+    description: |
+      标准 Git HTTP 协议端点。支持 git push 等写操作。
+      使用 HTTP Basic Auth 认证（用户名+密码），且该用户必须是博客系列的所有者。
+    operationId: gitHttpBackendPost
+    parameters:
+      - name: repo_name
+        in: path
+        required: true
+        schema: { type: string }
+      - name: rest
+        in: path
+        required: true
+        schema: { type: string }
+        description: Git HTTP 后端路径（如 git-receive-pack）
+    responses:
+      "200":
+        description: Git HTTP 响应
+      "401":
+        description: 认证失败
+      "404":
+        description: 仓库不存在

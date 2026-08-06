@@ -9,11 +9,4 @@ health:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                code: { type: integer, example: 0 }
-                msg: { type: string, example: "OK" }
-                data:
-                  type: object
-                  properties:
-                    status: { type: string, example: "ok" }
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"

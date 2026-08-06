@@ -1,0 +1,298 @@
+check:
+  post:
+    tags: [auth-recovery]
+    summary: 查询账号可用恢复方式
+    operationId: recoverCheck
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [account]
+            properties:
+              account: { type: string }
+    responses:
+      "200":
+        description: 可用恢复方式列表
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+phone:
+  post:
+    tags: [auth-recovery]
+    summary: 请求手机号恢复验证码
+    operationId: recoverPhone
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [phone]
+            properties:
+              phone: { type: string }
+    responses:
+      "200":
+        description: 验证码已发送
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+phoneVerify:
+  post:
+    tags: [auth-recovery]
+    summary: 验证手机号恢复码
+    description: 验证后若需要 2FA 则返回 requires_2fa。
+    operationId: recoverPhoneVerify
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [phone, code]
+            properties:
+              phone: { type: string }
+              code:  { type: string, minLength: 6, maxLength: 6 }
+    responses:
+      "200":
+        description: 验证结果
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+email:
+  post:
+    tags: [auth-recovery]
+    summary: 请求邮箱恢复验证码
+    operationId: recoverEmail
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [email]
+            properties:
+              email: { type: string, format: email }
+    responses:
+      "200":
+        description: 验证码已发送
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+emailVerify:
+  post:
+    tags: [auth-recovery]
+    summary: 验证邮箱恢复码
+    description: 验证后若需要 2FA 则返回 requires_2fa。
+    operationId: recoverEmailVerify
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [email, code]
+            properties:
+              email: { type: string, format: email }
+              code:  { type: string, minLength: 6, maxLength: 6 }
+    responses:
+      "200":
+        description: 验证结果
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+magicLink:
+  post:
+    tags: [auth-recovery]
+    summary: 请求恢复魔法链接
+    operationId: recoverMagicLink
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [email]
+            properties:
+              email: { type: string, format: email }
+    responses:
+      "200":
+        description: 若邮箱存在，魔法链接已发送
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+magicLinkVerify:
+  post:
+    tags: [auth-recovery]
+    summary: 验证恢复魔法链接
+    operationId: recoverMagicLinkVerify
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [token]
+            properties:
+              token: { type: string }
+    responses:
+      "200":
+        description: 验证结果
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+verifyTotp:
+  post:
+    tags: [auth-recovery]
+    summary: 用户恢复流程验证 2FA
+    description: 需要从 /auth/2fa/verify 获取的 temp_token。
+    operationId: recoverUserVerifyTotp
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [txn_id, temp_token]
+            properties:
+              txn_id:     { type: string }
+              temp_token: { type: string }
+    responses:
+      "200":
+        description: 2FA 验证结果
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+complete:
+  post:
+    tags: [auth-recovery]
+    summary: 用户恢复流程设置新密码
+    description: 需要已验证的联系方式 + 2FA。
+    operationId: recoverUserComplete
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [txn_id, new_password]
+            properties:
+              txn_id:       { type: string }
+              new_password: { type: string, minLength: 12 }
+    responses:
+      "200":
+        description: 密码已重置
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+adminBegin:
+  post:
+    tags: [auth-recovery]
+    summary: 管理员恢复流程开始
+    description: 发起管理员恢复，发送验证码。
+    operationId: recoverAdminBegin
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [contact]
+            properties:
+              contact: { type: string, description: 管理员的邮箱或手机号 }
+    responses:
+      "200":
+        description: 恢复流程已开始，返回 txn_id
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+adminVerifyContact:
+  post:
+    tags: [auth-recovery]
+    summary: 管理员恢复流程验证联系方式
+    operationId: recoverAdminVerifyContact
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [txn_id, code]
+            properties:
+              txn_id: { type: string }
+              code:   { type: string, minLength: 6, maxLength: 6 }
+    responses:
+      "200":
+        description: 联系方式已验证，返回 2FA 临时 token
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+adminVerifyTotp:
+  post:
+    tags: [auth-recovery]
+    summary: 管理员恢复流程验证 2FA
+    description: 需要从 /auth/2fa/verify 获取的 temp_token。
+    operationId: recoverAdminVerifyTotp
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [txn_id, temp_token]
+            properties:
+              txn_id:     { type: string }
+              temp_token: { type: string }
+    responses:
+      "200":
+        description: 2FA 已验证
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+adminComplete:
+  post:
+    tags: [auth-recovery]
+    summary: 管理员恢复流程设置新密码
+    operationId: recoverAdminComplete
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [txn_id, new_password]
+            properties:
+              txn_id:       { type: string }
+              new_password: { type: string, minLength: 12 }
+    responses:
+      "200":
+        description: 密码已重置
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"

@@ -1,0 +1,106 @@
+registerBegin:
+  post:
+    tags: [auth-passkey]
+    summary: 开始 Passkey 注册
+    description: 返回 PublicKeyCredentialCreationOptions。
+    operationId: passkeyRegisterBegin
+    security:
+      - BearerAuth: []
+    responses:
+      "200":
+        description: WebAuthn 注册选项
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+registerComplete:
+  post:
+    tags: [auth-passkey]
+    summary: 完成 Passkey 注册
+    description: 提交客户端生成的凭据。
+    operationId: passkeyRegisterComplete
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+    responses:
+      "200":
+        description: 注册成功
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+loginBegin:
+  post:
+    tags: [auth-passkey]
+    summary: 开始 Passkey 登录
+    description: 返回 PublicKeyCredentialRequestOptions。
+    operationId: passkeyLoginBegin
+    responses:
+      "200":
+        description: WebAuthn 登录选项
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+loginComplete:
+  post:
+    tags: [auth-passkey]
+    summary: 完成 Passkey 登录
+    description: 提交客户端生成的断言。
+    operationId: passkeyLoginComplete
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+    responses:
+      "200":
+        description: 登录成功，返回 JWT token 对
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+credentials:
+  get:
+    tags: [auth-passkey]
+    summary: 当前用户 Passkey 凭据列表
+    operationId: passkeyCredentials
+    security:
+      - BearerAuth: []
+    responses:
+      "200":
+        description: 凭据列表
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+deleteCredential:
+  delete:
+    tags: [auth-passkey]
+    summary: 删除 Passkey 凭据
+    operationId: passkeyDeleteCredential
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: cred_id
+        in: path
+        required: true
+        schema: { type: integer }
+    responses:
+      "200":
+        description: 删除成功
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
