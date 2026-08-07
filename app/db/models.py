@@ -57,6 +57,8 @@ class User(Base):
     recovery_codes: Mapped[list["RecoveryCode"]] = relationship(back_populates="user")
     passkey_credentials: Mapped[list["PasskeyCredential"]] = relationship(back_populates="user")
     blog_series: Mapped[list["BlogSeries"]] = relationship(back_populates="owner")
+    forum_posts: Mapped[list["ForumPost"]] = relationship(back_populates="author")
+    forum_comments: Mapped[list["ForumComment"]] = relationship(back_populates="user")
 
 
 class Profile(Base):
@@ -140,6 +142,55 @@ class ColumnPost(Base):
 
     column: Mapped["Column"] = relationship(back_populates="posts")
     author: Mapped["User"] = relationship(back_populates="posts")
+
+
+class ForumPost(Base):
+    __tablename__ = "forum_posts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    category_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    excerpt: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    tags: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_featured: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    view_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    like_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    comment_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    bookmark_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+
+    author: Mapped["User"] = relationship(back_populates="forum_posts")
+    comments: Mapped[list["ForumComment"]] = relationship(
+        back_populates="post", cascade="all, delete-orphan"
+    )
+
+
+class ForumComment(Base):
+    __tablename__ = "forum_comments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    post_id: Mapped[int] = mapped_column(ForeignKey("forum_posts.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    floor_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("forum_comments.id"), nullable=True
+    )
+    like_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+
+    post: Mapped["ForumPost"] = relationship(back_populates="comments")
+    user: Mapped["User"] = relationship(back_populates="forum_comments")
+    parent: Mapped["ForumComment | None"] = relationship(
+        remote_side=[id], back_populates="replies"
+    )
+    replies: Mapped[list["ForumComment"]] = relationship(
+        back_populates="parent", cascade="all, delete-orphan"
+    )
 
 
 class BlogSeries(Base):
