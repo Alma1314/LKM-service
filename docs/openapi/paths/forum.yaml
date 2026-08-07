@@ -1,0 +1,228 @@
+status:
+  get:
+    tags: [forum]
+    summary: 论坛模块状态
+    operationId: forumStatus
+    responses:
+      "200":
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ModuleStatus"
+
+posts:
+  get:
+    tags: [forum]
+    summary: 帖子列表
+    description: 分页返回帖子，可选按板块分类过滤；置顶优先、创建时间倒序。
+    operationId: listPosts
+    parameters:
+      - name: page
+        in: query
+        required: false
+        schema: { type: integer, default: 1, minimum: 1 }
+      - name: limit
+        in: query
+        required: false
+        schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+      - name: category_id
+        in: query
+        required: false
+        schema: { type: string, maxLength: 50 }
+    responses:
+      "200":
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+  post:
+    tags: [forum]
+    summary: 发布帖子
+    operationId: createPost
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [title, content, category_id]
+            properties:
+              title:       { type: string, minLength: 1, maxLength: 120 }
+              content:     { type: string, minLength: 1 }
+              category_id: { type: string, minLength: 1, maxLength: 50 }
+              tags:        { type: array, items: { type: string } }
+    responses:
+      "200":
+        description: 发布成功
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+postDetail:
+  get:
+    tags: [forum]
+    summary: 帖子详情
+    description: 每次访问浏览数 +1。
+    operationId: getPost
+    parameters:
+      - name: post_id
+        in: path
+        required: true
+        schema: { type: integer }
+    responses:
+      "200":
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+  delete:
+    tags: [forum]
+    summary: 删除帖子
+    description: 仅作者本人可删除，评论一并删除。
+    operationId: deletePost
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: post_id
+        in: path
+        required: true
+        schema: { type: integer }
+    responses:
+      "200":
+        description: 删除成功
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+likePost:
+  post:
+    tags: [forum]
+    summary: 点赞帖子
+    operationId: likePost
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: post_id
+        in: path
+        required: true
+        schema: { type: integer }
+    responses:
+      "200":
+        description: 点赞成功，返回最新点赞数
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+comments:
+  get:
+    tags: [forum]
+    summary: 帖子评论列表
+    description: 按楼层号升序分页返回。
+    operationId: listComments
+    parameters:
+      - name: post_id
+        in: path
+        required: true
+        schema: { type: integer }
+      - name: page
+        in: query
+        required: false
+        schema: { type: integer, default: 1, minimum: 1 }
+      - name: limit
+        in: query
+        required: false
+        schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+    responses:
+      "200":
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+  post:
+    tags: [forum]
+    summary: 发表评论
+    description: 评论楼层号自动分配，支持回复其他评论。
+    operationId: createComment
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: post_id
+        in: path
+        required: true
+        schema: { type: integer }
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [content]
+            properties:
+              content:   { type: string, minLength: 1, maxLength: 2000 }
+              parent_id: { type: integer, nullable: true }
+    responses:
+      "200":
+        description: 评论成功
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+components:
+  schemas:
+    ForumPost:
+      type: object
+      properties:
+        id:            { type: integer }
+        title:         { type: string }
+        excerpt:       { type: string }
+        content:       { type: string }
+        author_id:     { type: integer }
+        author_name:   { type: string }
+        category_id:   { type: string }
+        tags:          { type: array, items: { type: string } }
+        is_pinned:     { type: boolean }
+        is_featured:   { type: boolean }
+        view_count:    { type: integer }
+        like_count:    { type: integer }
+        comment_count: { type: integer }
+        bookmark_count:{ type: integer }
+        created_at:    { type: string }
+
+    ForumComment:
+      type: object
+      properties:
+        id:           { type: integer }
+        post_id:      { type: integer }
+        author_id:    { type: integer }
+        author_name:  { type: string }
+        content:      { type: string }
+        floor_number: { type: integer }
+        parent_id:    { type: integer, nullable: true }
+        like_count:   { type: integer }
+        created_at:   { type: string }
+
+    ForumPostCreate:
+      type: object
+      required: [title, content, category_id]
+      properties:
+        title:       { type: string }
+        content:     { type: string }
+        category_id: { type: string }
+        tags:        { type: array, items: { type: string } }
+
+    ForumCommentCreate:
+      type: object
+      required: [content]
+      properties:
+        content:   { type: string }
+        parent_id: { type: integer, nullable: true }

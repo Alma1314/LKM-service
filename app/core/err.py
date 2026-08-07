@@ -39,6 +39,8 @@ class ErrCode(IntEnum):
     BLOG_SERIES_NOT_FOUND = 3001
     BLOG_COMMENT_NOT_FOUND = 3002
     BLOG_GIT_ERROR = 3003
+    FORUM_POST_NOT_FOUND = 4001
+    FORUM_COMMENT_NOT_FOUND = 4002
     INTERNAL_ERROR = 9999
 
 
@@ -76,6 +78,8 @@ ERRTABLE: dict[ErrCode, tuple[int, str]] = {
     ErrCode.BLOG_SERIES_NOT_FOUND:        (404, "Blog series not found"),
     ErrCode.BLOG_COMMENT_NOT_FOUND:       (404, "Comment not found"),
     ErrCode.BLOG_GIT_ERROR:               (500, "Git operation failed"),
+    ErrCode.FORUM_POST_NOT_FOUND:         (404, "Forum post not found"),
+    ErrCode.FORUM_COMMENT_NOT_FOUND:      (404, "Forum comment not found"),
     ErrCode.INTERNAL_ERROR:               (500, "Internal server error"),
 }
 

@@ -27,6 +27,8 @@ tags:
     description: 分科板块
   - name: columns
     description: 专栏申请、审核、发文
+  - name: forum
+    description: 社区论坛帖子与评论
   - name: blog
     description: 博客系列、文件内容、收藏、评论
   - name: blog-git
@@ -166,6 +168,17 @@ paths:
   /columns/{column_id}/posts/{post_id}:
     $ref: "paths/columns.yaml#/postDetail"
 
+  /forum/status:
+    $ref: "paths/forum.yaml#/status"
+  /forum/posts:
+    $ref: "paths/forum.yaml#/posts"
+  /forum/posts/{post_id}:
+    $ref: "paths/forum.yaml#/postDetail"
+  /forum/posts/{post_id}/like:
+    $ref: "paths/forum.yaml#/likePost"
+  /forum/posts/{post_id}/comments:
+    $ref: "paths/forum.yaml#/comments"
+
   /blog/series:
     $ref: "paths/blog.yaml#/series"
   /blog/series/{series_id}:
@@ -200,6 +213,13 @@ components:
       type: object
       properties:
         items: { type: array, items: {} }
+    PageData:
+      type: object
+      properties:
+        items: { type: array, items: {} }
+        total: { type: integer }
+        page:  { type: integer }
+        pages: { type: integer }
     ModuleStatus:
       type: object
       properties:
