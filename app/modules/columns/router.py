@@ -60,22 +60,19 @@ def apply_column(
 ):
     if cur.id != info.user_id:
         raise BizError(ErrCode.FORBIDDEN)
-    application = create_application(db, info)
-    return application.model_dump()
+    return create_application(db, info)
 
 
 @router.get("/applications", response_model=ApiResp[ListData[ColumnApplicationInfo]])
 @respond
 def get_applications(db: Session = Depends(get_session)):
-    applications = list_applications(db)
-    return {"items": [item.model_dump() for item in applications]}
+    return {"items": list_applications(db)}
 
 
 @router.get("/applications/{application_id}", response_model=ApiResp[ColumnApplicationInfo])
 @respond
 def get_application_detail(application_id: int, db: Session = Depends(get_session)):
-    application = get_application(db, application_id)
-    return application.model_dump()
+    return get_application(db, application_id)
 
 
 @router.post("/applications/{application_id}/review", response_model=ApiResp[ReviewResultData])
@@ -94,15 +91,13 @@ def review_column_application(
 @router.get("", response_model=ApiResp[ListData[ColumnInfo]])
 @respond
 def get_columns(db: Session = Depends(get_session)):
-    columns = list_columns(db)
-    return {"items": [item.model_dump() for item in columns]}
+    return {"items": list_columns(db)}
 
 
 @router.get("/{column_id}", response_model=ApiResp[ColumnInfo])
 @respond
 def get_column_detail(column_id: int, db: Session = Depends(get_session)):
-    column = get_column(db, column_id)
-    return column.model_dump()
+    return get_column(db, column_id)
 
 
 @router.post("/{column_id}/posts", response_model=ApiResp[ColumnPostInfo])
@@ -115,19 +110,16 @@ def publish_column_post(
 ):
     if cur.id != info.author_id:
         raise BizError(ErrCode.FORBIDDEN)
-    post = create_post(db, column_id, info)
-    return post.model_dump()
+    return create_post(db, column_id, info)
 
 
 @router.get("/{column_id}/posts", response_model=ApiResp[ListData[ColumnPostInfo]])
 @respond
 def get_column_posts(column_id: int, db: Session = Depends(get_session)):
-    posts = list_posts(db, column_id)
-    return {"items": [item.model_dump() for item in posts]}
+    return {"items": list_posts(db, column_id)}
 
 
 @router.get("/{column_id}/posts/{post_id}", response_model=ApiResp[ColumnPostInfo])
 @respond
 def get_column_post_detail(column_id: int, post_id: int, db: Session = Depends(get_session)):
-    post = get_post(db, post_id, column_id=column_id)
-    return post.model_dump()
+    return get_post(db, post_id, column_id=column_id)

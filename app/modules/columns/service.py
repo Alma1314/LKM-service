@@ -1,10 +1,8 @@
-import datetime
-
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
 
-from app.core.err import BizError, ErrCode
-from app.db.models import Column, ColumnApplication, ColumnPost
+from app.core.err import ErrCode
+from app.db.models import Column, ColumnApplication, ColumnPost, now_iso
+from app.db.repo import get_or_raise
 from app.modules.columns.models import COLUMN_TABLE_PLAN, ColumnApplicationStatus, ColumnPostStatus
 from app.modules.columns.schemas import (
     ColumnApplicationCreate,
@@ -14,53 +12,6 @@ from app.modules.columns.schemas import (
     ColumnPostCreate,
     ColumnPostInfo,
 )
-
-
-def _now() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-
-def _app_to_schema(a: ColumnApplication) -> ColumnApplicationInfo:
-    return ColumnApplicationInfo(
-        id=a.id,
-        user_id=a.user_id,
-        title=a.title,
-        description=a.description,
-        reason=a.reason,
-        status=a.status,
-        reviewer_id=a.reviewer_id,
-        review_note=a.review_note,
-        created_at=a.created_at,
-        reviewed_at=a.reviewed_at,
-    )
-
-
-def _col_to_schema(c: Column) -> ColumnInfo:
-    return ColumnInfo(
-        id=c.id,
-        owner_id=c.owner_id,
-        application_id=c.application_id,
-        title=c.title,
-        description=c.description,
-        cover_url=c.cover_url,
-        status=c.status,
-        created_at=c.created_at,
-        updated_at=c.updated_at,
-    )
-
-
-def _post_to_schema(p: ColumnPost) -> ColumnPostInfo:
-    return ColumnPostInfo(
-        id=p.id,
-        column_id=p.column_id,
-        author_id=p.author_id,
-        title=p.title,
-        summary=p.summary,
-        status=p.status,
-        created_at=p.created_at,
-        updated_at=p.updated_at,
-        published_at=p.published_at,
-    )
 
 
 def get_column_plan() -> dict:
@@ -87,7 +38,7 @@ def create_application(
     db.add(app)
     db.flush()
     db.refresh(app)
-    return _app_to_schema(app)
+    return ColumnApplicationInfo.model_validate(app)
 
 
 def list_applications(db: Session) -> list[ColumnApplicationInfo]:
@@ -96,58 +47,56 @@ def list_applications(db: Session) -> list[ColumnApplicationInfo]:
         .order_by(ColumnApplication.id.desc())
         .all()
     )
-    return [_app_to_schema(a) for a in apps] # type: ignore[return-value]
+    return [ColumnApplicationInfo.model_validate(a) for a in apps]
 
 
 def get_application(db: Session, application_id: int) -> ColumnApplicationInfo:
-    app = db.query(ColumnApplication).filter(ColumnApplication.id == application_id).first()
-    if not app:
-        raise BizError(ErrCode.COLUMN_APPLICATION_NOT_FOUND)
-    return _app_to_schema(app) # type: ignore[return-value]
+    return ColumnApplicationInfo.model_validate(get_or_raise(
+        db, ColumnApplication, ErrCode.COLUMN_APPLICATION_NOT_FOUND,
+        ColumnApplication.id == application_id,
+    ))
 
 
 def review_application(
     db: Session, application_id: int, info: ColumnApplicationReview
 ) -> dict:
-    app = db.query(ColumnApplication).filter(ColumnApplication.id == application_id).first()
-    if not app:
-        raise BizError(ErrCode.COLUMN_APPLICATION_NOT_FOUND)
+    app = get_or_raise(
+        db, ColumnApplication, ErrCode.COLUMN_APPLICATION_NOT_FOUND,
+        ColumnApplication.id == application_id,
+    )
 
     app.status = info.status
     app.reviewer_id = info.reviewer_id
     app.review_note = info.review_note
-    app.reviewed_at = _now()
+    app.reviewed_at = now_iso()
     db.flush()
     db.refresh(app)
 
     column = None
     if info.status == ColumnApplicationStatus.APPROVED:
-        column = _ensure_column_for_application(db, app) # type: ignore[return-value]
+        column = _ensure_column_for_application(db, app)
 
     return {
-        "application": _app_to_schema(app).model_dump(), # type: ignore[return-value]
+        "application": ColumnApplicationInfo.model_validate(app).model_dump(),
         "column": column.model_dump() if column else None,
     }
 
 
 def list_columns(db: Session) -> list[ColumnInfo]:
     cols = db.query(Column).order_by(Column.id.desc()).all()
-    return [_col_to_schema(c) for c in cols] # type: ignore[return-value]
+    return [ColumnInfo.model_validate(c) for c in cols]
 
 
 def get_column(db: Session, column_id: int) -> ColumnInfo:
-    col = db.query(Column).filter(Column.id == column_id).first()
-    if not col:
-        raise BizError(ErrCode.COLUMN_NOT_FOUND)
-    return _col_to_schema(col) # type: ignore[return-value]
+    return ColumnInfo.model_validate(get_or_raise(
+        db, Column, ErrCode.COLUMN_NOT_FOUND, Column.id == column_id,
+    ))
 
 
 def create_post(
     db: Session, column_id: int, info: ColumnPostCreate
 ) -> ColumnPostInfo:
-    col = db.query(Column).filter(Column.id == column_id).first()
-    if not col:
-        raise BizError(ErrCode.COLUMN_NOT_FOUND)
+    get_or_raise(db, Column, ErrCode.COLUMN_NOT_FOUND, Column.id == column_id)
 
     post = ColumnPost(
         column_id=column_id,
@@ -156,25 +105,23 @@ def create_post(
         summary=info.summary,
         content=info.content,
         status=ColumnPostStatus.PUBLISHED,
-        published_at=_now(),
+        published_at=now_iso(),
     )
     db.add(post)
     db.flush()
     db.refresh(post)
-    return _post_to_schema(post)
+    return ColumnPostInfo.model_validate(post)
 
 
 def list_posts(db: Session, column_id: int) -> list[ColumnPostInfo]:
-    col = db.query(Column).filter(Column.id == column_id).first()
-    if not col:
-        raise BizError(ErrCode.COLUMN_NOT_FOUND)
+    get_or_raise(db, Column, ErrCode.COLUMN_NOT_FOUND, Column.id == column_id)
     posts = (
         db.query(ColumnPost)
         .filter(ColumnPost.column_id == column_id)
         .order_by(ColumnPost.id.desc())
         .all()
     )
-    return [_post_to_schema(p) for p in posts] # type: ignore[arg-type]
+    return [ColumnPostInfo.model_validate(p) for p in posts]
 
 
 def get_post(
@@ -182,11 +129,10 @@ def get_post(
 ) -> ColumnPostInfo:
     filters = [ColumnPost.id == post_id]
     if column_id is not None:
-        filters.append(ColumnPost.column_id == column_id) # type: ignore[arg-type]
-    post = db.query(ColumnPost).filter(and_(*filters)).first()
-    if not post:
-        raise BizError(ErrCode.COLUMN_POST_NOT_FOUND)
-    return _post_to_schema(post) # type: ignore[arg-type]
+        filters.append(ColumnPost.column_id == column_id)
+    return ColumnPostInfo.model_validate(get_or_raise(
+        db, ColumnPost, ErrCode.COLUMN_POST_NOT_FOUND, *filters,
+    ))
 
 
 def _ensure_column_for_application(
@@ -198,7 +144,7 @@ def _ensure_column_for_application(
         .first()
     )
     if col:
-        return _col_to_schema(col) # type: ignore[arg-type]
+        return ColumnInfo.model_validate(col)
 
     col = Column(
         owner_id=application.user_id,
@@ -209,4 +155,4 @@ def _ensure_column_for_application(
     db.add(col)
     db.flush()
     db.refresh(col)
-    return _col_to_schema(col)
+    return ColumnInfo.model_validate(col)

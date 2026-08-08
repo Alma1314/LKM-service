@@ -6,7 +6,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.err import BizError, ErrCode
-from app.db.models import User
+from app.db.models import User, now_iso
+from app.db.repo import get_or_raise
 from app.db.session import get_session
 from app.modules.auth.providers.base import EmailProvider, SmsProvider
 from app.modules.auth.providers.console import ConsoleEmailProvider, ConsoleSmsProvider
@@ -44,19 +45,11 @@ def _resolve_current_user(token: str, db: Session) -> CurrentUser:
     if not user_id:
         raise BizError(ErrCode.TOKEN_INVALID, "Token missing user_id")
 
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise BizError(ErrCode.USER_NOT_FOUND)
+    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == user_id)
 
     # 检查账号是否被锁定
-    if user.is_locked:
-        import datetime as dt
-
-        locked_until: str | None = user.locked_until  # type: ignore[assignment]
-        if locked_until:
-            locked = dt.datetime.fromisoformat(locked_until)
-            if dt.datetime.now(dt.timezone.utc) < locked:
-                raise BizError(ErrCode.ACCOUNT_LOCKED)
+    if user.is_locked and user.locked_until and user.locked_until > now_iso():
+        raise BizError(ErrCode.ACCOUNT_LOCKED)
 
     # token_version 检查：如果用户的 token_version 已经被提升（例如注销或密码重置后），令牌无效。
     token_ver = payload.get("token_version")

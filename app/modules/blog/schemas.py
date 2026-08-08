@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.modules.auth.schemas import ProfileInfo
 from app.modules.blog.models import BlogSeriesStatus
@@ -35,6 +35,8 @@ class BlogStarStatus(BaseModel):
 
 
 class BlogSeriesInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     owner_id: int
     title: str
@@ -49,6 +51,8 @@ class BlogSeriesInfo(BaseModel):
 
 
 class BlogSeriesDetail(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     owner_id: int
     title: str
@@ -64,6 +68,8 @@ class BlogSeriesDetail(BaseModel):
 
 
 class BlogCommentInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     user_id: int
     series_id: int
@@ -73,6 +79,12 @@ class BlogCommentInfo(BaseModel):
     updated_at: str
     profile: ProfileInfo | None = None
     replies: list["BlogCommentInfo"] = []
+
+    @field_validator("replies", mode="before")
+    @classmethod
+    def _ignore_orm_replies(cls, v):
+        # 树由 service 手动拼装，忽略 ORM 的 replies 关联
+        return []
 
 
 BlogCommentInfo.model_rebuild()

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core.err import BizError, ErrCode, respond
 from app.db.models import User
+from app.db.repo import get_or_raise
 from app.db.session import get_session
 from app.modules.auth import service_auth
 from app.modules.auth.deps import (
@@ -93,9 +94,7 @@ def bind_email_verify(
     if existing:
         raise BizError(ErrCode.ALREADY_REGISTERED, "Email already bound to another account")
 
-    user = db.query(User).filter(User.id == cur.id).first()
-    if not user:
-        raise BizError(ErrCode.USER_NOT_FOUND)
+    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == cur.id)
 
     user.email = body.email
     db.flush()
@@ -144,9 +143,7 @@ def bind_phone_verify(
     if existing:
         raise BizError(ErrCode.ALREADY_REGISTERED, "Phone already bound to another account")
 
-    user = db.query(User).filter(User.id == cur.id).first()
-    if not user:
-        raise BizError(ErrCode.USER_NOT_FOUND)
+    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == cur.id)
 
     user.phone = body.phone
     db.flush()

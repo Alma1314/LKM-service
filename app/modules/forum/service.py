@@ -1,17 +1,13 @@
-import datetime
 import json
 import re
 
 from sqlalchemy.orm import Session
 
 from app.core.err import BizError, ErrCode
-from app.db.models import ForumComment, ForumPost, User
+from app.db.models import ForumComment, ForumPost, User, now_iso
+from app.db.repo import get_or_raise
 from app.modules.forum.models import FORUM_TABLE_PLAN
 from app.modules.forum.schemas import CommentCreate, CommentInfo, PageData, PostCreate, PostInfo
-
-
-def _now() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
 def _author_name(user: User) -> str:
@@ -28,46 +24,12 @@ def _excerpt_of(content: str, limit: int = 150) -> str:
     return text[:limit].rstrip() + "..."
 
 
-def _load_tags(raw: str) -> list[str]:
-    try:
-        tags = json.loads(raw)
-        return tags if isinstance(tags, list) else []
-    except (json.JSONDecodeError, TypeError):
-        return []
-
-
 def _post_to_schema(p: ForumPost, author_name: str) -> PostInfo:
-    return PostInfo(
-        id=p.id,
-        title=p.title,
-        excerpt=p.excerpt,
-        content=p.content,
-        author_id=p.author_id,
-        author_name=author_name,
-        category_id=p.category_id,
-        tags=_load_tags(p.tags),
-        is_pinned=p.is_pinned,
-        is_featured=p.is_featured,
-        view_count=p.view_count,
-        like_count=p.like_count,
-        comment_count=p.comment_count,
-        bookmark_count=p.bookmark_count,
-        created_at=p.created_at,
-    )
+    return PostInfo.model_validate(p).model_copy(update={"author_name": author_name})
 
 
 def _comment_to_schema(c: ForumComment, author_name: str) -> CommentInfo:
-    return CommentInfo(
-        id=c.id,
-        post_id=c.post_id,
-        author_id=c.user_id,
-        author_name=author_name,
-        content=c.content,
-        floor_number=c.floor_number,
-        parent_id=c.parent_id,
-        like_count=c.like_count,
-        created_at=c.created_at,
-    )
+    return CommentInfo.model_validate(c).model_copy(update={"author_name": author_name})
 
 
 def _author_map(db: Session, user_ids: list[int]) -> dict[int, str]:
@@ -113,9 +75,7 @@ def list_posts(
 
 
 def get_post(db: Session, post_id: int, bump_view: bool = False) -> PostInfo:
-    post = db.query(ForumPost).filter(ForumPost.id == post_id).first()
-    if not post:
-        raise BizError(ErrCode.FORUM_POST_NOT_FOUND)
+    post = get_or_raise(db, ForumPost, ErrCode.FORUM_POST_NOT_FOUND, ForumPost.id == post_id)
 
     if bump_view:
         post.view_count += 1
@@ -143,9 +103,7 @@ def create_post(db: Session, author_id: int, info: PostCreate) -> PostInfo:
 
 
 def delete_post(db: Session, post_id: int, current_user_id: int) -> None:
-    post = db.query(ForumPost).filter(ForumPost.id == post_id).first()
-    if not post:
-        raise BizError(ErrCode.FORUM_POST_NOT_FOUND)
+    post = get_or_raise(db, ForumPost, ErrCode.FORUM_POST_NOT_FOUND, ForumPost.id == post_id)
     if post.author_id != current_user_id:
         raise BizError(ErrCode.FORBIDDEN)
     db.delete(post)
@@ -153,9 +111,7 @@ def delete_post(db: Session, post_id: int, current_user_id: int) -> None:
 
 
 def like_post(db: Session, post_id: int) -> int:
-    post = db.query(ForumPost).filter(ForumPost.id == post_id).first()
-    if not post:
-        raise BizError(ErrCode.FORUM_POST_NOT_FOUND)
+    post = get_or_raise(db, ForumPost, ErrCode.FORUM_POST_NOT_FOUND, ForumPost.id == post_id)
     post.like_count += 1
     db.flush()
     return post.like_count
@@ -167,9 +123,7 @@ def list_comments(
     page: int = 1,
     limit: int = 20,
 ) -> PageData[CommentInfo]:
-    post = db.query(ForumPost).filter(ForumPost.id == post_id).first()
-    if not post:
-        raise BizError(ErrCode.FORUM_POST_NOT_FOUND)
+    get_or_raise(db, ForumPost, ErrCode.FORUM_POST_NOT_FOUND, ForumPost.id == post_id)
 
     query = db.query(ForumComment).filter(ForumComment.post_id == post_id)
     total = query.count()
@@ -191,21 +145,14 @@ def create_comment(
     user_id: int,
     info: CommentCreate,
 ) -> CommentInfo:
-    post = db.query(ForumPost).filter(ForumPost.id == post_id).first()
-    if not post:
-        raise BizError(ErrCode.FORUM_POST_NOT_FOUND)
+    post = get_or_raise(db, ForumPost, ErrCode.FORUM_POST_NOT_FOUND, ForumPost.id == post_id)
 
     if info.parent_id is not None:
-        parent = (
-            db.query(ForumComment)
-            .filter(
-                ForumComment.id == info.parent_id,
-                ForumComment.post_id == post_id,
-            )
-            .first()
+        get_or_raise(
+            db, ForumComment, ErrCode.FORUM_COMMENT_NOT_FOUND,
+            ForumComment.id == info.parent_id,
+            ForumComment.post_id == post_id,
         )
-        if not parent:
-            raise BizError(ErrCode.FORUM_COMMENT_NOT_FOUND)
 
     floor = (
         db.query(ForumComment)

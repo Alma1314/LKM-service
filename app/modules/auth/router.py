@@ -55,8 +55,7 @@ def get_me(cur: CurrentUser = Depends(get_current_user)):
 @router.get("/{user_id}", response_model=ApiResp[ProfileInfo])
 @respond
 def get_user(user_id: int, db: Session = Depends(get_session)):
-    profile = get_profile(db, user_id)
-    return profile.model_dump()
+    return get_profile(db, user_id)
 
 
 @router.put("/{user_id}/profile", response_model=ApiResp[ProfileInfo])
@@ -70,8 +69,7 @@ def edit_profile(
     if cur.id != user_id:
         raise BizError(ErrCode.FORBIDDEN)
     update_profile(db, user_id, info)
-    profile = get_profile(db, user_id)
-    return profile.model_dump()
+    return get_profile(db, user_id)
 
 @router.post("/reg/local", response_model=ApiResp[AuthTokenData])
 @respond

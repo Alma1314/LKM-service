@@ -1,15 +1,14 @@
 """Github OAuth 服务 —— 授权 URL、处理回调、绑定账户。"""
 
-import datetime as dt
 import secrets
 
 import httpx
-from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.err import BizError, ErrCode
-from app.db.models import Profile, User
+from app.db.models import Profile, User, expires_at, now_iso
+from app.db.repo import consume_once, get_or_raise
 from app.modules.auth.models import OAuthState, UserOAuth
 from app.modules.auth.service_auth import log_audit, upgrade_to_normal
 
@@ -17,25 +16,22 @@ from app.modules.auth.service_auth import log_audit, upgrade_to_normal
 def _generate_oauth_state(db: Session, purpose: str) -> str:
     """生成一个高熵的 OAuth state 令牌，存储并返回它。"""
     state = secrets.token_urlsafe(32)
-    expires_at = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=10)).isoformat()
-    db.add(OAuthState(state=state, purpose=purpose, expires_at=expires_at))
+    expiry = expires_at(minutes=10)
+    db.add(OAuthState(state=state, purpose=purpose, expires_at=expiry))
     db.flush()
     return state
 
 
 def _consume_oauth_state(db: Session, state: str, purpose: str) -> None:
-    now = dt.datetime.now(dt.timezone.utc).isoformat()
-    result = db.execute(
-        sa_update(OAuthState)
-        .where(
-            OAuthState.state == state,
-            OAuthState.consumed.is_(False),
-            OAuthState.purpose == purpose,
-            OAuthState.expires_at > now,
-        )
-        .values(consumed=True)
-    )
-    if result.rowcount != 1:  # type: ignore[union-attr]
+    if not consume_once(
+        db,
+        OAuthState,
+        {"consumed": True},
+        OAuthState.state == state,
+        OAuthState.consumed.is_(False),
+        OAuthState.purpose == purpose,
+        OAuthState.expires_at > now_iso(),
+    ):
         raise BizError(ErrCode.OAUTH_PROVIDER_ERROR, "Invalid or expired OAuth state")
 
 
@@ -117,9 +113,9 @@ async def handle_github_callback(db: Session, code: str, state: str) -> dict:
         .first()
     )
     if oauth:
-        user = db.query(User).filter(User.id == int(oauth.user_id)).first() # type: ignore[arg-type]
-        if not user:
-            raise BizError(ErrCode.USER_NOT_FOUND)
+        user = get_or_raise(
+            db, User, ErrCode.USER_NOT_FOUND, User.id == int(oauth.user_id), # type: ignore[arg-type]
+        )
         return _oauth_login_response(db, user) # type: ignore[arg-type]
 
     # 2. 通过邮箱查找现有用户 -> 绑定
@@ -197,9 +193,7 @@ async def bind_github(db: Session, user_id: int, code: str, state: str) -> dict:
     if existing_oauth:
         raise BizError(ErrCode.OAUTH_EMAIL_TAKEN, "This Github account is already bound to another user")
 
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise BizError(ErrCode.USER_NOT_FOUND)
+    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == user_id)
 
     db.add(
         UserOAuth(

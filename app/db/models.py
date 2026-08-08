@@ -27,6 +27,14 @@ def now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
+def expires_at(days: float = 0, minutes: float = 0) -> str:
+    """从现在起 days/minutes 后的 ISO 时间戳。"""
+    return (
+        datetime.datetime.now(datetime.timezone.utc)
+        + datetime.timedelta(days=days, minutes=minutes)
+    ).isoformat()
+
+
 class User(Base):
     __tablename__ = "users"
 
