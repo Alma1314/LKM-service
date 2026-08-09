@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.columns.models import (
     ColumnApplicationStatus,
@@ -15,6 +15,8 @@ class ColumnApplicationCreate(BaseModel):
 
 
 class ColumnApplicationInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     user_id: int
     title: str
@@ -34,6 +36,8 @@ class ColumnApplicationReview(BaseModel):
 
 
 class ColumnInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     owner_id: int
     application_id: int | None = None
@@ -53,6 +57,8 @@ class ColumnPostCreate(BaseModel):
 
 
 class ColumnPostInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     column_id: int
     author_id: int

@@ -15,7 +15,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.err import BizError, ErrCode
-from app.db.models import User
+from app.db.models import User, expires_at, now_iso
+from app.db.repo import consume_once, get_or_raise
 from app.modules.auth.models import PasskeyChallenge, PasskeyCredential
 
 _CHALLENGE_TTL_MINUTES = 5
@@ -32,14 +33,13 @@ def _b64decode(s: str) -> bytes:
 
 def _store_challenge(db: Session) -> tuple[str, str]:
     """将 WebAuthn 挑战码持久化到数据库（跨 worker 共享，过期自动失效）。"""
-    import datetime as _dt
     challenge_id = secrets.token_hex(16)
     challenge = _b64(os.urandom(32))
-    expires_at = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=_CHALLENGE_TTL_MINUTES)).isoformat()
+    expiry = expires_at(minutes=_CHALLENGE_TTL_MINUTES)
     db.add(PasskeyChallenge(
         challenge_id=challenge_id,
         challenge=challenge,
-        expires_at=expires_at,
+        expires_at=expiry,
     ))
     db.flush()
     return challenge_id, challenge
@@ -47,19 +47,15 @@ def _store_challenge(db: Session) -> tuple[str, str]:
 
 def _consume_challenge(db: Session, challenge_id: str) -> str:
     """原子地消费挑战码 —— 使用条件 UPDATE 防止重放。"""
-    import datetime as _dt
-    now = _dt.datetime.now(_dt.timezone.utc).isoformat()
-    from sqlalchemy import update as sa_update
-    result = db.execute(
-        sa_update(PasskeyChallenge)
-        .where(
-            PasskeyChallenge.challenge_id == challenge_id,
-            PasskeyChallenge.consumed.is_(False),
-            PasskeyChallenge.expires_at > now,
-        )
-        .values(consumed=True)
-    )
-    if result.rowcount != 1:  # type: ignore[union-attr]
+    now = now_iso()
+    if not consume_once(
+        db,
+        PasskeyChallenge,
+        {"consumed": True},
+        PasskeyChallenge.challenge_id == challenge_id,
+        PasskeyChallenge.consumed.is_(False),
+        PasskeyChallenge.expires_at > now,
+    ):
         return ""
     row = db.query(PasskeyChallenge).filter(PasskeyChallenge.challenge_id == challenge_id).first()
     return str(row.challenge) if row else ""
@@ -81,9 +77,8 @@ async def cleanup_expired_challenges() -> None:
         try:
             db = new_session()
             try:
-                import datetime as _dt
                 from sqlalchemy import delete as sa_delete, or_
-                now = _dt.datetime.now(_dt.timezone.utc).isoformat()
+                now = now_iso()
                 result = db.execute(
                     sa_delete(PasskeyChallenge).where(
                         or_(PasskeyChallenge.consumed.is_(True), PasskeyChallenge.expires_at <= now)
@@ -243,9 +238,7 @@ def _signature_to_der(raw_sig: bytes) -> bytes:
     return b"\x30" + bytes([len(inner)]) + inner
 
 def begin_passkey_registration(db: Session, user_id: int) -> dict:
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise BizError(ErrCode.USER_NOT_FOUND)
+    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == user_id)
 
     challenge_id, challenge = _store_challenge(db)
     user_handle = user_id.to_bytes(8, "big")
@@ -410,11 +403,11 @@ def complete_passkey_login(db: Session, credential: dict) -> dict:
     _verify_rp_id_hash(auth_data)
     _verify_user_presence(auth_data)
 
-    passkey = db.query(PasskeyCredential).filter(
-        PasskeyCredential.credential_id == raw_id
-    ).first()
-    if not passkey:
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Credential not found")
+    passkey = get_or_raise(
+        db, PasskeyCredential, ErrCode.PASSKEY_VERIFICATION_FAILED,
+        PasskeyCredential.credential_id == raw_id,
+        detail="Credential not found",
+    )
 
     public_key_bytes = _b64decode(str(passkey.public_key))
     signed_data = _build_signed_data(auth_data_bytes, client_data_json_b64)
@@ -432,9 +425,7 @@ def complete_passkey_login(db: Session, credential: dict) -> dict:
         passkey.sign_count = reported_count
     db.flush()
 
-    user = db.query(User).filter(User.id == passkey.user_id).first()
-    if not user:
-        raise BizError(ErrCode.USER_NOT_FOUND)
+    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == passkey.user_id)
 
     if user.account_level == "local":
         raise BizError(ErrCode.ACCOUNT_LEVEL_INSUFFICIENT)
@@ -457,12 +448,12 @@ def list_credentials(db: Session, user_id: int) -> list[dict]:
     ]
 
 def delete_credential(db: Session, user_id: int, credential_id: int) -> dict:
-    cred = db.query(PasskeyCredential).filter(
+    cred = get_or_raise(
+        db, PasskeyCredential, ErrCode.PASSKEY_VERIFICATION_FAILED,
         PasskeyCredential.id == credential_id,
         PasskeyCredential.user_id == user_id,
-    ).first()
-    if not cred:
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Credential not found")
+        detail="Credential not found",
+    )
     db.delete(cred)
     db.flush()
     return {"message": "Credential deleted"}

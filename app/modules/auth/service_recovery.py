@@ -3,7 +3,8 @@
 from sqlalchemy.orm import Session
 
 from app.core.err import BizError, ErrCode
-from app.db.models import User
+from app.db.models import User, expires_at, now_iso
+from app.db.repo import consume_once, get_or_raise
 from app.modules.auth.models import RecoveryTransaction, TOTP
 from app.modules.auth.security import hashpwd
 from app.modules.auth.service_auth import (
@@ -20,14 +21,11 @@ from app.modules.auth.service_verify import (
 def _find_user_by_contact(db: Session, field: str, value: str) -> User:
     """通过邮箱或手机号查找用户。"""
     if field == "email":
-        user = db.query(User).filter(User.email == value).first()
+        user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.email == value)
     elif field == "phone":
-        user = db.query(User).filter(User.phone == value).first()
+        user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.phone == value)
     else:
         raise BizError(ErrCode.INVALID_INPUT, "field must be 'email' or 'phone'")
-
-    if not user:
-        raise BizError(ErrCode.USER_NOT_FOUND)
 
     if user.account_level == "local":
         raise BizError(ErrCode.RECOVERY_NOT_SUPPORTED, "Local accounts do not support recovery")
@@ -51,13 +49,11 @@ def _user_requires_mfa(db: Session, user: User) -> bool:
 
 def _reset_password(db: Session, user: User, new_password: str) -> None:
     """哈希新密码、设置它、解锁账户、撤销所有令牌，并记录审计日志。"""
-    from app.db.models import now_iso as _now
-
     user.hashed_password = hashpwd(new_password)
     user.is_locked = False
     user.locked_until = None
     user.failed_login_attempts = 0
-    user.updated_at = _now()  # 使已发放的访问令牌失效（iat < updated_at）
+    user.updated_at = now_iso()  # 使已发放的访问令牌失效（iat < updated_at）
     db.flush()
 
     revoke_all_refresh_tokens(db, user.id)
@@ -106,14 +102,14 @@ def recover_by_magic_link(db: Session, token: str, new_password: str | None = No
     from app.modules.auth.models import MagicLink
 
     token_hash = hashlib.sha256(token.encode()).hexdigest()
-    link_record = db.query(MagicLink).filter(MagicLink.token_hash == token_hash).first()
+    link_record = get_or_raise(
+        db, MagicLink, ErrCode.TOKEN_INVALID,
+        MagicLink.token_hash == token_hash,
+    )
 
-    if not link_record:
-        raise BizError(ErrCode.TOKEN_INVALID)
-
-    user = db.query(User).filter(User.email == link_record.email).first()
-    if not user:
-        raise BizError(ErrCode.USER_NOT_FOUND)
+    user = get_or_raise(
+        db, User, ErrCode.USER_NOT_FOUND, User.email == link_record.email,
+    )
 
     if user.account_level == "admin":
         raise BizError(
@@ -132,10 +128,8 @@ def recover_by_magic_link(db: Session, token: str, new_password: str | None = No
 
 def _start_user_recovery_txn(db: Session, user: User) -> dict:
     """为启用了 MFA 的用户创建恢复事务，并返回requires_2fa 详情，以便调用方在重置前完成 2FA。"""
-    import datetime as _dt
-
     txn_id = _generate_recovery_txn_id()
-    expires_at = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=15)).isoformat()
+    expiry = expires_at(minutes=15)
 
     from app.modules.auth.security import create_temp_token
 
@@ -148,7 +142,7 @@ def _start_user_recovery_txn(db: Session, user: User) -> dict:
         totp_verified=False,
         consumed=False,
         state="second_factor_pending",
-        expires_at=expires_at,
+        expires_at=expiry,
     )
     db.add(txn)
     db.flush()
@@ -180,10 +174,8 @@ def recover_admin_begin(
     ).first()
 
     if user and str(user.account_level) == "admin":
-        import datetime as _dt
-
         txn_id = _generate_recovery_txn_id()
-        expires_at = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=15)).isoformat()
+        expiry = expires_at(minutes=15)
 
         txn = RecoveryTransaction(
             txn_id=txn_id,
@@ -193,7 +185,7 @@ def recover_admin_begin(
             totp_verified=False,
             consumed=False,
             state="contact_pending",
-            expires_at=expires_at,
+            expires_at=expiry,
         )
         db.add(txn)
         db.flush()
@@ -229,17 +221,14 @@ def recover_admin_begin(
 
 
 def _get_recovery_txn(db: Session, txn_id: str):
-    import datetime as _dt
-
-    txn = db.query(RecoveryTransaction).filter(
-        RecoveryTransaction.txn_id == txn_id
-    ).first()
-    if not txn:
-        raise BizError(ErrCode.TOKEN_INVALID, "Invalid recovery transaction")
+    txn = get_or_raise(
+        db, RecoveryTransaction, ErrCode.TOKEN_INVALID,
+        RecoveryTransaction.txn_id == txn_id,
+        detail="Invalid recovery transaction",
+    )
     if txn.consumed:
         raise BizError(ErrCode.TOKEN_INVALID, "Recovery transaction already used")
-    now = _dt.datetime.now(_dt.timezone.utc)
-    if _dt.datetime.fromisoformat(txn.expires_at) <= now: # type: ignore[arg-type]
+    if txn.expires_at <= now_iso():
         raise BizError(ErrCode.TOKEN_EXPIRED, "Recovery transaction expired")
     return txn
 
@@ -315,34 +304,30 @@ def recover_admin_verify_totp(db: Session, txn_id: str, temp_token: str) -> dict
 
 def _consume_recovery_txn(db: Session, txn_id: str) -> User:
     """原子消费恢复事务，返回关联的用户。"""
-    import datetime as _dt
+    now = now_iso()
 
-    now = _dt.datetime.now(_dt.timezone.utc).isoformat()
-
-    from sqlalchemy import update as sa_update
-    result = db.execute(
-        sa_update(RecoveryTransaction)
-        .where(
-            RecoveryTransaction.txn_id == txn_id,
-            RecoveryTransaction.consumed.is_(False),
-            RecoveryTransaction.contact_verified.is_(True),
-            RecoveryTransaction.totp_verified.is_(True),
-            RecoveryTransaction.expires_at > now,
-        )
-        .values(consumed=True, completed_at=now)
-    )
-    if result.rowcount != 1:  # type: ignore[union-attr]
+    if not consume_once(
+        db,
+        RecoveryTransaction,
+        {"consumed": True, "completed_at": now},
+        RecoveryTransaction.txn_id == txn_id,
+        RecoveryTransaction.consumed.is_(False),
+        RecoveryTransaction.contact_verified.is_(True),
+        RecoveryTransaction.totp_verified.is_(True),
+        RecoveryTransaction.expires_at > now,
+    ):
         raise BizError(ErrCode.TOKEN_INVALID, "Recovery transaction invalid or already consumed")
 
-    txn = db.query(RecoveryTransaction).filter(RecoveryTransaction.txn_id == txn_id).first()
-    if not txn:
-        raise BizError(ErrCode.TOKEN_INVALID)
+    txn = get_or_raise(
+        db, RecoveryTransaction, ErrCode.TOKEN_INVALID,
+        RecoveryTransaction.txn_id == txn_id,
+    )
 
-    user = db.query(User).filter(User.id == int(txn.user_id)).first() # type: ignore[arg-type]
-    if not user:
-        raise BizError(ErrCode.USER_NOT_FOUND)
+    user = get_or_raise(
+        db, User, ErrCode.USER_NOT_FOUND, User.id == int(txn.user_id), # type: ignore[arg-type]
+    )
 
-    return user # type: ignore[arg-type]
+    return user
 
 
 def recover_user_complete(

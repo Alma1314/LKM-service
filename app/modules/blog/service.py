@@ -1,10 +1,9 @@
-import datetime
-
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.core.err import BizError, ErrCode
-from app.db.models import BlogComment, BlogSeries, BlogStar, Profile
+from app.db.models import BlogComment, BlogSeries, BlogStar, Profile, now_iso
+from app.db.repo import get_or_raise
 from app.modules.blog import git_svc
 from app.modules.auth.schemas import ProfileInfo
 from app.modules.blog.schemas import (
@@ -18,43 +17,19 @@ from app.modules.blog.schemas import (
 )
 
 
-def _now() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-
 # ---- private converters ----
 
 
 def _series_to_info(
     s: BlogSeries, star_count: int = 0, is_starred: bool = False
 ) -> BlogSeriesInfo:
-    return BlogSeriesInfo(
-        id=s.id,
-        owner_id=s.owner_id,
-        title=s.title,
-        description=s.description,
-        cover_url=s.cover_url,
-        repo_name=s.repo_name,
-        status=s.status,
-        created_at=s.created_at,
-        updated_at=s.updated_at,
-        star_count=star_count,
-        is_starred=is_starred,
+    return BlogSeriesInfo.model_validate(s).model_copy(
+        update={"star_count": star_count, "is_starred": is_starred}
     )
 
 
 def _comment_to_info(c: BlogComment, profile: ProfileInfo | None = None) -> BlogCommentInfo:
-    return BlogCommentInfo(
-        id=c.id,
-        user_id=c.user_id,
-        series_id=c.series_id,
-        content=c.content,
-        parent_id=c.parent_id,
-        created_at=c.created_at,
-        updated_at=c.updated_at,
-        profile=profile,
-        replies=[],
-    )
+    return BlogCommentInfo.model_validate(c).model_copy(update={"profile": profile})
 
 
 # ---- star helpers ----
@@ -81,7 +56,7 @@ def _is_starred(db: Session, series_id: int, user_id: int) -> bool:
 def _get_profile(db: Session, user_id: int) -> ProfileInfo | None:
     profile = db.query(Profile).filter(Profile.user_id == user_id).first()
     if profile:
-        return ProfileInfo(nickname=profile.nickname, avatar=profile.avatar, role=profile.role)
+        return ProfileInfo.model_validate(profile)
     return None
 
 
@@ -125,9 +100,9 @@ def list_series(
 def get_series(
     db: Session, series_id: int, current_user_id: int | None = None
 ) -> BlogSeriesDetail:
-    series = db.query(BlogSeries).filter(BlogSeries.id == series_id).first()
-    if not series:
-        raise BizError(ErrCode.BLOG_SERIES_NOT_FOUND)
+    series = get_or_raise(
+        db, BlogSeries, ErrCode.BLOG_SERIES_NOT_FOUND, BlogSeries.id == series_id,
+    )
 
     sc = _star_count(db, series_id)
     starred = (
@@ -138,28 +113,17 @@ def get_series(
     if git_svc.ensure_repo_has_commits(series.repo_name):
         file_tree = git_svc.get_file_tree(series.repo_name)
 
-    return BlogSeriesDetail(
-        id=series.id,
-        owner_id=series.owner_id,
-        title=series.title,
-        description=series.description,
-        cover_url=series.cover_url,
-        repo_name=series.repo_name,
-        status=series.status,
-        created_at=series.created_at,
-        updated_at=series.updated_at,
-        star_count=sc,
-        is_starred=starred,
-        file_tree=file_tree,
+    return BlogSeriesDetail.model_validate(series).model_copy(
+        update={"star_count": sc, "is_starred": starred, "file_tree": file_tree}
     )
 
 
 def update_series(
     db: Session, series_id: int, user_id: int, info: BlogSeriesUpdate
 ) -> BlogSeriesInfo:
-    series = db.query(BlogSeries).filter(BlogSeries.id == series_id).first()
-    if not series:
-        raise BizError(ErrCode.BLOG_SERIES_NOT_FOUND)
+    series = get_or_raise(
+        db, BlogSeries, ErrCode.BLOG_SERIES_NOT_FOUND, BlogSeries.id == series_id,
+    )
     if series.owner_id != user_id:
         raise BizError(ErrCode.FORBIDDEN)
 
@@ -171,7 +135,7 @@ def update_series(
         series.cover_url = info.cover_url
     if info.status is not None:
         series.status = info.status
-    series.updated_at = _now()
+    series.updated_at = now_iso()
 
     db.flush()
     db.refresh(series)
@@ -179,9 +143,9 @@ def update_series(
 
 
 def delete_series(db: Session, series_id: int, user_id: int) -> None:
-    series = db.query(BlogSeries).filter(BlogSeries.id == series_id).first()
-    if not series:
-        raise BizError(ErrCode.BLOG_SERIES_NOT_FOUND)
+    series = get_or_raise(
+        db, BlogSeries, ErrCode.BLOG_SERIES_NOT_FOUND, BlogSeries.id == series_id,
+    )
     if series.owner_id != user_id:
         raise BizError(ErrCode.FORBIDDEN)
 
@@ -194,9 +158,7 @@ def delete_series(db: Session, series_id: int, user_id: int) -> None:
 
 
 def toggle_star(db: Session, series_id: int, user_id: int) -> BlogStarStatus:
-    series = db.query(BlogSeries).filter(BlogSeries.id == series_id).first()
-    if not series:
-        raise BizError(ErrCode.BLOG_SERIES_NOT_FOUND)
+    get_or_raise(db, BlogSeries, ErrCode.BLOG_SERIES_NOT_FOUND, BlogSeries.id == series_id)
 
     existing = (
         db.query(BlogStar)
@@ -221,15 +183,14 @@ def toggle_star(db: Session, series_id: int, user_id: int) -> BlogStarStatus:
 def create_comment(
     db: Session, series_id: int, user_id: int, info: BlogCommentCreate
 ) -> BlogCommentInfo:
-    series = db.query(BlogSeries).filter(BlogSeries.id == series_id).first()
-    if not series:
-        raise BizError(ErrCode.BLOG_SERIES_NOT_FOUND)
+    get_or_raise(db, BlogSeries, ErrCode.BLOG_SERIES_NOT_FOUND, BlogSeries.id == series_id)
 
     if info.parent_id is not None:
-        parent = (
-            db.query(BlogComment).filter(BlogComment.id == info.parent_id).first()
+        parent = get_or_raise(
+            db, BlogComment, ErrCode.INVALID_INPUT,
+            BlogComment.id == info.parent_id,
         )
-        if not parent or parent.series_id != series_id:
+        if parent.series_id != series_id:
             raise BizError(ErrCode.INVALID_INPUT, "Parent comment not found")
 
     comment = BlogComment(
@@ -245,9 +206,7 @@ def create_comment(
 
 
 def list_comments(db: Session, series_id: int) -> list[BlogCommentInfo]:
-    series = db.query(BlogSeries).filter(BlogSeries.id == series_id).first()
-    if not series:
-        raise BizError(ErrCode.BLOG_SERIES_NOT_FOUND)
+    get_or_raise(db, BlogSeries, ErrCode.BLOG_SERIES_NOT_FOUND, BlogSeries.id == series_id)
 
     comments = (
         db.query(BlogComment)
@@ -279,13 +238,11 @@ def list_comments(db: Session, series_id: int) -> list[BlogCommentInfo]:
 
 
 def delete_comment(db: Session, series_id: int, comment_id: int, user_id: int) -> None:
-    comment = (
-        db.query(BlogComment)
-        .filter(BlogComment.id == comment_id, BlogComment.series_id == series_id)
-        .first()
+    comment = get_or_raise(
+        db, BlogComment, ErrCode.BLOG_COMMENT_NOT_FOUND,
+        BlogComment.id == comment_id,
+        BlogComment.series_id == series_id,
     )
-    if not comment:
-        raise BizError(ErrCode.BLOG_COMMENT_NOT_FOUND)
     if comment.user_id != user_id:
         raise BizError(ErrCode.FORBIDDEN)
     db.delete(comment)
@@ -296,8 +253,8 @@ def delete_comment(db: Session, series_id: int, comment_id: int, user_id: int) -
 
 
 def get_file_content(db: Session, series_id: int, filepath: str) -> dict:
-    series = db.query(BlogSeries).filter(BlogSeries.id == series_id).first()
-    if not series:
-        raise BizError(ErrCode.BLOG_SERIES_NOT_FOUND)
+    series = get_or_raise(
+        db, BlogSeries, ErrCode.BLOG_SERIES_NOT_FOUND, BlogSeries.id == series_id,
+    )
     content = git_svc.read_file(series.repo_name, filepath)
     return {"filepath": filepath, "content": content}

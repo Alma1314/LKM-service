@@ -44,7 +44,7 @@ def get_posts(
     category_id: str | None = Query(default=None, max_length=50),
     db: Session = Depends(get_session),
 ):
-    return list_posts(db, page=page, limit=limit, category_id=category_id).model_dump()
+    return list_posts(db, page=page, limit=limit, category_id=category_id)
 
 
 @router.post("/posts", response_model=ApiResp[PostInfo])
@@ -54,13 +54,13 @@ def create_forum_post(
     cur: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_session),
 ):
-    return create_post_service(db, cur.id, info).model_dump()
+    return create_post_service(db, cur.id, info)
 
 
 @router.get("/posts/{post_id}", response_model=ApiResp[PostInfo])
 @respond
 def get_post_detail(post_id: int, db: Session = Depends(get_session)):
-    return get_post(db, post_id, bump_view=True).model_dump()
+    return get_post(db, post_id, bump_view=True)
 
 
 @router.post("/posts/{post_id}/like", response_model=ApiResp[dict])
@@ -92,7 +92,7 @@ def get_post_comments(
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_session),
 ):
-    return list_comments(db, post_id, page=page, limit=limit).model_dump()
+    return list_comments(db, post_id, page=page, limit=limit)
 
 
 @router.post("/posts/{post_id}/comments", response_model=ApiResp[CommentInfo])
@@ -103,4 +103,4 @@ def create_post_comment(
     cur: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_session),
 ):
-    return create_comment(db, post_id, cur.id, info).model_dump()
+    return create_comment(db, post_id, cur.id, info)

@@ -41,7 +41,7 @@ def create_blog_series(
     cur: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_session),
 ):
-    return create_series(db, cur.id, info).model_dump()
+    return create_series(db, cur.id, info)
 
 
 @router.get("/series", response_model=ApiResp[ListData[BlogSeriesInfo]])
@@ -51,8 +51,7 @@ def list_blog_series(
     cur: CurrentUser | None = Depends(get_optional_user),
 ):
     user_id = cur.id if cur else None
-    items = list_series(db, current_user_id=user_id)
-    return {"items": [item.model_dump() for item in items]}
+    return {"items": list_series(db, current_user_id=user_id)}
 
 
 @router.get("/series/{series_id}", response_model=ApiResp[BlogSeriesDetail])
@@ -63,7 +62,7 @@ def get_blog_series(
     cur: CurrentUser | None = Depends(get_optional_user),
 ):
     user_id = cur.id if cur else None
-    return get_series(db, series_id, current_user_id=user_id).model_dump()
+    return get_series(db, series_id, current_user_id=user_id)
 
 
 @router.put("/series/{series_id}", response_model=ApiResp[BlogSeriesInfo])
@@ -74,7 +73,7 @@ def update_blog_series(
     cur: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_session),
 ):
-    return update_series(db, series_id, cur.id, info).model_dump()
+    return update_series(db, series_id, cur.id, info)
 
 
 @router.delete("/series/{series_id}")
@@ -114,7 +113,7 @@ def star_blog_series(
     cur: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_session),
 ):
-    return toggle_star(db, series_id, cur.id).model_dump()
+    return toggle_star(db, series_id, cur.id)
 
 
 # ---- Comments ----
@@ -131,7 +130,7 @@ def create_blog_comment(
     cur: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_session),
 ):
-    return create_comment(db, series_id, cur.id, info).model_dump()
+    return create_comment(db, series_id, cur.id, info)
 
 
 @router.get(
@@ -143,8 +142,7 @@ def list_blog_comments(
     series_id: int,
     db: Session = Depends(get_session),
 ):
-    comments = list_comments(db, series_id)
-    return {"items": [c.model_dump() for c in comments]}
+    return {"items": list_comments(db, series_id)}
 
 
 @router.delete("/series/{series_id}/comments/{comment_id}")

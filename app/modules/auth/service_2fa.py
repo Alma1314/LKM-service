@@ -8,9 +8,9 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.err import BizError, ErrCode
 from app.db.models import User
+from app.db.repo import consume_once, get_or_raise, isolated_update
 from app.modules.auth.models import RecoveryCode, TempTokenUsage, TOTP
 from app.modules.auth.security import (
-    create_access_token,
     decrypt_secret,
     encrypt_secret,
     generate_recovery_codes,
@@ -18,7 +18,7 @@ from app.modules.auth.security import (
     get_totp_uri,
     verify_totp,
 )
-from app.modules.auth.service_auth import _generate_refresh_token, _isolated_update, _store_refresh_token, log_audit
+from app.modules.auth.service_auth import _issue_session_tokens, log_audit
 
 _TOTP_MAX_FAILED = 3
 
@@ -35,7 +35,7 @@ def _record_totp_failure(db: Session, totp_record: TOTP | None) -> None:
 
     from sqlalchemy import update as sa_update
 
-    _isolated_update(
+    isolated_update(
         db,
         sa_update(TOTP)
         .where(TOTP.user_id == totp_record.user_id)
@@ -103,19 +103,9 @@ def _check_and_consume_temp_token(db: Session, raw_token: str, user_id: int, txn
 
 def _create_auth_tokens(db: Session, user: User, trust_device: bool = False) -> dict:
     """为给定用户发放访问令牌和刷新令牌。"""
-    profile = user.profile
-    role = profile.role if profile else "member"
-
-    access_token = create_access_token(
-        user_id=user.id,
-        account_level=user.account_level,
-        role=role,
-        trust_device=trust_device,
-        token_version=user.token_version,
+    access_token, raw_refresh = _issue_session_tokens(
+        db, user, trust_device=trust_device, mfa_verified=True,
     )
-    raw_refresh = _generate_refresh_token()
-    _store_refresh_token(db, user.id, raw_refresh, mfa_verified=True)
-
     return {
         "access_token": access_token,
         "refresh_token": raw_refresh,
@@ -124,9 +114,7 @@ def _create_auth_tokens(db: Session, user: User, trust_device: bool = False) -> 
     }
 
 def setup_2fa_begin(db: Session, user_id: int) -> dict:
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise BizError(ErrCode.USER_NOT_FOUND)
+    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == user_id)
     if user.account_level == "local":
         raise BizError(ErrCode.ACCOUNT_LEVEL_INSUFFICIENT)
 
@@ -199,9 +187,7 @@ def verify_2fa(
     # 错误的TOTP/恢复码不会永久地消耗临时令牌或满足恢复检查。
     payload = _decode_temp_token(raw_token=temp_token)
     user_id = payload["user_id"]
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise BizError(ErrCode.USER_NOT_FOUND)
+    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == user_id)
 
     if str(user.account_level) == "admin":
         trust_device = False
@@ -211,15 +197,15 @@ def verify_2fa(
     if recovery_code:
         code_hash = hashlib.sha256(recovery_code.encode()).hexdigest()
         # 原子消费：仅在尚未使用时才标记为已使用
-        from sqlalchemy import update as sa_update
-        result = db.execute(
-            sa_update(RecoveryCode)
-            .where(RecoveryCode.user_id == user_id, RecoveryCode.code_hash == code_hash, RecoveryCode.used.is_(False))
-            .values(used=True)
-        )
-        if result.rowcount != 1:  # type: ignore[union-attr]
+        if not consume_once(
+            db,
+            RecoveryCode,
+            {"used": True},
+            RecoveryCode.user_id == user_id,
+            RecoveryCode.code_hash == code_hash,
+            RecoveryCode.used.is_(False),
+        ):
             raise BizError(ErrCode.RECOVERY_CODE_INVALID)
-        db.flush()
     elif code:
         totp_record = db.query(TOTP).filter(TOTP.user_id == user_id, TOTP.enabled.is_(True)).first()
         if not totp_record:
@@ -236,19 +222,16 @@ def verify_2fa(
         _reset_totp_failures(db, totp_record) # type: ignore[arg-type]
 
         # 重放保护：原子地存储匹配的计数器
-        from sqlalchemy import or_, update as sa_update
+        from sqlalchemy import or_
 
-        result = db.execute(
-            sa_update(TOTP)
-            .where(
-                TOTP.user_id == user_id,
-                or_(TOTP.last_counter.is_(None), TOTP.last_counter < actual_counter),
-            )
-            .values(last_counter=actual_counter)
-        )
-        if result.rowcount != 1:  # type: ignore[union-attr]
+        if not consume_once(
+            db,
+            TOTP,
+            {"last_counter": actual_counter},
+            TOTP.user_id == user_id,
+            or_(TOTP.last_counter.is_(None), TOTP.last_counter < actual_counter),
+        ):
             raise BizError(ErrCode.TOTP_CODE_INVALID, "TOTP code already used")
-        db.flush()
     else:
         raise BizError(ErrCode.TOTP_CODE_INVALID)
 

@@ -8,10 +8,11 @@ DELETE /auth/2fa                  RequireLevel("normal")  禁用 2FA
 """
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from app.core.err import BizError, ErrCode, respond
+from app.db.models import User, expires_at, now_iso
+from app.db.repo import consume_once
 from app.db.session import get_session
 from app.modules.auth import service_2fa
 from app.modules.auth.deps import CurrentUser, RequireLevel
@@ -67,19 +68,17 @@ def setup_2fa_temp(
     db: Session = Depends(get_session),
 ):
     """使用登录时获得的临时令牌开始 TOTP 设置（管理员强制设置）。"""
-    import datetime as _dt
     from sqlalchemy.exc import IntegrityError
 
     token_hash, user_id = _decode_setup_temp_token(temp_token)
 
     # 原子性地声明设置令牌 — 只有一个 begin 调用会成功
-    expires_at = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=10)).isoformat()
     try:
         db.add(SetupTransaction(
             token_hash=token_hash,
             user_id=user_id,
             consumed=False,
-            expires_at=expires_at,
+            expires_at=expires_at(minutes=10),
         ))
         db.flush()
     except IntegrityError:
@@ -96,22 +95,17 @@ def setup_2fa_complete_temp(
     db: Session = Depends(get_session),
 ):
     """使用临时令牌完成 TOTP 设置（管理员强制设置路径）。"""
-    import datetime as _dt
-
     token_hash, user_id = _decode_setup_temp_token(temp_token)
 
     # 原子性地消耗设置事务
-    now = _dt.datetime.now(_dt.timezone.utc).isoformat()
-    result = db.execute(
-        sa_update(SetupTransaction)
-        .where(
-            SetupTransaction.token_hash == token_hash,
-            SetupTransaction.consumed.is_(False),
-            SetupTransaction.expires_at > now,
-        )
-        .values(consumed=True)
-    )
-    if result.rowcount != 1:  # type: ignore[union-attr]
+    if not consume_once(
+        db,
+        SetupTransaction,
+        {"consumed": True},
+        SetupTransaction.token_hash == token_hash,
+        SetupTransaction.consumed.is_(False),
+        SetupTransaction.expires_at > now_iso(),
+    ):
         raise BizError(ErrCode.TOKEN_INVALID, "Setup token not found, already used, or expired")
 
     txn = db.query(SetupTransaction).filter(SetupTransaction.token_hash == token_hash).first()
@@ -119,7 +113,6 @@ def setup_2fa_complete_temp(
         raise BizError(ErrCode.TOKEN_INVALID)
 
     result_dict = service_2fa.setup_2fa_complete(db, user_id, code) # type: ignore[arg-type]
-    from app.db.models import User
     user = db.query(User).filter(User.id == user_id).first()
     if user:
         result_dict["access_token"], result_dict["refresh_token"] = _issue_admin_setup_tokens(db, user)

@@ -2,7 +2,7 @@ import enum
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import AfterValidator, BaseModel, EmailStr, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field
 
 
 class ProfileRole(StrEnum):
@@ -20,6 +20,8 @@ Password = Annotated[str, AfterValidator(_validate_password)]
 
 
 class ProfileInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     nickname: str | None = None
     avatar: str | None = None
     role: ProfileRole = ProfileRole.MEMBER
