@@ -1,0 +1,70 @@
+list:
+  get:
+    tags: [members]
+    summary: 获取成员名单
+    description: >
+      根据 `type` 参数返回对应数据组的成员列表。`type` 可选值：
+      `founderMembers`、`generalMembers`、`eventsMembers`、`newsMembers`、
+      `advisorMembers`、`techMembers`、`alumniMembers`、
+      `projectSubGroups`、`newsSubGroups`、`professionalSubGroups`、
+      `affairsSubGroups`。
+      对于子组类型（`projectSubGroups` 等），可通过 `group` 参数指定子组；
+      不传则汇总返回所有子组成员。
+    operationId: listMembers
+    parameters:
+      - name: type
+        in: query
+        required: true
+        description: 数据组标识
+        schema:
+          type: string
+          enum:
+            - founderMembers
+            - generalMembers
+            - eventsMembers
+            - newsMembers
+            - advisorMembers
+            - techMembers
+            - alumniMembers
+            - projectSubGroups
+            - newsSubGroups
+            - professionalSubGroups
+            - affairsSubGroups
+      - name: group
+        in: query
+        required: false
+        description: 子组标识（仅 projectSubGroups / newsSubGroups / professionalSubGroups / affairsSubGroups 时有效）
+        schema:
+          type: string
+    responses:
+      "200":
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+      "404":
+        description: 数据组或子组不存在
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+components:
+  schemas:
+    Member:
+      type: object
+      properties:
+        name:      { type: string, nullable: true }
+        avatarKey: { type: string, nullable: true }
+        role:      { type: string, nullable: true }
+        desc:      { type: string, nullable: true }
+        dream:     { type: string, nullable: true }
+        quote:     { type: string, nullable: true }
+
+    SubGroup:
+      type: object
+      properties:
+        label:   { type: string }
+        desc:    { type: string, nullable: true }
+        members: { type: array, items: { $ref: "#/components/schemas/Member" } }

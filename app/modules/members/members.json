@@ -1,0 +1,362 @@
+{
+  "memberLists": {
+    "founderMembers": [
+      {
+        "name": "可琪（若有千寻）",
+        "role": "创始人",
+        "avatarKey": "若有千寻.jpg",
+        "desc": "2014年8月1日，可琪创立了最初群聊——〔理科迷宅基地〕。他是理科迷最初的创始者，群里现有很多现有事物和框架，都是在他所做的事情之上建立起来的。可琪创立了腾讯「物理部落」和微信公众号，吸引了大量科技爱好者；组建了最初的理科迷分群体系和七月团队管理架构。2018年因学业原因逐渐淡出，但理科迷的一切，都源于他的开创。",
+        "quote": "「可琪现在不在，但他确确实实是理科迷最初的创始者。」",
+        "dream": "梦想：让知识流入千家万户"
+      }
+    ],
+    "generalMembers": [
+      { "name": "七月花", "avatarKey": "七月花.jpg", "desc": "一个有理想的PHD", "dream": "梦想：每个孩子都能接触科学" },
+      { "name": "七月知更鸟", "avatarKey": "七月知更鸟.jpeg", "desc": "待填写，这位还是学生在沉淀当中（让我们期待他的成长吧～" },
+      { "name": "七月阿鸿", "avatarKey": "七月阿鸿.jpeg", "desc": "待填写，这位还是学生在沉淀当中（让我们期待他的成长吧～" },
+      {
+        "name": "七月墨染",
+        "avatarKey": "七月墨染.png",
+        "desc": "双非物理，目前正跑路中",
+        "dream": "梦想：我必将大雪深埋",
+        "quote": "—— 卧薪尝胆三千日，大雪深埋终成金"
+      },
+      {
+        "name": "七月有枝",
+        "avatarKey": "七月有枝.jpeg",
+        "desc": "小黑猫，前活动策划组组员，初中研讨会执行员",
+        "dream": "梦想：吃好喝好睡好玩好",
+        "quote": "—— 且停且忘且随风，且行且看且从容"
+      },
+      {
+        "name": "七月komoyume",
+        "avatarKey": "七月komoyume.jpeg",
+        "desc": "机器人学家",
+        "dream": "梦想：科技改变世界",
+        "quote": "—— 致敬对这个世界满怀期待的你"
+      },
+      {
+        "name": "七月千寻",
+        "avatarKey": "七月千寻.jpg",
+        "desc": "19年初二时加入理科迷，现在我是一个待打工人，虽然在过去也是很饱含着梦想，但不是每个人都能当科学家的啦～˶>ᗜ<˶无论是过去的哥哥姐姐们，还是现在比我小的弟弟妹妹们，我都不希望我的遗憾能够出现在他们身上，也希望在未来更多的人能够喜欢理工科，不会像我一样轻易的放弃他们。",
+        "dream": "梦想：未来的理想是让理科迷能够做大做强，能够实现它的最终目标，践行宗旨。但最眼前的还是要实行短期目标，建设一个成熟完整的线上管理团队。"
+      }
+    ],
+    "eventsMembers": [
+      {
+        "name": "七月赤",
+        "avatarKey": "七月赤.jpeg",
+        "role": "常驻",
+        "desc": "辽宁省某省重点高中毕业，26年报考目标东北地区985高校",
+        "dream": "梦想：做一名大国工匠",
+        "quote": "—— 干惊天动地事，做隐姓埋名人"
+      }
+    ],
+    "newsMembers": [],
+    "advisorMembers": [
+      {
+        "name": "七月upogg",
+        "avatarKey": "七月upogg.jpg",
+        "role": "团长",
+        "desc": "学生",
+        "quote": "—— 我以全部知识作为我的领域"
+      }
+    ],
+    "techMembers": [
+      { "name": "七月可分数列", "avatarKey": "七月可分数列.jpg", "role": "会长", "desc": "平凡的ICPCer" },
+      { "name": "七月A（笨笨狐狸！）", "avatarKey": "七月A.jpg", "desc": "网站开发的主要牛马", "dream": "以后不要当牛马" },
+      { "name": "七月合成魔法", "avatarKey": "七月合成魔法.jpg" }
+    ],
+    "alumniMembers": [
+      { "name": "七月逗", "avatarKey": "七月逗.png", "role": "组长" },
+      { "name": "七月喵", "avatarKey": "七月喵.jpg", "role": "组长" },
+      { "name": "七月丫", "role": "组长" },
+      { "name": "Spica", "role": "总务组成员" },
+      { "name": "七月烧", "avatarKey": "七月烧.jpg", "role": "群务组监督" },
+      { "name": "七月凡", "avatarKey": "七月凡.png", "role": "总务组成员" },
+      { "name": "七月Toy", "avatarKey": "七月Toy.png", "role": "专务" },
+      { "name": "七月希", "avatarKey": "七月希.jpg", "role": "总务组成员" },
+      { "name": "七月钗", "avatarKey": "七月钗.jpg", "role": "总务组成员" },
+      { "name": "七月铝", "avatarKey": "七月铝.jpg", "role": "专务 / 顾问组成员" },
+      { "name": "七月雨", "role": "总务组成员" },
+      { "name": "七月九", "avatarKey": "七月九.jpg", "role": "群务组组长" },
+      { "name": "本群最弱玩家", "avatarKey": "本群最弱玩家.jpg", "role": "18级管理" },
+      { "name": "道德同志", "avatarKey": "道德同志.jpg", "role": "18级管理" },
+      { "name": "L.I", "avatarKey": "L.I.jpg", "role": "18级管理" },
+      { "name": "面条", "avatarKey": "面条.jpg", "role": "18级管理" },
+      { "name": "源泉", "avatarKey": "源泉.jpg", "role": "18级管理" },
+      { "name": "无逸", "avatarKey": "无逸.png", "role": "18级管理" },
+      { "name": "七月湦", "avatarKey": "七月湦.jpg", "role": "18级管理" },
+      { "name": "观澜千代", "avatarKey": "观澜千代.jpg", "role": "信息群管理" },
+      { "name": "七月上", "avatarKey": "七月上.jpg", "role": "群务组成员" },
+      { "name": "海豹", "avatarKey": "海豹.jpg", "role": "群务组成员" },
+      { "name": "七月悠", "avatarKey": "七月悠.jpg", "role": "组长" },
+      { "name": "七月糊-又", "avatarKey": "七月糊-又.jpg", "role": "总务组专务" },
+      { "name": "七月哔", "avatarKey": "七月哔.jpg", "role": "顾问组成员" },
+      { "name": "乾坤胤", "avatarKey": "乾坤胤.jpg", "role": "顾问组成员" },
+      { "name": "Ryan", "role": "顾问组成员" }
+    ]
+  },
+  "subGroupMaps": {
+    "affairsSubGroups": {
+      "high": {
+        "label": "高中",
+        "members": [
+          { "name": "七月止水", "avatarKey": "七月止水.png", "desc": "努力学习中～" },
+          {
+            "name": "七月清汉",
+            "avatarKey": "七月清汉.png",
+            "desc": "保密awa",
+            "dream": "梦想：无义务告知",
+            "quote": "—— WELCOME TO OUR KINGDOM ！"
+          },
+          { "name": "七月爱畅依间", "avatarKey": "七月爱畅依间.jpeg" },
+          {
+            "name": "七月夏",
+            "avatarKey": "七月夏.jpeg",
+            "desc": "是一只小夏",
+            "dream": "梦想：成为一本百科全书",
+            "quote": "—— 敬不完美的明天"
+          },
+          {
+            "name": "七月清浅",
+            "avatarKey": "七月清浅.jpeg",
+            "desc": "略微潜水人，知识储量不丰富（",
+            "dream": "梦想：成为一名科研工作者"
+          },
+          {
+            "name": "七月MK",
+            "avatarKey": "七月MK.png",
+            "desc": "10后，叫我MK就行。正在学习日语，喜欢数学（不是大佬喵）。最喜欢的动漫角色是《魔女之旅》的伊蕾娜。B站UID:1929696645",
+            "dream": "梦想：拥有百万粉丝的UP",
+            "quote": "—— 你应当……ネバー•ギブ•アップ！"
+          }
+        ]
+      },
+      "high3": {
+        "label": "高中三群",
+        "members": [
+          {
+            "name": "七月流年",
+            "avatarKey": "七月流年.jpeg",
+            "desc": "15岁。中考已过，衔接完毕。文理均衡，韧性较强。求友共进。",
+            "dream": "梦想：目标国防科大，以己力助理科迷做大做强√",
+            "quote": "—— 且行且忘且随风，且行且看且从容"
+          }
+        ]
+      },
+      "junior": {
+        "label": "初中",
+        "members": [
+          { "name": "七月badragon", "avatarKey": "七月badragon.jpeg", "desc": "关注理科迷谢谢喵" },
+          { "name": "七月三七", "avatarKey": "七月三七.jpeg", "desc": "妄立誓则祸近", "dream": "梦想：养一只小猫" },
+          { "name": "七月焱 Echo", "avatarKey": "七月焱 Echo.jpeg", "desc": "解析数论爱好者" }
+        ]
+      },
+      "junior2": {
+        "label": "初中二群",
+        "members": [
+          {
+            "name": "七月郁离",
+            "avatarKey": "七月郁离.png",
+            "desc": "像七月的风一样，带着几分热忱与温柔。作为群务组组长，我致力于为大家打理好群里的「一草一木」，让这里成为大家交流时最舒适的角落。",
+            "quote": "—— 群务无小事，用心皆风景"
+          }
+        ]
+      },
+      "social": {
+        "label": "社会科学",
+        "members": [
+          { "name": "七月十一", "avatarKey": "七月十一.jpg", "desc": "经济类相关本科毕业，兴趣爱好涉猎广泛。" }
+        ]
+      },
+      "language": {
+        "label": "国际科技交流语言学习社",
+        "members": [
+          {
+            "name": "七月颜子墨",
+            "avatarKey": "七月颜子墨.jpg",
+            "desc": "汉语言文学专业出身",
+            "dream": "梦想：当哲学家和数学家",
+            "quote": "—— 随风漂泊到远方。"
+          }
+        ]
+      },
+      "chess": {
+        "label": "兴趣-棋牌社",
+        "members": [
+          {
+            "name": "七月随便",
+            "avatarKey": "七月随便.jpg",
+            "desc": "一个想学会所有感兴趣的东西的懒鬼。",
+            "dream": "梦想：暂时保密",
+            "quote": "—— 前进吧，就算到不了尽头，前进本身就有意义"
+          },
+          { "name": "七月熠", "avatarKey": "七月熠.jpg" }
+        ]
+      },
+      "music": {
+        "label": "兴趣-土鳖音乐社",
+        "members": [
+          { "name": "七月慕楸", "avatarKey": "七月慕楸.jpg" }
+        ]
+      }
+    },
+    "newsSubGroups": {
+      "production": {
+        "label": "制作组",
+        "desc": "负责各平台、各活动关于宣传相关的制作，如有UI设计，海报制作，可视化等等，对于美工会有一定的要求，适合有相应能力的人加入。",
+        "members": [
+          {
+            "name": "七月草薙铃",
+            "avatarKey": "七月草薙铃.png",
+            "desc": "一个不存在,但是希望祝福大家的人.",
+            "dream": "梦想：让大家开心,到达知识的Sekai边缘.",
+            "quote": "—— We must know,we will know."
+          },
+          { "name": "七月一前", "avatarKey": "七月一前.png", "desc": "我是新闻办的一前" },
+          {
+            "name": "七月孙",
+            "avatarKey": "七月孙.jpg",
+            "desc": "用好手中的技术，服务更多有需要的人。制作组小朋友一枚。",
+            "dream": "梦想：多提升学历，多认识点人。",
+            "quote": "—— 无人扶我青云志，我自踏雪至山巅。"
+          }
+        ]
+      },
+      "promotion": {
+        "label": "宣传组",
+        "desc": "负责各平台的宣传以及持续的运营，外交打理，以及处理合作相关事宜，需要成员具备一定的专业知识，以及公关，并需要具备两种以上语言能力。",
+        "members": []
+      },
+      "science": {
+        "label": "科普组",
+        "desc": "负责各平台的科普征集，科普传播，同时也需要成员具有一定的专业知识，且知道如何做出有趣的科普内容，并和专业委员会成员有所交流，而关于项目组的发展则交由科普组进行落实。",
+        "members": [
+          {
+            "name": "七月星染",
+            "avatarKey": "七月星染.png",
+            "desc": "公益科普产业共同体成员，曙星科普社社长。从事公益科普事业三年余。曾领导主办龙年科幻大赛、第一届地月奖科幻征文，曾参与协办第二、三、四、五届寻翊奖科普征文，与up非村科普墙联创地质锤等优秀科普视频。",
+            "dream": "梦想：传播科学文化",
+            "quote": "—— 马克思说过，科学技术是生产力。"
+          }
+        ]
+      }
+    },
+    "professionalSubGroups": {
+      "math": {
+        "label": "数学组",
+        "members": [
+          { "name": "七月Bcent", "avatarKey": "七月Bcent.jpeg", "desc": "一名人类" },
+          {
+            "name": "七月阿泠",
+            "avatarKey": "七月阿泠.jpeg",
+            "desc": "某2数学专业本科生，数学爱好者，爱好方向是分析学和数论",
+            "dream": "梦想：保研对面那个华一继续研究数学",
+            "quote": "—— 万物皆数"
+          },
+          { "name": "七月彼方", "avatarKey": "七月彼方.jpeg", "desc": "分析与数值计算方向的硕士" },
+          { "name": "七月有珠", "avatarKey": "七月有珠.jpeg", "desc": "可能是人（未必？）", "quote": "—— 活着大于死了" },
+          { "name": "七月Lichlet", "avatarKey": "七月Lichlet.jpeg", "desc": "大一数学系学生" },
+          {
+            "name": "七月胡冰阳",
+            "avatarKey": "七月胡冰阳.jpeg",
+            "desc": "男， 23 岁，本科学历……",
+            "dream": "梦想：理想是成为一名数学家",
+            "quote": "—— 书山有路勤为径，学海无涯苦作舟。"
+          }
+        ]
+      },
+      "physics": {
+        "label": "物理组",
+        "members": [
+          {
+            "name": "七月O",
+            "avatarKey": "七月O.png",
+            "desc": "中国科学院国家天文台博士，研究方向：引力波理论、黑洞物理、广义相对论",
+            "dream": "梦想：能做自己喜欢的研究",
+            "quote": "—— 学习过去，享受现在，期待未来"
+          },
+          {
+            "name": "七月汽水",
+            "avatarKey": "七月汽水.png",
+            "desc": "慕尼黑大学流体力学专业大一在读学生",
+            "dream": "梦想：为中国流体出一份力",
+            "quote": "—— 努力总会有收获"
+          },
+          {
+            "name": "七月星河",
+            "avatarKey": "七月星河.png",
+            "desc": "高中OIer+物化政er，蒟蒻一枚（欢迎关注洛谷wang12345566），因出了一些初中毒瘤题而误闯天家",
+            "dream": "梦想：为大家带来更多的tricks与灵感，同时膜拜更多大佬",
+            "quote": "—— 没有站在光里的人，也有自己的闪光点——from hjh in luogu"
+          }
+        ]
+      },
+      "chemistry": {
+        "label": "化学组",
+        "members": [
+          {
+            "name": "七月tetrodotoxin",
+            "avatarKey": "七月tetrodotoxin.jpeg",
+            "desc": "有机化学方向研究生在读，前化学竞赛生。网名是河豚毒素，一个结构优雅的有机小分子，全合成史上的经典之作（虽然我本人其实是做方法学的）。私下大概算是不太重度的二次元，附庸风雅的艺术爱好者。"
+          },
+          {
+            "name": "七月狄离",
+            "avatarKey": "七月狄离.png",
+            "desc": "可以叫杨向青，化学竞赛生，历史最高全区第七名，中学生作文大赛最高国排347，喜欢研究化学与文学",
+            "dream": "梦想：成为一名优秀的教师",
+            "quote": "—— 真正的大师，永远都怀着一颗学徒的心"
+          },
+          { "name": "七月文", "avatarKey": "七月文.jpeg", "desc": "打摆子的好选手", "dream": "梦想：想不干嘛就不干嘛" },
+          { "name": "七月三尺水", "avatarKey": "七月三尺水.jpg", "desc": "化学，爱爱爱它！（化学的狂热热爱者）" }
+        ]
+      },
+      "biology": {
+        "label": "生物组",
+        "members": [
+          {
+            "name": "七月基米",
+            "avatarKey": "七月基米.png",
+            "desc": "新西兰11年级在读留学生，主修理科，英语弱项。目前学的理科是物理生物数学，基本知识水平也就高中生水平吧，但是我会努力提升自己的！喜欢写点自己的东西，有问题感谢大家指正！喜欢自己总结笔记等等，希望能对大家有所帮助！喜欢发一些自己的日常或者搞抽象什么的，有的时候会携带一定量的负面情绪... 感谢大家！！！",
+            "dream": "梦想：今年把明年的课学完，明年得吃奖学金，争取考上奥大？",
+            "quote": "—— 注意注意超大区来袭"
+          }
+        ]
+      },
+      "general": {
+        "label": "综合",
+        "members": [
+          { "name": "七月卅律", "avatarKey": "七月卅律.jpg" }
+        ]
+      },
+      "medicine": {
+        "label": "医学组-中医",
+        "members": [
+          {
+            "name": "七月雨夜",
+            "desc": "高一在读，3年群管理经验，6岁开始接触中医学。中医世家",
+            "dream": "梦想：有一份稳定工作",
+            "quote": "—— 追风赶路莫停留，平芜尽处是春山。"
+          }
+        ]
+      }
+    },
+    "projectSubGroups": {
+      "textbooks": {
+        "label": "教材项目组",
+        "desc": "致力于编写高质量的理科教材，整合知识体系，为学习者提供系统化的学习资源。",
+        "members": [
+          { "name": "七月大雄", "avatarKey": "七月大雄.jpeg", "desc": "什么都好奇一点", "dream": "梦想：理想很多" },
+          { "name": "七月Joshua Xue", "avatarKey": "七月Joshua Xue.png", "desc": "一位数学爱好者，想让所有人都能轻松学上数学" },
+          { "name": "七月", "avatarKey": "七月.png", "desc": "吃喝拉撒", "dream": "梦想：成为verity", "quote": "—— 哎呦我去" }
+        ]
+      },
+      "science": {
+        "label": "科普项目组",
+        "desc": "负责各平台的科普征集与传播，将专业知识转化为通俗易懂的科普内容，促进科学知识普及。",
+        "members": []
+      }
+    }
+  }
+}
