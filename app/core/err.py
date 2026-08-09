@@ -41,6 +41,7 @@ class ErrCode(IntEnum):
     BLOG_GIT_ERROR = 3003
     FORUM_POST_NOT_FOUND = 4001
     FORUM_COMMENT_NOT_FOUND = 4002
+    MEMBER_GROUP_NOT_FOUND = 5001
     INTERNAL_ERROR = 9999
 
 
@@ -80,6 +81,7 @@ ERRTABLE: dict[ErrCode, tuple[int, str]] = {
     ErrCode.BLOG_GIT_ERROR:               (500, "Git operation failed"),
     ErrCode.FORUM_POST_NOT_FOUND:         (404, "Forum post not found"),
     ErrCode.FORUM_COMMENT_NOT_FOUND:      (404, "Forum comment not found"),
+    ErrCode.MEMBER_GROUP_NOT_FOUND:       (404, "Member group not found"),
     ErrCode.INTERNAL_ERROR:               (500, "Internal server error"),
 }
 
