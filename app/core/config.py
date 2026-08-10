@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     origin: str = "http://localhost:5173"
 
     blog_repo_dir: str = "blog_repos"
+    files_store_dir: str = "files_store"
+    max_upload_bytes: int = 100 * 1024 * 1024  # 单文件上传上限 100MB
 
     @property
     def database_url(self) -> str:
