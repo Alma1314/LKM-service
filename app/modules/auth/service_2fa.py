@@ -6,7 +6,8 @@ import jwt
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError
+from app.modules.auth.errors import AuthErr
 from app.db.models import User
 from app.db.repo import consume_once, get_or_raise, isolated_update
 from app.modules.auth.models import RecoveryCode, TempTokenUsage, TOTP
@@ -25,7 +26,7 @@ _TOTP_MAX_FAILED = 3
 
 def _check_totp_failed(totp_record: TOTP | None) -> None:
     if totp_record and totp_record.failed_attempts >= _TOTP_MAX_FAILED:
-        raise BizError(ErrCode.TOTP_CODE_INVALID, "TOTP verification locked – too many failures")
+        raise BizError(AuthErr.TOTP_CODE_INVALID, "TOTP verification locked – too many failures")
 
 
 def _record_totp_failure(db: Session, totp_record: TOTP | None) -> None:
@@ -62,7 +63,7 @@ def _decode_temp_token(raw_token: str) -> dict:
         if payload.get("type") != "temp":
             raise ValueError("not a temp token")
     except Exception as exc:
-        raise BizError(ErrCode.TOKEN_INVALID) from exc
+        raise BizError(AuthErr.TOKEN_INVALID) from exc
 
     return payload
 
@@ -95,8 +96,8 @@ def _check_and_consume_temp_token(db: Session, raw_token: str, user_id: int, txn
             TempTokenUsage.token_hash == token_hash,
         ).first()
         if existing and existing.consumed:
-            raise BizError(ErrCode.TOKEN_INVALID, "Temp token already used")
-        raise BizError(ErrCode.TOKEN_INVALID, "Temp token conflict")
+            raise BizError(AuthErr.TOKEN_INVALID, "Temp token already used")
+        raise BizError(AuthErr.TOKEN_INVALID, "Temp token conflict")
 
     return payload
 
@@ -114,13 +115,13 @@ def _create_auth_tokens(db: Session, user: User, trust_device: bool = False) -> 
     }
 
 def setup_2fa_begin(db: Session, user_id: int) -> dict:
-    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == user_id)
+    user = get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == user_id)
     if user.account_level == "local":
-        raise BizError(ErrCode.ACCOUNT_LEVEL_INSUFFICIENT)
+        raise BizError(AuthErr.ACCOUNT_LEVEL_INSUFFICIENT)
 
     totp_record = db.query(TOTP).filter(TOTP.user_id == user_id).first()
     if totp_record and totp_record.enabled:
-        raise BizError(ErrCode.TOTP_ALREADY_ENABLED)
+        raise BizError(AuthErr.TOTP_ALREADY_ENABLED)
 
     secret = generate_totp_secret()
     encrypted = encrypt_secret(secret)
@@ -140,14 +141,14 @@ def setup_2fa_begin(db: Session, user_id: int) -> dict:
 def setup_2fa_complete(db: Session, user_id: int, code: str) -> dict:
     totp_record = db.query(TOTP).filter(TOTP.user_id == user_id).first()
     if not totp_record or totp_record.enabled:
-        raise BizError(ErrCode.TOTP_NOT_ENABLED)
+        raise BizError(AuthErr.TOTP_NOT_ENABLED)
 
     _check_totp_failed(totp_record) # type: ignore[arg-type]
 
     plain_secret = decrypt_secret(str(totp_record.secret))
     if verify_totp(plain_secret, code) is None:
         _record_totp_failure(db, totp_record) # type: ignore[arg-type]
-        raise BizError(ErrCode.TOTP_CODE_INVALID)
+        raise BizError(AuthErr.TOTP_CODE_INVALID)
     _reset_totp_failures(db, totp_record) # type: ignore[arg-type]
 
     totp_record.enabled = True
@@ -170,7 +171,7 @@ def confirm_recovery_codes_saved(db: Session, user_id: int) -> dict:
     """标记用户已保存其恢复码。"""
     totp_record = db.query(TOTP).filter(TOTP.user_id == user_id).first()
     if not totp_record or not totp_record.enabled:
-        raise BizError(ErrCode.TOTP_NOT_ENABLED)
+        raise BizError(AuthErr.TOTP_NOT_ENABLED)
     totp_record.confirmed_saved = True
     db.flush()
     log_audit(db, user_id, "recovery_codes_confirmed", "success")
@@ -187,7 +188,7 @@ def verify_2fa(
     # 错误的TOTP/恢复码不会永久地消耗临时令牌或满足恢复检查。
     payload = _decode_temp_token(raw_token=temp_token)
     user_id = payload["user_id"]
-    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == user_id)
+    user = get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == user_id)
 
     if str(user.account_level) == "admin":
         trust_device = False
@@ -205,11 +206,11 @@ def verify_2fa(
             RecoveryCode.code_hash == code_hash,
             RecoveryCode.used.is_(False),
         ):
-            raise BizError(ErrCode.RECOVERY_CODE_INVALID)
+            raise BizError(AuthErr.RECOVERY_CODE_INVALID)
     elif code:
         totp_record = db.query(TOTP).filter(TOTP.user_id == user_id, TOTP.enabled.is_(True)).first()
         if not totp_record:
-            raise BizError(ErrCode.TOTP_NOT_ENABLED)
+            raise BizError(AuthErr.TOTP_NOT_ENABLED)
 
         _check_totp_failed(totp_record) # type: ignore[arg-type]
 
@@ -217,7 +218,7 @@ def verify_2fa(
         actual_counter = verify_totp(plain_secret, code)
         if actual_counter is None:
             _record_totp_failure(db, totp_record) # type: ignore[arg-type]
-            raise BizError(ErrCode.TOTP_CODE_INVALID)
+            raise BizError(AuthErr.TOTP_CODE_INVALID)
 
         _reset_totp_failures(db, totp_record) # type: ignore[arg-type]
 
@@ -231,9 +232,9 @@ def verify_2fa(
             TOTP.user_id == user_id,
             or_(TOTP.last_counter.is_(None), TOTP.last_counter < actual_counter),
         ):
-            raise BizError(ErrCode.TOTP_CODE_INVALID, "TOTP code already used")
+            raise BizError(AuthErr.TOTP_CODE_INVALID, "TOTP code already used")
     else:
-        raise BizError(ErrCode.TOTP_CODE_INVALID)
+        raise BizError(AuthErr.TOTP_CODE_INVALID)
 
     # 成功 —— 现在原子地消费临时令牌
     _check_and_consume_temp_token(db, temp_token, user_id, txn_id=txn_id)
@@ -245,7 +246,7 @@ def verify_2fa(
     # 任何其他用途都会被拒绝。
     _ALLOWED_PURPOSES = {"2fa", "recovery"}
     if purpose not in _ALLOWED_PURPOSES:
-        raise BizError(ErrCode.TOKEN_INVALID, f"Temp token purpose '{purpose}' not allowed for 2FA verification")
+        raise BizError(AuthErr.TOKEN_INVALID, f"Temp token purpose '{purpose}' not allowed for 2FA verification")
 
     if purpose == "recovery":
         return {
@@ -266,14 +267,14 @@ def verify_2fa(
 def disable_2fa(db: Session, user_id: int, code: str) -> dict:
     totp_record = db.query(TOTP).filter(TOTP.user_id == user_id).first()
     if not totp_record or not totp_record.enabled:
-        raise BizError(ErrCode.TOTP_NOT_ENABLED)
+        raise BizError(AuthErr.TOTP_NOT_ENABLED)
 
     _check_totp_failed(totp_record) # type: ignore[arg-type]
 
     plain_secret = decrypt_secret(str(totp_record.secret))
     if verify_totp(plain_secret, code) is None:
         _record_totp_failure(db, totp_record) # type: ignore[arg-type]
-        raise BizError(ErrCode.TOTP_CODE_INVALID)
+        raise BizError(AuthErr.TOTP_CODE_INVALID)
     _reset_totp_failures(db, totp_record) # type: ignore[arg-type]
 
     totp_record.enabled = False

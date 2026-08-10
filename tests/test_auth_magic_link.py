@@ -9,7 +9,8 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError
+from app.modules.auth.errors import AuthErr
 from app.db.models import Base, User
 import app.modules.auth.models  # noqa: F401
 from app.modules.auth.models import MagicLink, TOTP
@@ -145,7 +146,7 @@ class TestVerifyMagicLink:
         svc = _service()
         with pytest.raises(BizError) as exc:
             svc.verify_magic_link(db, raw_token, purpose="login")
-        assert exc.value.errcode == ErrCode.TOKEN_EXPIRED
+        assert exc.value.errcode == AuthErr.TOKEN_EXPIRED
 
     def should_reject_already_used_magic_link(self, db):
         _create_user(db, email="alice@example.com")
@@ -154,7 +155,7 @@ class TestVerifyMagicLink:
         svc = _service()
         with pytest.raises(BizError) as exc:
             svc.verify_magic_link(db, raw_token, purpose="login")
-        assert exc.value.errcode == ErrCode.TOKEN_INVALID
+        assert exc.value.errcode == AuthErr.TOKEN_INVALID
 
     def should_reject_local_user(self, db):
         _create_user(db, email="bob@local.com", account_level="local")
@@ -163,7 +164,7 @@ class TestVerifyMagicLink:
         svc = _service()
         with pytest.raises(BizError) as exc:
             svc.verify_magic_link(db, raw_token, purpose="login")
-        assert exc.value.errcode == ErrCode.ACCOUNT_LEVEL_INSUFFICIENT
+        assert exc.value.errcode == AuthErr.ACCOUNT_LEVEL_INSUFFICIENT
 
     def should_reject_purpose_mismatch(self, db):
         _create_user(db, email="alice@example.com")
@@ -172,13 +173,13 @@ class TestVerifyMagicLink:
         svc = _service()
         with pytest.raises(BizError) as exc:
             svc.verify_magic_link(db, raw_token, purpose="reset")
-        assert exc.value.errcode == ErrCode.TOKEN_INVALID
+        assert exc.value.errcode == AuthErr.TOKEN_INVALID
 
     def should_reject_unknown_token(self, db):
         svc = _service()
         with pytest.raises(BizError) as exc:
             svc.verify_magic_link(db, "nonexistent-token", purpose="login")
-        assert exc.value.errcode == ErrCode.TOKEN_INVALID
+        assert exc.value.errcode == AuthErr.TOKEN_INVALID
 
     def should_reject_missing_user(self, db):
         # No user created for this email
@@ -187,7 +188,7 @@ class TestVerifyMagicLink:
         svc = _service()
         with pytest.raises(BizError) as exc:
             svc.verify_magic_link(db, raw_token, purpose="login")
-        assert exc.value.errcode == ErrCode.USER_NOT_FOUND
+        assert exc.value.errcode == AuthErr.USER_NOT_FOUND
 
     def should_reject_admin_without_totp(self, db):
         _create_user(db, email="admin@example.com", account_level="admin")
@@ -196,7 +197,7 @@ class TestVerifyMagicLink:
         svc = _service()
         with pytest.raises(BizError) as exc:
             svc.verify_magic_link(db, raw_token, purpose="login")
-        assert exc.value.errcode == ErrCode.TOTP_SETUP_REQUIRED
+        assert exc.value.errcode == AuthErr.TOTP_SETUP_REQUIRED
 
     def should_return_temp_token_when_2fa_required(self, db):
         user = _create_user(db, email="secure@example.com", account_level="normal")

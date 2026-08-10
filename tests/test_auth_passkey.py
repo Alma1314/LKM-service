@@ -13,7 +13,8 @@ from sqlalchemy.orm import sessionmaker
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError
+from app.modules.auth.errors import AuthErr
 from app.db.models import Base
 import app.modules.auth.models  # noqa: F401
 from app.modules.auth.models import PasskeyCredential
@@ -146,7 +147,7 @@ class TestBeginPasskeyRegistration:
         svc = _service()
         with pytest.raises(BizError) as exc:
             svc.begin_passkey_registration(db, user_id=999)
-        assert exc.value.errcode == ErrCode.USER_NOT_FOUND
+        assert exc.value.errcode == AuthErr.USER_NOT_FOUND
 
     def should_include_exclude_credentials(self, db):
         user = _reg_normal(db)
@@ -241,7 +242,7 @@ class TestCompletePasskeyRegistration:
             })
         # Challenge mismatch raises PASSKEY_VERIFICATION_FAILED (the generic
         # verification error code, used for both registration and login).
-        assert exc.value.errcode in (ErrCode.PASSKEY_REGISTRATION_FAILED, ErrCode.PASSKEY_VERIFICATION_FAILED)
+        assert exc.value.errcode in (AuthErr.PASSKEY_REGISTRATION_FAILED, AuthErr.PASSKEY_VERIFICATION_FAILED)
 
 
 # ==================================================================
@@ -349,7 +350,7 @@ class TestCompletePasskeyLogin:
                 "rawId": cred_id,
                 "challenge_id": begin["challenge_id"],
             })
-        assert exc.value.errcode == ErrCode.PASSKEY_VERIFICATION_FAILED
+        assert exc.value.errcode == AuthErr.PASSKEY_VERIFICATION_FAILED
 
 
     def should_reject_wrong_signature(self, db):
@@ -382,7 +383,7 @@ class TestCompletePasskeyLogin:
                     "signature": _b64(wrong_sig),
                 },
             })
-        assert exc.value.errcode == ErrCode.PASSKEY_VERIFICATION_FAILED
+        assert exc.value.errcode == AuthErr.PASSKEY_VERIFICATION_FAILED
 
 
     def should_reject_local_user_passkey_login(self, db):
@@ -417,7 +418,7 @@ class TestCompletePasskeyLogin:
                     "signature": _b64(signature),
                 },
             })
-        assert exc.value.errcode == ErrCode.ACCOUNT_LEVEL_INSUFFICIENT
+        assert exc.value.errcode == AuthErr.ACCOUNT_LEVEL_INSUFFICIENT
 
 
     def should_reject_wrong_rp_id(self, db):
@@ -448,7 +449,7 @@ class TestCompletePasskeyLogin:
                     "signature": _b64(os.urandom(64)),
                 },
             })
-        assert exc.value.errcode == ErrCode.PASSKEY_VERIFICATION_FAILED
+        assert exc.value.errcode == AuthErr.PASSKEY_VERIFICATION_FAILED
 
 
 # ==================================================================

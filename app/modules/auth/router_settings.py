@@ -12,7 +12,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
-from app.core.err import BizError, ErrCode, respond
+from app.core.err import BizError, respond
+from app.modules.auth.errors import AuthErr
 from app.db.models import User
 from app.db.repo import get_or_raise
 from app.db.session import get_session
@@ -68,7 +69,7 @@ def bind_email_request(
     # 检查邮箱是否已被占用
     existing = db.query(User).filter(User.email == body.email).first()
     if existing:
-        raise BizError(ErrCode.ALREADY_REGISTERED, "Email already bound to another account")
+        raise BizError(AuthErr.ALREADY_REGISTERED, "Email already bound to another account")
 
     rate_limit_key = f"bind_email:{body.email}"
     check_code_rate_limit(rate_limit_key)
@@ -92,9 +93,9 @@ def bind_email_verify(
     # 确保邮箱仍未被占用（可能在请求和验证之间被占用）
     existing = db.query(User).filter(User.email == body.email).first()
     if existing:
-        raise BizError(ErrCode.ALREADY_REGISTERED, "Email already bound to another account")
+        raise BizError(AuthErr.ALREADY_REGISTERED, "Email already bound to another account")
 
-    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == cur.id)
+    user = get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == cur.id)
 
     user.email = body.email
     db.flush()
@@ -117,7 +118,7 @@ def bind_phone_request(
     # 检查手机号是否已被占用
     existing = db.query(User).filter(User.phone == body.phone).first()
     if existing:
-        raise BizError(ErrCode.ALREADY_REGISTERED, "Phone already bound to another account")
+        raise BizError(AuthErr.ALREADY_REGISTERED, "Phone already bound to another account")
 
     rate_limit_key = f"bind_phone:{body.phone}"
     check_code_rate_limit(rate_limit_key)
@@ -141,9 +142,9 @@ def bind_phone_verify(
     # 确保手机号仍未被占用
     existing = db.query(User).filter(User.phone == body.phone).first()
     if existing:
-        raise BizError(ErrCode.ALREADY_REGISTERED, "Phone already bound to another account")
+        raise BizError(AuthErr.ALREADY_REGISTERED, "Phone already bound to another account")
 
-    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == cur.id)
+    user = get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == cur.id)
 
     user.phone = body.phone
     db.flush()

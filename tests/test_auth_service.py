@@ -6,7 +6,8 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError, CommonErr
+from app.modules.auth.errors import AuthErr
 from app.db.models import Base
 import app.modules.auth.models  # noqa: F401
 from app.modules.auth.models import RefreshToken
@@ -88,7 +89,7 @@ class TestRegisterLocal:
         _reg_local(db, username="alice")
         with pytest.raises(BizError) as exc:
             _reg_local(db, username="alice", password="other1234567")
-        assert exc.value.errcode == ErrCode.ALREADY_REGISTERED
+        assert exc.value.errcode == AuthErr.ALREADY_REGISTERED
 
 
 # ===================================================================
@@ -119,7 +120,7 @@ class TestRegisterNormal:
                 db, UserRegNormal(username="bob", password="secret123456", email="bob@example.com", phone="13800001111"),
                 email_verified=False, phone_verified=True,
             )
-        assert exc.value.errcode == ErrCode.INVALID_INPUT
+        assert exc.value.errcode == CommonErr.INVALID_INPUT
 
 
 # ===================================================================
@@ -167,12 +168,12 @@ class TestLoginPassword:
         _reg_local(db, username="alice", password="secret123456")
         with pytest.raises(BizError) as exc:
             _login(db, "alice", "wrongpass")
-        assert exc.value.errcode == ErrCode.INVALID_CREDENTIALS
+        assert exc.value.errcode == AuthErr.INVALID_CREDENTIALS
 
     def should_reject_nonexistent_account(self, db):
         with pytest.raises(BizError) as exc:
             _login(db, "nobody", "secret123456")
-        assert exc.value.errcode == ErrCode.INVALID_CREDENTIALS
+        assert exc.value.errcode == AuthErr.INVALID_CREDENTIALS
 
     def should_lock_after_5_failed_attempts(self, db):
         _reg_local(db, username="alice", password="secret123456")
@@ -193,7 +194,7 @@ class TestLoginPassword:
 
         with pytest.raises(BizError) as exc:
             _login(db, "alice", "secret123456")
-        assert exc.value.errcode == ErrCode.INVALID_CREDENTIALS
+        assert exc.value.errcode == AuthErr.INVALID_CREDENTIALS
 
     def should_reset_failed_counter_on_success(self, db):
         _reg_local(db, username="alice", password="secret123456")
@@ -377,7 +378,7 @@ class TestRefresh:
         # second refresh with same (revoked) token rejects
         with pytest.raises(BizError) as exc:
             svc.refresh_access_token(db, raw)
-        assert exc.value.errcode == ErrCode.TOKEN_INVALID
+        assert exc.value.errcode == AuthErr.TOKEN_INVALID
 
     def should_reject_expired_token(self, db):
         result = _reg_local(db, username="alice")
@@ -395,7 +396,7 @@ class TestRefresh:
         svc = _service()
         with pytest.raises(BizError) as exc:
             svc.refresh_access_token(db, raw)
-        assert exc.value.errcode == ErrCode.TOKEN_EXPIRED
+        assert exc.value.errcode == AuthErr.TOKEN_EXPIRED
 
 
 # ===================================================================

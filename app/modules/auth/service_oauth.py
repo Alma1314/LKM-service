@@ -6,7 +6,8 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError
+from app.modules.auth.errors import AuthErr
 from app.db.models import Profile, User, expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise
 from app.modules.auth.models import OAuthState, UserOAuth
@@ -32,7 +33,7 @@ def _consume_oauth_state(db: Session, state: str, purpose: str) -> None:
         OAuthState.purpose == purpose,
         OAuthState.expires_at > now_iso(),
     ):
-        raise BizError(ErrCode.OAUTH_PROVIDER_ERROR, "Invalid or expired OAuth state")
+        raise BizError(AuthErr.OAUTH_PROVIDER_ERROR, "Invalid or expired OAuth state")
 
 
 def get_github_auth_url(db: Session, purpose: str = "login") -> str:
@@ -61,7 +62,7 @@ async def _exchange_github_token(code: str) -> str:
         data = resp.json()
         access_token = data.get("access_token")
         if not access_token:
-            raise BizError(ErrCode.OAUTH_PROVIDER_ERROR, data.get("error_description", "No access token"))
+            raise BizError(AuthErr.OAUTH_PROVIDER_ERROR, data.get("error_description", "No access token"))
         return access_token
 
 
@@ -73,7 +74,7 @@ async def _get_github_user(access_token: str) -> dict:
         user_resp = await client.get("https://api.github.com/user", headers=headers)
         user_data = user_resp.json()
         if "id" not in user_data:
-            raise BizError(ErrCode.OAUTH_PROVIDER_ERROR, "Failed to fetch GitHub user")
+            raise BizError(AuthErr.OAUTH_PROVIDER_ERROR, "Failed to fetch GitHub user")
 
         # 获取邮箱列表
         emails_resp = await client.get("https://api.github.com/user/emails", headers=headers)
@@ -114,7 +115,7 @@ async def handle_github_callback(db: Session, code: str, state: str) -> dict:
     )
     if oauth:
         user = get_or_raise(
-            db, User, ErrCode.USER_NOT_FOUND, User.id == int(oauth.user_id), # type: ignore[arg-type]
+            db, User, AuthErr.USER_NOT_FOUND, User.id == int(oauth.user_id), # type: ignore[arg-type]
         )
         return _oauth_login_response(db, user) # type: ignore[arg-type]
 
@@ -191,9 +192,9 @@ async def bind_github(db: Session, user_id: int, code: str, state: str) -> dict:
         .first()
     )
     if existing_oauth:
-        raise BizError(ErrCode.OAUTH_EMAIL_TAKEN, "This Github account is already bound to another user")
+        raise BizError(AuthErr.OAUTH_EMAIL_TAKEN, "This Github account is already bound to another user")
 
-    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == user_id)
+    user = get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == user_id)
 
     db.add(
         UserOAuth(

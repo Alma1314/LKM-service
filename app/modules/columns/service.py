@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from app.core.err import ErrCode
+from app.modules.columns.errors import ColumnErr
 from app.db.models import Column, ColumnApplication, ColumnPost, now_iso
 from app.db.repo import get_or_raise
 from app.modules.columns.models import COLUMN_TABLE_PLAN, ColumnApplicationStatus, ColumnPostStatus
@@ -52,7 +52,7 @@ def list_applications(db: Session) -> list[ColumnApplicationInfo]:
 
 def get_application(db: Session, application_id: int) -> ColumnApplicationInfo:
     return ColumnApplicationInfo.model_validate(get_or_raise(
-        db, ColumnApplication, ErrCode.COLUMN_APPLICATION_NOT_FOUND,
+        db, ColumnApplication, ColumnErr.APPLICATION_NOT_FOUND,
         ColumnApplication.id == application_id,
     ))
 
@@ -61,7 +61,7 @@ def review_application(
     db: Session, application_id: int, info: ColumnApplicationReview
 ) -> dict:
     app = get_or_raise(
-        db, ColumnApplication, ErrCode.COLUMN_APPLICATION_NOT_FOUND,
+        db, ColumnApplication, ColumnErr.APPLICATION_NOT_FOUND,
         ColumnApplication.id == application_id,
     )
 
@@ -89,14 +89,14 @@ def list_columns(db: Session) -> list[ColumnInfo]:
 
 def get_column(db: Session, column_id: int) -> ColumnInfo:
     return ColumnInfo.model_validate(get_or_raise(
-        db, Column, ErrCode.COLUMN_NOT_FOUND, Column.id == column_id,
+        db, Column, ColumnErr.NOT_FOUND, Column.id == column_id,
     ))
 
 
 def create_post(
     db: Session, column_id: int, info: ColumnPostCreate
 ) -> ColumnPostInfo:
-    get_or_raise(db, Column, ErrCode.COLUMN_NOT_FOUND, Column.id == column_id)
+    get_or_raise(db, Column, ColumnErr.NOT_FOUND, Column.id == column_id)
 
     post = ColumnPost(
         column_id=column_id,
@@ -114,7 +114,7 @@ def create_post(
 
 
 def list_posts(db: Session, column_id: int) -> list[ColumnPostInfo]:
-    get_or_raise(db, Column, ErrCode.COLUMN_NOT_FOUND, Column.id == column_id)
+    get_or_raise(db, Column, ColumnErr.NOT_FOUND, Column.id == column_id)
     posts = (
         db.query(ColumnPost)
         .filter(ColumnPost.column_id == column_id)
@@ -131,7 +131,7 @@ def get_post(
     if column_id is not None:
         filters.append(ColumnPost.column_id == column_id)
     return ColumnPostInfo.model_validate(get_or_raise(
-        db, ColumnPost, ErrCode.COLUMN_POST_NOT_FOUND, *filters,
+        db, ColumnPost, ColumnErr.POST_NOT_FOUND, *filters,
     ))
 
 

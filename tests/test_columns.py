@@ -2,7 +2,8 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError, CommonErr
+from app.modules.columns.errors import ColumnErr
 from app.db.models import Base
 from app.db.models import User
 from app.modules.columns.models import ColumnApplicationStatus
@@ -147,7 +148,7 @@ class TestColumnApplications:
         with pytest.raises(BizError) as exc:
             get_application(db, 999)
 
-        assert exc.value.errcode == ErrCode.COLUMN_APPLICATION_NOT_FOUND
+        assert exc.value.errcode == ColumnErr.APPLICATION_NOT_FOUND
 
 
 class TestColumnReview:
@@ -224,7 +225,7 @@ class TestColumns:
         with pytest.raises(BizError) as exc:
             get_column(db, 999)
 
-        assert exc.value.errcode == ErrCode.COLUMN_NOT_FOUND
+        assert exc.value.errcode == ColumnErr.NOT_FOUND
 
 
 class TestColumnPosts:
@@ -266,7 +267,7 @@ class TestColumnPosts:
         with pytest.raises(BizError) as exc:
             get_post(db, post.id, column_id=999)
 
-        assert exc.value.errcode == ErrCode.COLUMN_POST_NOT_FOUND
+        assert exc.value.errcode == ColumnErr.POST_NOT_FOUND
 
     def should_reject_post_for_nonexistent_column(self, db):
         user_id = _user(db)
@@ -274,7 +275,7 @@ class TestColumnPosts:
         with pytest.raises(BizError) as exc:
             _post(db, column_id=999, author_id=user_id)
 
-        assert exc.value.errcode == ErrCode.COLUMN_NOT_FOUND
+        assert exc.value.errcode == ColumnErr.NOT_FOUND
 class TestColumnRoutes:
     def _setup_user(self, db):
         """Create a user in DB and return (user_id, bearer_token)."""
@@ -296,7 +297,7 @@ class TestColumnRoutes:
             json=application_data)
 
         assert response.status_code == 403
-        assert response.json()["code"] == 1005
+        assert response.json()["code"] == CommonErr.FORBIDDEN
 
     def should_reject_application_when_token_user_mismatches_body_user(self, client, db):
         user_id_1, token = self._setup_user(db)
@@ -315,7 +316,7 @@ class TestColumnRoutes:
         )
 
         assert resp.status_code == 403
-        assert resp.json()["code"] == 1005
+        assert resp.json()["code"] == CommonErr.FORBIDDEN
 
     def should_accept_application_when_token_user_matches_body_user(self, client, db):
         user_id, token = self._setup_user(db)

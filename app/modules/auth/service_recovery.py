@@ -2,7 +2,8 @@
 
 from sqlalchemy.orm import Session
 
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError, CommonErr
+from app.modules.auth.errors import AuthErr
 from app.db.models import User, expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise
 from app.modules.auth.models import RecoveryTransaction, TOTP
@@ -21,18 +22,18 @@ from app.modules.auth.service_verify import (
 def _find_user_by_contact(db: Session, field: str, value: str) -> User:
     """通过邮箱或手机号查找用户。"""
     if field == "email":
-        user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.email == value)
+        user = get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.email == value)
     elif field == "phone":
-        user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.phone == value)
+        user = get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.phone == value)
     else:
-        raise BizError(ErrCode.INVALID_INPUT, "field must be 'email' or 'phone'")
+        raise BizError(CommonErr.INVALID_INPUT, "field must be 'email' or 'phone'")
 
     if user.account_level == "local":
-        raise BizError(ErrCode.RECOVERY_NOT_SUPPORTED, "Local accounts do not support recovery")
+        raise BizError(AuthErr.RECOVERY_NOT_SUPPORTED, "Local accounts do not support recovery")
 
     if user.account_level == "admin":
         raise BizError(
-            ErrCode.RECOVERY_METHOD_UNAVAILABLE,
+            AuthErr.RECOVERY_METHOD_UNAVAILABLE,
             "Admin accounts must use the dedicated admin recovery flow",
         )
 
@@ -74,7 +75,7 @@ def recover_by_phone(db: Session, phone: str, code: str, new_password: str | Non
         return _start_user_recovery_txn(db, user)
 
     if not new_password:
-        raise BizError(ErrCode.INVALID_INPUT, "new_password is required")
+        raise BizError(CommonErr.INVALID_INPUT, "new_password is required")
     _reset_password(db, user, new_password)
     return {"message": "Password reset successful"}
 
@@ -88,7 +89,7 @@ def recover_by_email_code(db: Session, email: str, code: str, new_password: str 
         return _start_user_recovery_txn(db, user)
 
     if not new_password:
-        raise BizError(ErrCode.INVALID_INPUT, "new_password is required")
+        raise BizError(CommonErr.INVALID_INPUT, "new_password is required")
     _reset_password(db, user, new_password)
     return {"message": "Password reset successful"}
 
@@ -103,17 +104,17 @@ def recover_by_magic_link(db: Session, token: str, new_password: str | None = No
 
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     link_record = get_or_raise(
-        db, MagicLink, ErrCode.TOKEN_INVALID,
+        db, MagicLink, AuthErr.TOKEN_INVALID,
         MagicLink.token_hash == token_hash,
     )
 
     user = get_or_raise(
-        db, User, ErrCode.USER_NOT_FOUND, User.email == link_record.email,
+        db, User, AuthErr.USER_NOT_FOUND, User.email == link_record.email,
     )
 
     if user.account_level == "admin":
         raise BizError(
-            ErrCode.RECOVERY_METHOD_UNAVAILABLE,
+            AuthErr.RECOVERY_METHOD_UNAVAILABLE,
             "Admin accounts must use the dedicated admin recovery flow",
         )
 
@@ -121,7 +122,7 @@ def recover_by_magic_link(db: Session, token: str, new_password: str | None = No
         return _start_user_recovery_txn(db, user) # type: ignore[arg-type]
 
     if not new_password:
-        raise BizError(ErrCode.INVALID_INPUT, "new_password is required")
+        raise BizError(CommonErr.INVALID_INPUT, "new_password is required")
     _reset_password(db, user, new_password) # type: ignore[arg-type]
     return {"message": "Password reset successful"}
 
@@ -222,14 +223,14 @@ def recover_admin_begin(
 
 def _get_recovery_txn(db: Session, txn_id: str):
     txn = get_or_raise(
-        db, RecoveryTransaction, ErrCode.TOKEN_INVALID,
+        db, RecoveryTransaction, AuthErr.TOKEN_INVALID,
         RecoveryTransaction.txn_id == txn_id,
         detail="Invalid recovery transaction",
     )
     if txn.consumed:
-        raise BizError(ErrCode.TOKEN_INVALID, "Recovery transaction already used")
+        raise BizError(AuthErr.TOKEN_INVALID, "Recovery transaction already used")
     if txn.expires_at <= now_iso():
-        raise BizError(ErrCode.TOKEN_EXPIRED, "Recovery transaction expired")
+        raise BizError(AuthErr.TOKEN_EXPIRED, "Recovery transaction expired")
     return txn
 
 
@@ -264,22 +265,22 @@ def recover_admin_verify_totp(db: Session, txn_id: str, temp_token: str) -> dict
     txn = _get_recovery_txn(db, txn_id)
 
     if not txn.contact_verified:
-        raise BizError(ErrCode.RECOVERY_METHOD_UNAVAILABLE, "Contact verification required first")
+        raise BizError(AuthErr.RECOVERY_METHOD_UNAVAILABLE, "Contact verification required first")
 
     try:
         payload = decode_temp_token(temp_token)
     except Exception as exc:
-        raise BizError(ErrCode.TOKEN_INVALID, "Invalid 2FA temp token") from exc
+        raise BizError(AuthErr.TOKEN_INVALID, "Invalid 2FA temp token") from exc
 
     user_id = payload.get("user_id", payload.get("sub"))
     if user_id != txn.user_id:
-        raise BizError(ErrCode.TOKEN_INVALID, "Token user does not match recovery transaction user")
+        raise BizError(AuthErr.TOKEN_INVALID, "Token user does not match recovery transaction user")
 
     if payload.get("purpose") != "recovery":
-        raise BizError(ErrCode.TOKEN_INVALID, "Token was not issued for recovery")
+        raise BizError(AuthErr.TOKEN_INVALID, "Token was not issued for recovery")
 
     if payload.get("txn_id") != txn_id:
-        raise BizError(ErrCode.TOKEN_INVALID, "Token does not match this recovery transaction")
+        raise BizError(AuthErr.TOKEN_INVALID, "Token does not match this recovery transaction")
 
     # 必须已被 /auth/2fa/verify 消费 —— 在成功的 2FA 之后
     token_hash = hashlib.sha256(temp_token.encode()).hexdigest()
@@ -291,7 +292,7 @@ def recover_admin_verify_totp(db: Session, txn_id: str, temp_token: str) -> dict
         TempTokenUsage.consumed.is_(True),
     ).first()
     if not usage:
-        raise BizError(ErrCode.TOKEN_INVALID, "Temp token not verified – complete 2FA first")
+        raise BizError(AuthErr.TOKEN_INVALID, "Temp token not verified – complete 2FA first")
 
     txn.totp_verified = True
     db.flush()
@@ -316,15 +317,15 @@ def _consume_recovery_txn(db: Session, txn_id: str) -> User:
         RecoveryTransaction.totp_verified.is_(True),
         RecoveryTransaction.expires_at > now,
     ):
-        raise BizError(ErrCode.TOKEN_INVALID, "Recovery transaction invalid or already consumed")
+        raise BizError(AuthErr.TOKEN_INVALID, "Recovery transaction invalid or already consumed")
 
     txn = get_or_raise(
-        db, RecoveryTransaction, ErrCode.TOKEN_INVALID,
+        db, RecoveryTransaction, AuthErr.TOKEN_INVALID,
         RecoveryTransaction.txn_id == txn_id,
     )
 
     user = get_or_raise(
-        db, User, ErrCode.USER_NOT_FOUND, User.id == int(txn.user_id), # type: ignore[arg-type]
+        db, User, AuthErr.USER_NOT_FOUND, User.id == int(txn.user_id), # type: ignore[arg-type]
     )
 
     return user
@@ -338,7 +339,7 @@ def recover_user_complete(
 
     if str(user.account_level) == "admin":
         raise BizError(
-            ErrCode.RECOVERY_METHOD_UNAVAILABLE,
+            AuthErr.RECOVERY_METHOD_UNAVAILABLE,
             "Admin accounts must use the dedicated admin recovery flow",
         )
 
@@ -354,7 +355,7 @@ def recover_admin_complete(
     user = _consume_recovery_txn(db, txn_id)
 
     if str(user.account_level) != "admin":
-        raise BizError(ErrCode.ACCOUNT_LEVEL_INSUFFICIENT)
+        raise BizError(AuthErr.ACCOUNT_LEVEL_INSUFFICIENT)
 
     _reset_password(db, user, new_password)
 

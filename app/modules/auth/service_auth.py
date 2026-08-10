@@ -12,7 +12,8 @@ class BackgroundTasksLike(Protocol):
     def add_task(self, func, *args, **kwargs) -> None: ...
 
 from app.core.config import settings
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError, CommonErr
+from app.modules.auth.errors import AuthErr
 from app.db.models import User, Profile, expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise, isolated_update
 from app.modules.auth.models import AuditLog, MagicLink, RefreshToken, TOTP
@@ -122,7 +123,7 @@ def _check_account_locked(user: User) -> None:
             # 执行虚拟哈希以保持时序一致
             from app.modules.auth.security import verifypwd as _vp
             _vp("dummy", "$dummy$" + "a" * 64)
-            raise BizError(ErrCode.INVALID_CREDENTIALS)
+            raise BizError(AuthErr.INVALID_CREDENTIALS)
         # 锁定已过期 —— 自动解锁
         user.is_locked = False
         user.locked_until = None
@@ -158,7 +159,7 @@ def register_local(db: Session, info: UserRegLocal) -> dict:
     if existing:
         hashed: str = existing.hashed_password  # type: ignore[assignment]
         if not hashed or not verifypwd(info.password, hashed):
-            raise BizError(ErrCode.ALREADY_REGISTERED, "Account exists but password is incorrect")
+            raise BizError(AuthErr.ALREADY_REGISTERED, "Account exists but password is incorrect")
         upgrade_to_normal(db, existing) # type: ignore[arg-type]
         return _create_auth_response(db, existing) # type: ignore[arg-type]
 
@@ -180,7 +181,7 @@ def _handle_duplicate_user_error(exc: Exception) -> None:
     """如果是唯一性违规，将 IntegrityError 重新抛出为 ALREADY_REGISTERED。"""
     from sqlalchemy.exc import IntegrityError
     if isinstance(exc, IntegrityError):
-        raise BizError(ErrCode.ALREADY_REGISTERED, "Account already exists") from exc
+        raise BizError(AuthErr.ALREADY_REGISTERED, "Account already exists") from exc
     raise
 
 
@@ -194,11 +195,11 @@ def register_normal_with_password(
     has_email = info.email is not None
     has_phone = info.phone is not None
     if not has_email and not has_phone:
-        raise BizError(ErrCode.INVALID_INPUT, "email or phone must be provided")
+        raise BizError(CommonErr.INVALID_INPUT, "email or phone must be provided")
     if has_email and not email_verified:
-        raise BizError(ErrCode.INVALID_INPUT, "email must be verified")
+        raise BizError(CommonErr.INVALID_INPUT, "email must be verified")
     if has_phone and not phone_verified:
-        raise BizError(ErrCode.INVALID_INPUT, "phone must be verified")
+        raise BizError(CommonErr.INVALID_INPUT, "phone must be verified")
 
     username = _normalize_username(info.username)
     email_normalized = _normalize_email(info.email) if info.email else None
@@ -215,7 +216,7 @@ def register_normal_with_password(
     if existing:
         hashed: str = existing.hashed_password  # type: ignore[assignment]
         if not hashed or not verifypwd(info.password, hashed):
-            raise BizError(ErrCode.ALREADY_REGISTERED, "Account exists but password is incorrect")
+            raise BizError(AuthErr.ALREADY_REGISTERED, "Account exists but password is incorrect")
         if email_normalized and not existing.email:
             existing.email = email_normalized
         if info.phone and not existing.phone:
@@ -243,7 +244,7 @@ def register_normal_with_password(
 def register_by_verify(db: Session, field: str, value: str) -> dict:
     """通过邮箱或手机验证创建一个*无密码*的普通用户，若已存在则自动登录。"""
     if field not in ("email", "phone"):
-        raise BizError(ErrCode.INVALID_INPUT, "field must be 'email' or 'phone'")
+        raise BizError(CommonErr.INVALID_INPUT, "field must be 'email' or 'phone'")
 
     # 规范化并检查重复
     if field == "email":
@@ -324,14 +325,14 @@ def _consume_pending_normal_registration(
     from app.modules.auth.service_verify import consume_email_code, consume_phone_code
 
     pending = get_or_raise(
-        db, PendingRegistration, ErrCode.TOKEN_INVALID,
+        db, PendingRegistration, AuthErr.TOKEN_INVALID,
         PendingRegistration.txn_id == txn_id,
         detail="Invalid registration transaction",
     )
     if pending.consumed:
-        raise BizError(ErrCode.TOKEN_INVALID, "Registration already completed")
+        raise BizError(AuthErr.TOKEN_INVALID, "Registration already completed")
     if pending.expires_at <= now_iso():
-        raise BizError(ErrCode.TOKEN_EXPIRED, "Registration expired")
+        raise BizError(AuthErr.TOKEN_EXPIRED, "Registration expired")
 
     # 验证所有提交的联系方式 —— 每个提供的联系方式都必须经过验证。
     from sqlalchemy.exc import IntegrityError, OperationalError
@@ -361,7 +362,7 @@ def _consume_pending_normal_registration(
         hashed: str = existing.hashed_password  # type: ignore[assignment]
         pending_hashed: str = pending.hashed_password  # type: ignore[assignment]
         if not hashed or not verifypwd(pending_hashed, hashed):
-            raise BizError(ErrCode.ALREADY_REGISTERED, "Account exists but password is incorrect")
+            raise BizError(AuthErr.ALREADY_REGISTERED, "Account exists but password is incorrect")
         # 将联系方式绑定到已有账户
         if pending.email and not existing.email:
             existing.email = pending.email
@@ -443,7 +444,7 @@ def login_password(db: Session, info: UserLoginPassword, ip_address: str = "") -
     if not user:
         # 防御用户枚举：执行一个相同成本的虚拟哈希，
         verifypwd(info.password, "$dummy$" + "a" * 64)
-        raise BizError(ErrCode.INVALID_CREDENTIALS)
+        raise BizError(AuthErr.INVALID_CREDENTIALS)
 
     _check_account_locked(user) # type: ignore[arg-type]
 
@@ -459,7 +460,7 @@ def login_password(db: Session, info: UserLoginPassword, ip_address: str = "") -
         _record_failed_attempt(db, user) # type: ignore[arg-type]
         if user.failed_login_attempts >= _FAIL_LOCK_THRESHOLD:
             log_audit(db, user.id, "account_locked", "5 failed login attempts")
-        raise BizError(ErrCode.INVALID_CREDENTIALS)
+        raise BizError(AuthErr.INVALID_CREDENTIALS)
 
     # 成功 —— 通过子事务（savepoint）原子性地重置计数器，
     # 防止调用方回滚时把失败计数器也一并回滚。
@@ -484,14 +485,14 @@ def login_code(db: Session, contact: str, code: str) -> dict:
     if "@" in contact:
         consume_email_code(db, contact, code, "login")
         user = get_or_raise(
-            db, User, ErrCode.USER_NOT_FOUND, User.email == _normalize_email(contact),
+            db, User, AuthErr.USER_NOT_FOUND, User.email == _normalize_email(contact),
         )
     else:
         consume_phone_code(db, contact, code, "login")
-        user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.phone == contact)
+        user = get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.phone == contact)
 
     if user.account_level == "local":
-        raise BizError(ErrCode.ACCOUNT_LEVEL_INSUFFICIENT)
+        raise BizError(AuthErr.ACCOUNT_LEVEL_INSUFFICIENT)
 
     if user.is_locked:
         _check_account_locked(user) # type: ignore[arg-type]
@@ -580,32 +581,32 @@ def verify_magic_link(
             .first()
         )
         if not link_record:
-            raise BizError(ErrCode.TOKEN_INVALID)
+            raise BizError(AuthErr.TOKEN_INVALID)
         if link_record.purpose != purpose:
-            raise BizError(ErrCode.TOKEN_INVALID)
+            raise BizError(AuthErr.TOKEN_INVALID)
         if link_record.used:
-            raise BizError(ErrCode.TOKEN_INVALID)
+            raise BizError(AuthErr.TOKEN_INVALID)
         # 必然是已过期
-        raise BizError(ErrCode.TOKEN_EXPIRED)
+        raise BizError(AuthErr.TOKEN_EXPIRED)
 
     # 原子更新后重新获取
     link_record = get_or_raise(
-        db, MagicLink, ErrCode.TOKEN_INVALID,
+        db, MagicLink, AuthErr.TOKEN_INVALID,
         MagicLink.token_hash == token_hash,
     )
 
     user = get_or_raise(
-        db, User, ErrCode.USER_NOT_FOUND, User.email == link_record.email,
+        db, User, AuthErr.USER_NOT_FOUND, User.email == link_record.email,
     )
 
     if user.account_level == "local":
-        raise BizError(ErrCode.ACCOUNT_LEVEL_INSUFFICIENT)
+        raise BizError(AuthErr.ACCOUNT_LEVEL_INSUFFICIENT)
 
     # 没有 TOTP 的管理员必须设置它
     if user.account_level == "admin":
         totp = db.query(TOTP).filter(TOTP.user_id == user.id).first()
         if not totp or not totp.enabled:
-            raise BizError(ErrCode.TOTP_SETUP_REQUIRED)
+            raise BizError(AuthErr.TOTP_SETUP_REQUIRED)
 
     # 与 login_password 相同的 2FA 检查
     requires_2fa = False
@@ -637,24 +638,24 @@ def refresh_access_token(db: Session, raw_refresh: str) -> dict:
         RefreshToken.revoked_at.is_(None),
     ):
         # 令牌已被使用、不存在或已被撤销
-        raise BizError(ErrCode.TOKEN_INVALID)
+        raise BizError(AuthErr.TOKEN_INVALID)
 
     # 现在获取记录以得到 user_id 和 mfa_verified
     stored = get_or_raise(
-        db, RefreshToken, ErrCode.TOKEN_INVALID,
+        db, RefreshToken, AuthErr.TOKEN_INVALID,
         RefreshToken.token_hash == tok_hash,
     )
 
     # 过期检查
     if stored.expires_at <= now:
-        raise BizError(ErrCode.TOKEN_EXPIRED)
+        raise BizError(AuthErr.TOKEN_EXPIRED)
 
     # 发放新令牌
-    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == stored.user_id)
+    user = get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == stored.user_id)
 
     # 管理员用户的刷新令牌会话必须经过 MFA 认证
     if user.account_level == "admin" and not stored.mfa_verified:
-        raise BizError(ErrCode.TOKEN_INVALID, "Admin refresh token requires MFA assurance")
+        raise BizError(AuthErr.TOKEN_INVALID, "Admin refresh token requires MFA assurance")
 
     access_token, raw_new = _issue_session_tokens(db, user, mfa_verified=stored.mfa_verified)
     return {"access_token": access_token, "refresh_token": raw_new}

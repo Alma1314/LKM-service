@@ -10,7 +10,8 @@ DELETE /auth/2fa                  RequireLevel("normal")  禁用 2FA
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.core.err import BizError, ErrCode, respond
+from app.core.err import BizError, respond
+from app.modules.auth.errors import AuthErr
 from app.db.models import User, expires_at, now_iso
 from app.db.repo import consume_once
 from app.db.session import get_session
@@ -41,12 +42,12 @@ def _decode_setup_temp_token(temp_token: str) -> tuple[str, int]:
     try:
         payload = decode_temp_token(temp_token)
     except Exception as exc:
-        raise BizError(ErrCode.TOKEN_INVALID) from exc
+        raise BizError(AuthErr.TOKEN_INVALID) from exc
     if payload.get("purpose") != "setup":
-        raise BizError(ErrCode.TOKEN_INVALID, "Not a setup token")
+        raise BizError(AuthErr.TOKEN_INVALID, "Not a setup token")
     user_id = payload.get("user_id")
     if not user_id:
-        raise BizError(ErrCode.TOKEN_INVALID)
+        raise BizError(AuthErr.TOKEN_INVALID)
     token_hash = hashlib.sha256(temp_token.encode()).hexdigest()
     return token_hash, user_id # type: ignore[arg-type]
 
@@ -83,7 +84,7 @@ def setup_2fa_temp(
         db.flush()
     except IntegrityError:
         db.rollback()
-        raise BizError(ErrCode.TOKEN_INVALID, "Setup token already used")
+        raise BizError(AuthErr.TOKEN_INVALID, "Setup token already used")
 
     return service_2fa.setup_2fa_begin(db, user_id)
 
@@ -106,11 +107,11 @@ def setup_2fa_complete_temp(
         SetupTransaction.consumed.is_(False),
         SetupTransaction.expires_at > now_iso(),
     ):
-        raise BizError(ErrCode.TOKEN_INVALID, "Setup token not found, already used, or expired")
+        raise BizError(AuthErr.TOKEN_INVALID, "Setup token not found, already used, or expired")
 
     txn = db.query(SetupTransaction).filter(SetupTransaction.token_hash == token_hash).first()
     if not txn or txn.user_id != user_id:
-        raise BizError(ErrCode.TOKEN_INVALID)
+        raise BizError(AuthErr.TOKEN_INVALID)
 
     result_dict = service_2fa.setup_2fa_complete(db, user_id, code) # type: ignore[arg-type]
     user = db.query(User).filter(User.id == user_id).first()

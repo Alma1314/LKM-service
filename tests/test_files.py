@@ -7,7 +7,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.modules.auth.models  # noqa: F401 ensure auth tables registered
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError, CommonErr
+from app.modules.files.errors import FileErr
 from app.db.models import Base, LibraryFile, Profile, User
 from app.db.session import get_session
 from app.main import app
@@ -177,7 +178,7 @@ class TestFilesService:
         with pytest.raises(BizError) as exc:
             get_file(db, 999)
 
-        assert exc.value.errcode == ErrCode.FILE_NOT_FOUND
+        assert exc.value.errcode == FileErr.NOT_FOUND
 
     def should_increment_download(self, db, tmp_path, monkeypatch):
         from app.core.config import settings
@@ -204,7 +205,7 @@ class TestFilesService:
                 max_bytes=5,
             )
 
-        assert exc.value.errcode == ErrCode.FILE_TOO_LARGE
+        assert exc.value.errcode == FileErr.TOO_LARGE
         assert db.query(LibraryFile).count() == 0
         assert list(tmp_path.iterdir()) == []
 
@@ -247,7 +248,7 @@ class TestFilesRoutes:
         )
 
         assert resp.status_code == 403
-        assert resp.json()["code"] == 1005
+        assert resp.json()["code"] == CommonErr.FORBIDDEN
 
     def should_upload_file_with_token(self, client, db):
         user_id, token = self._setup_user(db)
@@ -301,7 +302,7 @@ class TestFilesRoutes:
         resp = client.get("/api/v1/files/999")
 
         assert resp.status_code == 404
-        assert resp.json()["code"] == 5001
+        assert resp.json()["code"] == FileErr.NOT_FOUND
 
     def should_reject_oversized_upload_through_api(self, client, db, tmp_path, monkeypatch):
         from app.core.config import settings
@@ -317,7 +318,7 @@ class TestFilesRoutes:
         )
 
         assert resp.status_code == 413
-        assert resp.json()["code"] == 5003
+        assert resp.json()["code"] == FileErr.TOO_LARGE
         assert list(tmp_path.iterdir()) == []
 
     def should_not_persist_record_when_storage_fails(self, db, tmp_path, monkeypatch):
@@ -332,5 +333,5 @@ class TestFilesRoutes:
         with pytest.raises(BizError) as exc:
             _file(db, uploader_id=user_id)
 
-        assert exc.value.errcode == ErrCode.FILE_STORE_ERROR
+        assert exc.value.errcode == FileErr.STORE_ERROR
         assert db.query(LibraryFile).count() == 0
