@@ -1,6 +1,7 @@
 """Github OAuth 服务 —— 授权 URL、处理回调、绑定账户。"""
 
 import secrets
+from typing import Any, cast
 
 import httpx
 from sqlalchemy.orm import Session
@@ -13,17 +14,18 @@ from app.modules.auth.models import OAuthState, UserOAuth
 from app.modules.auth.service_auth import log_audit, upgrade_to_normal
 
 
-def _generate_oauth_state(db: Session, purpose: str) -> str:
-    """生成一个高熵的 OAuth state 令牌，存储并返回它。"""
+def _generate_oauth_state(db: Session, purpose: str, user_id: int | None = None) -> str:
+    """生成一个高熵的 OAuth state 令牌，存储并返回它。bind 场景关联发起用户。"""
     state = secrets.token_urlsafe(32)
     expiry = expires_at(minutes=10)
-    db.add(OAuthState(state=state, purpose=purpose, expires_at=expiry))
+    db.add(OAuthState(state=state, purpose=purpose, user_id=user_id, expires_at=expiry))
     db.flush()
     return state
 
 
-def _consume_oauth_state(db: Session, state: str, purpose: str) -> None:
-    if not consume_once(
+def _consume_oauth_state(db: Session, state: str, purpose: str) -> OAuthState:
+    """消耗一次 OAuth state，返回该记录（含 user_id，供绑定归属）。无效则抛错。"""
+    consumed = consume_once(
         db,
         OAuthState,
         {"consumed": True},
@@ -31,12 +33,17 @@ def _consume_oauth_state(db: Session, state: str, purpose: str) -> None:
         OAuthState.consumed.is_(False),
         OAuthState.purpose == purpose,
         OAuthState.expires_at > now_iso(),
-    ):
+    )
+    if not consumed:
         raise BizError(ErrCode.OAUTH_PROVIDER_ERROR, "Invalid or expired OAuth state")
+    row = db.query(OAuthState).filter(OAuthState.state == state).first()
+    if not row:
+        raise BizError(ErrCode.OAUTH_PROVIDER_ERROR, "Invalid or expired OAuth state")
+    return row
 
 
-def get_github_auth_url(db: Session, purpose: str = "login") -> str:
-    state = _generate_oauth_state(db, purpose)
+def get_github_auth_url(db: Session, purpose: str = "login", user_id: int | None = None) -> str:
+    state = _generate_oauth_state(db, purpose, user_id)
     return (
         f"https://github.com/login/oauth/authorize"
         f"?client_id={settings.github_client_id}"
@@ -65,28 +72,29 @@ async def _exchange_github_token(code: str) -> str:
         return access_token
 
 
-async def _get_github_user(access_token: str) -> dict:
+async def _get_github_user(access_token: str) -> dict[str, Any]:
     """获取 GitHub 用户资料和主邮箱。"""
     headers = {"Authorization": f"token {access_token}"}
     async with httpx.AsyncClient() as client:
         # 获取用户资料
         user_resp = await client.get("https://api.github.com/user", headers=headers)
-        user_data = user_resp.json()
+        user_data = cast(dict[str, Any], user_resp.json())
         if "id" not in user_data:
             raise BizError(ErrCode.OAUTH_PROVIDER_ERROR, "Failed to fetch GitHub user")
 
         # 获取邮箱列表
         emails_resp = await client.get("https://api.github.com/user/emails", headers=headers)
-        emails_data = emails_resp.json()
-        primary_email = None
+        emails_data = cast(Any, emails_resp.json())
+        primary_email: str | None = None
         if isinstance(emails_data, list):
-            for entry in emails_data:
+            entries = cast(list[Any], emails_data)
+            for entry in entries:
                 if entry.get("primary") and entry.get("verified"):
                     primary_email = entry["email"]
                     break
             # 备选方案：第一个已验证的邮箱
             if primary_email is None:
-                for entry in emails_data:
+                for entry in entries:
                     if entry.get("verified"):
                         primary_email = entry["email"]
                         break
@@ -98,8 +106,8 @@ async def _get_github_user(access_token: str) -> dict:
         }
 
 
-async def handle_github_callback(db: Session, code: str, state: str) -> dict:
-    _consume_oauth_state(db, state, "login")
+async def handle_github_callback(db: Session, code: str, state: str) -> dict[str, Any]:
+    _consume_oauth_state(db, state, "login")  # login 场景无需用户归属
     access_token = await _exchange_github_token(code)
     gh_user = await _get_github_user(access_token)
 
@@ -170,15 +178,22 @@ async def handle_github_callback(db: Session, code: str, state: str) -> dict:
     return _oauth_login_response(db, user)
 
 
-def _oauth_login_response(db: Session, user: User) -> dict:
+def _oauth_login_response(db: Session, user: User) -> dict[str, Any]:
     """检查 TOTP 要求并返回认证响应。"""
-    from app.modules.auth.service_auth import _finalize_auth_response
+    from app.modules.auth import service_auth as _service_auth
 
-    return _finalize_auth_response(db, user)
+    return cast(
+        dict[str, Any],
+        cast(Any, _service_auth._finalize_auth_response)(db, user),
+    )
 
 
-async def bind_github(db: Session, user_id: int, code: str, state: str) -> dict:
-    _consume_oauth_state(db, state, "bind")
+async def bind_github(db: Session, code: str, state: str) -> dict[str, Any]:
+    """绑定 GitHub 到发起绑定的用户（user_id 由 OAuth state 记录携带，回调无需 JWT）。"""
+    st = _consume_oauth_state(db, state, "bind")
+    user_id = st.user_id
+    if not user_id:
+        raise BizError(ErrCode.OAUTH_PROVIDER_ERROR, "Bind session lost its owner")
     access_token = await _exchange_github_token(code)
     gh_user = await _get_github_user(access_token)
 
@@ -193,7 +208,7 @@ async def bind_github(db: Session, user_id: int, code: str, state: str) -> dict:
     if existing_oauth:
         raise BizError(ErrCode.OAUTH_EMAIL_TAKEN, "This Github account is already bound to another user")
 
-    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == user_id)
+    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == int(user_id))
 
     db.add(
         UserOAuth(

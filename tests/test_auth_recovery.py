@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.err import BizError, ErrCode
 from app.db.models import Base, User, Profile
-import app.modules.auth.models  # noqa: F401
+import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
 from app.modules.auth.models import MagicLink, RefreshToken
 
 

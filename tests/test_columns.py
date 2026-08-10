@@ -23,7 +23,7 @@ from app.modules.columns.service import (
     review_application,
 )
 #以下是为user请求头校验新增的导入
-import app.modules.auth.models  # noqa: F401 ensure auth tables registered
+import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
 from fastapi.testclient import TestClient
 from app.main import app
 from app.db.models import User

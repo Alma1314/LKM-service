@@ -55,12 +55,14 @@ async def git_http_backend(repo_name: str, rest: str, request: Request):
             stderr=subprocess.PIPE,
             env=env,
         )
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="git executable not found")
+
+    try:
         stdout, _ = proc.communicate(input=body, timeout=120)
     except subprocess.TimeoutExpired:
         proc.kill()
         raise HTTPException(status_code=504, detail="Git operation timed out")
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="git executable not found")
 
     header_end = stdout.find(b"\r\n\r\n")
     if header_end != -1:

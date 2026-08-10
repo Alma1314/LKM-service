@@ -1,8 +1,9 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 import sys
 
@@ -88,7 +89,7 @@ def create_app() -> FastAPI:
     return application
 
 
-async def _on_err(_request, exc):
+async def _on_err(_request: Request, exc: Exception) -> JSONResponse:
     _, errcode, detail = map_err(exc)
     return resp_json(errcode, detail=detail)
 

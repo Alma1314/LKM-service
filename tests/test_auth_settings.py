@@ -16,7 +16,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.err import BizError, ErrCode
 from app.db.models import Base
-import app.modules.auth.models  # noqa: F401 — ensure auth tables (refresh_tokens, etc.) are created
+import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
 
 
 def _unwrap(response):
@@ -332,3 +332,144 @@ class TestBindEmailUpgrade:
         user = _get_user(db, user_id)
         # Already normal, should not have been changed
         assert user.account_level == "normal"
+
+
+class TestGetSettings:
+    """GET /auth/settings — 查询绑定状态。"""
+
+    def _unwrap(self, response):
+        return json.loads(response.body.decode())
+
+    def should_return_binding_state(self, db):
+        from app.db.models import User, Profile
+
+        user = User(username="bindstate", email="a@b.com", phone="13800001111",
+                    hashed_password="x", account_level="normal")
+        db.add(user)
+        db.flush()
+        db.add(Profile(user_id=user.id, role="member"))
+        db.flush()
+
+        from app.modules.auth.models import TOTP
+        db.add(TOTP(user_id=user.id, secret="s", enabled=True))
+        db.flush()
+
+        from app.modules.auth.router_settings import get_settings
+
+        class FakeCurrentUser:
+            id = user.id
+            account_level = "normal"
+            role = "member"
+
+        data = self._unwrap(get_settings(cur=FakeCurrentUser(), db=db))
+        assert data["data"]["email"] == "a@b.com"
+        assert data["data"]["phone"] == "13800001111"
+        assert data["data"]["github"] is None
+        assert data["data"]["has_2fa"] is True
+
+
+class TestUnbind:
+    """DELETE /auth/settings/{type} — 解绑 + 2FA 门槛 + 保留一种登录方式。"""
+
+    def _reg_with_bindings(self, db, email="a@b.com", phone="13800001111"):
+        from app.db.models import User, Profile
+        user = User(username="unbind", email=email, phone=phone,
+                    hashed_password="x", account_level="normal")
+        db.add(user)
+        db.flush()
+        db.add(Profile(user_id=user.id, role="member"))
+        db.flush()
+        return user
+
+    def should_unbind_email_without_2fa(self, db):
+        from app.db.models import User
+        user = self._reg_with_bindings(db)
+        from app.modules.auth.router_settings import unbind
+
+        class FakeCurrentUser:
+            id = user.id
+            account_level = "normal"
+            role = "member"
+
+        data = json.loads(unbind("email", type("Body", (), {"code": None})(), cur=FakeCurrentUser(), db=db).body.decode())
+        assert data["data"]["message"] == "email unbound"
+        db.expire_all()
+        assert db.query(User).filter(User.id == user.id).first().email is None
+
+    def should_reject_unbind_when_only_one_way_left(self, db):
+        # 只有 phone，没有 email/github → 解绑 email 会触发“保留一种”守卫（虽然 email 本来就空，走 phone 侧测试更贴）
+        from app.db.models import User, Profile
+        user = User(username="onlyphone", phone="13800009999",
+                    hashed_password="x", account_level="normal")
+        db.add(user)
+        db.flush()
+        db.add(Profile(user_id=user.id, role="member"))
+        db.flush()
+        # 绑定另一个联系方式以便 email 存在可解绑，但仅剩 phone 时会拒绝
+        user.email = "a@b.com"
+        db.flush()
+
+        from app.modules.auth.router_settings import unbind
+        from app.core.err import BizError, ErrCode
+
+        class FakeCurrentUser:
+            id = user.id
+            account_level = "normal"
+            role = "member"
+
+        # 先解绑 phone，使仅剩 email
+        json.loads(unbind("phone", type("Body", (), {"code": None})(), cur=FakeCurrentUser(), db=db).body.decode())
+        # 再解绑 email，将无任何登录方式 → 应拒绝
+        with pytest.raises(BizError) as exc:
+            unbind("email", type("Body", (), {"code": None})(), cur=FakeCurrentUser(), db=db)
+        assert exc.value.errcode == ErrCode.INVALID_INPUT
+
+    def should_require_totp_when_2fa_enabled(self, db):
+        user = self._reg_with_bindings(db)
+        from app.modules.auth.models import TOTP
+        db.add(TOTP(user_id=user.id, secret="s", enabled=True))
+        db.flush()
+
+        from app.core.err import BizError, ErrCode
+        from app.modules.auth.router_settings import unbind
+
+        class FakeCurrentUser:
+            id = user.id
+            account_level = "normal"
+            role = "member"
+
+        with pytest.raises(BizError) as exc:
+            unbind("email", type("Body", (), {"code": None})(), cur=FakeCurrentUser(), db=db)
+        assert exc.value.errcode == ErrCode.TOTP_CODE_INVALID
+
+    def should_unbind_github(self, db):
+        user = self._reg_with_bindings(db)
+        from app.modules.auth.models import UserOAuth
+        db.add(UserOAuth(user_id=user.id, provider="github",
+                         provider_user_id="123", provider_email="gh@example.com"))
+        db.flush()
+        from app.modules.auth.router_settings import unbind
+
+        class FakeCurrentUser:
+            id = user.id
+            account_level = "normal"
+            role = "member"
+
+        data = json.loads(unbind("github", type("Body", (), {"code": None})(), cur=FakeCurrentUser(), db=db).body.decode())
+        assert data["data"]["message"] == "github unbound"
+        db.expire_all()
+        assert db.query(UserOAuth).filter(UserOAuth.user_id == user.id).first() is None
+
+    def should_reject_invalid_type(self, db):
+        user = self._reg_with_bindings(db)
+        from app.core.err import BizError, ErrCode
+        from app.modules.auth.router_settings import unbind
+
+        class FakeCurrentUser:
+            id = user.id
+            account_level = "normal"
+            role = "member"
+
+        with pytest.raises(BizError) as exc:
+            unbind("wechat", type("Body", (), {"code": None})(), cur=FakeCurrentUser(), db=db)
+        assert exc.value.errcode == ErrCode.INVALID_INPUT

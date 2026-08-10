@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from typing import Any
 
 from app.core.err import ErrCode
 from app.db.models import Column, ColumnApplication, ColumnPost, now_iso
@@ -14,7 +15,7 @@ from app.modules.columns.schemas import (
 )
 
 
-def get_column_plan() -> dict:
+def get_column_plan() -> dict[str, Any]:
     return {
         "status": "implemented_minimal",
         "tables": COLUMN_TABLE_PLAN,
@@ -59,7 +60,7 @@ def get_application(db: Session, application_id: int) -> ColumnApplicationInfo:
 
 def review_application(
     db: Session, application_id: int, info: ColumnApplicationReview
-) -> dict:
+) -> dict[str, Any]:
     app = get_or_raise(
         db, ColumnApplication, ErrCode.COLUMN_APPLICATION_NOT_FOUND,
         ColumnApplication.id == application_id,

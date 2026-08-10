@@ -6,6 +6,7 @@ import os
 import secrets
 import struct
 import time
+from typing import Any, cast
 
 import jwt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -58,7 +59,7 @@ def create_access_token(
     token_version: object = 0,
 ) -> str:
     now = int(time.time())
-    payload = {
+    payload: dict[str, Any] = {
         "user_id": int(user_id),  # type: ignore[arg-type]
         "account_level": str(account_level),
         "role": str(role),
@@ -71,8 +72,8 @@ def create_access_token(
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def decode_access_token(token: str) -> dict:
-    payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+def decode_access_token(token: str) -> dict[str, Any]:
+    payload = cast(dict[str, Any], jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]))
     if payload.get("type") != _ACCESS_TYPE:
         raise ValueError("non-access token")
     return payload
@@ -82,7 +83,7 @@ _TEMP_EXPIRE_SECONDS = 60
 
 def create_temp_token(user_id: int, purpose: str = "2fa", txn_id: str | None = None) -> str:
     now = int(time.time())
-    payload = {
+    payload: dict[str, Any] = {
         "user_id": user_id,
         "type": _TEMP_TYPE,
         "purpose": purpose,
@@ -94,8 +95,8 @@ def create_temp_token(user_id: int, purpose: str = "2fa", txn_id: str | None = N
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def decode_temp_token(token: str) -> dict:
-    payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+def decode_temp_token(token: str) -> dict[str, Any]:
+    payload = cast(dict[str, Any], jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]))
     if payload.get("type") != _TEMP_TYPE:
         raise ValueError("non-temp token")
     return payload

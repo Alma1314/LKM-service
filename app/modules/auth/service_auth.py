@@ -2,14 +2,14 @@
 
 import hashlib
 import secrets
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from sqlalchemy.orm import Session
 
 
 @runtime_checkable
 class BackgroundTasksLike(Protocol):
-    def add_task(self, func, *args, **kwargs) -> None: ...
+    def add_task(self, func: Any, /, *args: Any, **kwargs: Any) -> None: ...
 
 from app.core.config import settings
 from app.core.err import BizError, ErrCode
@@ -89,7 +89,7 @@ def _issue_session_tokens(
 
 def _create_auth_response(
     db: Session, user: User, requires_2fa: bool = False
-) -> dict:
+) -> dict[str, Any]:
     """构建作为登录 / 注册响应返回的字典。"""
     if requires_2fa:
         temp_token = create_temp_token(user.id)
@@ -151,7 +151,7 @@ def _record_failed_attempt(db: Session, user: User) -> None:
         )
         db.refresh(user)
 
-def register_local(db: Session, info: UserRegLocal) -> dict:
+def register_local(db: Session, info: UserRegLocal) -> dict[str, Any]:
     """创建一个 ``local`` 账户，若已存在且密码正确则自动登录。"""
     username = _normalize_username(info.username)
     existing = db.query(User).filter(User.username == username).first()
@@ -189,7 +189,7 @@ def register_normal_with_password(
     info: UserRegNormal,
     email_verified: bool = False,
     phone_verified: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     """创建一个带密码的 ``normal`` 账户，若已存在且密码正确则自动登录。"""
     has_email = info.email is not None
     has_phone = info.phone is not None
@@ -240,7 +240,7 @@ def register_normal_with_password(
     return _create_auth_response(db, user)
 
 
-def register_by_verify(db: Session, field: str, value: str) -> dict:
+def register_by_verify(db: Session, field: str, value: str) -> dict[str, Any]:
     """通过邮箱或手机验证创建一个*无密码*的普通用户，若已存在则自动登录。"""
     if field not in ("email", "phone"):
         raise BizError(ErrCode.INVALID_INPUT, "field must be 'email' or 'phone'")
@@ -319,7 +319,7 @@ def _consume_pending_normal_registration(
     txn_id: str,
     email_code: str | None = None,
     phone_code: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     from app.modules.auth.models import PendingRegistration
     from app.modules.auth.service_verify import consume_email_code, consume_phone_code
 
@@ -387,7 +387,7 @@ def _consume_pending_normal_registration(
     log_audit(db, user.id, "register_normal", "password registration complete")
     return _create_auth_response(db, user)
 
-def _check_admin_totp_required(db: Session, user: User) -> dict | None:
+def _check_admin_totp_required(db: Session, user: User) -> dict[str, Any] | None:
     """如果用户是管理员但尚未设置 TOTP，返回 setup 响应；否则返回 None。"""
     if str(user.account_level) != "admin":
         return None
@@ -406,7 +406,7 @@ def _check_admin_totp_required(db: Session, user: User) -> dict | None:
     }
 
 
-def _finalize_auth_response(db: Session, user: User) -> dict:
+def _finalize_auth_response(db: Session, user: User) -> dict[str, Any]:
     """检查管理员 TOTP 和 2FA 要求，返回认证响应。"""
     admin_setup = _check_admin_totp_required(db, user)
     if admin_setup is not None:
@@ -421,7 +421,7 @@ def _finalize_auth_response(db: Session, user: User) -> dict:
     return _create_auth_response(db, user, requires_2fa=requires_2fa)  # type: ignore[arg-type]
 
 
-def login_password(db: Session, info: UserLoginPassword, ip_address: str = "") -> dict:
+def login_password(db: Session, info: UserLoginPassword, ip_address: str = "") -> dict[str, Any]:
     """通过用户名、邮箱或手机号 + 密码进行认证。"""
     from app.core.throttle import check_password_login_rate_limit
     if ip_address:
@@ -477,7 +477,7 @@ def login_password(db: Session, info: UserLoginPassword, ip_address: str = "") -
     return _finalize_auth_response(db, user) # type: ignore[arg-type]
 
 
-def login_code(db: Session, contact: str, code: str) -> dict:
+def login_code(db: Session, contact: str, code: str) -> dict[str, Any]:
     """使用有时效性的验证码进行认证。"""
     from app.modules.auth.service_verify import consume_email_code, consume_phone_code
 
@@ -548,7 +548,7 @@ def verify_magic_link(
     db: Session,
     token: str,
     purpose: str = "login",
-) -> dict:
+) -> dict[str, Any]:
     """
     验证魔法链接令牌并返回认证响应。
     可能抛出的异常：
@@ -624,7 +624,7 @@ def upgrade_to_normal(db: Session, user: User) -> None:
         log_audit(db, user.id, "level_change", "local -> normal")
 
 
-def refresh_access_token(db: Session, raw_refresh: str) -> dict:
+def refresh_access_token(db: Session, raw_refresh: str) -> dict[str, Any]:
     tok_hash = _hash_refresh_token(raw_refresh)
     now = now_iso()
 

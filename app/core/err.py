@@ -1,8 +1,10 @@
 import inspect
 import functools
 from enum import IntEnum
+from typing import Any, Callable, Coroutine, ParamSpec, cast
 
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 
 class ErrCode(IntEnum):
@@ -98,10 +100,10 @@ def map_err(exc: Exception) -> tuple[int, ErrCode, str]:
         return status, exc.errcode, exc.detail
 
     if isinstance(exc, RequestValidationError):
-        msgs = []
+        msgs: list[str] = []
         for err in exc.errors():
-            field = ".".join(str(loc) for loc in err["loc"] if loc != "body")
-            msgs.append(f"{field}: {err['msg']}")
+            field = ".".join(str(loc) for loc in err.get("loc", []) if loc != "body")
+            msgs.append(f"{field}: {err.get('msg', '')}")
         detail = "; ".join(msgs)
         status, _ = ERRTABLE[ErrCode.INVALID_INPUT]
         return status, ErrCode.INVALID_INPUT, detail
@@ -110,9 +112,16 @@ def map_err(exc: Exception) -> tuple[int, ErrCode, str]:
     return status, ErrCode.INTERNAL_ERROR, msg
 
 
-def resp_json(errcode: ErrCode, *, data=None, detail=None):
+P = ParamSpec("P")
+
+
+def resp_json(
+    errcode: ErrCode,
+    *,
+    data: Any = None,
+    detail: str | None = None,
+) -> JSONResponse:
     status, msg = ERRTABLE[errcode]
-    from fastapi.responses import JSONResponse
 
     from app.modules.common import ApiResp
 
@@ -122,28 +131,31 @@ def resp_json(errcode: ErrCode, *, data=None, detail=None):
     )
 
 
-def respond(func):
+def respond(
+    func: Callable[P, Any],
+) -> Callable[P, Coroutine[Any, Any, JSONResponse]] | Callable[P, JSONResponse]:
     """装饰器：将返回值通过 ERRTABLE 包装。 """
 
     if inspect.iscoroutinefunction(func):
         @functools.wraps(func)
-        async def async_wrapper(*args, **kwargs):
+        async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> JSONResponse:
             result = await func(*args, **kwargs)
             return _wrap_result(result)
 
         return async_wrapper
 
     @functools.wraps(func)
-    def sync_wrapper(*args, **kwargs):
+    def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> JSONResponse:
         result = func(*args, **kwargs)
         return _wrap_result(result)
 
     return sync_wrapper
 
 
-def _wrap_result(result):
-    if isinstance(result, tuple) and isinstance(result[0], ErrCode):
-        errcode, payload = result
+def _wrap_result(result: Any) -> JSONResponse:
+    if isinstance(result, tuple) and len(cast(Any, result)) >= 2 and isinstance(result[0], ErrCode):
+        errcode = cast(ErrCode, result[0])
+        payload = cast(Any, result[1])
         if isinstance(payload, str):
             return resp_json(errcode, detail=payload)
         return resp_json(errcode, data=payload)

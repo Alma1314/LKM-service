@@ -1,5 +1,7 @@
 """密码恢复服务。"""
 
+from typing import Any, cast
+
 from sqlalchemy.orm import Session
 
 from app.core.err import BizError, ErrCode
@@ -11,7 +13,6 @@ from app.modules.auth.service_auth import (
     BackgroundTasksLike,
     log_audit,
     revoke_all_refresh_tokens,
-    verify_magic_link,
 )
 from app.modules.auth.service_verify import (
     consume_email_code,
@@ -60,12 +61,12 @@ def _reset_password(db: Session, user: User, new_password: str) -> None:
 
     log_audit(db, user.id, "password_reset", detail="recovery")
 
-def check_recovery_methods(_db: Session, _account: str) -> dict:
+def check_recovery_methods(_db: Session, _account: str) -> dict[str, Any]:
     """检查账户可用的恢复方法。 """
     # 始终统一 —— 不泄露账户是否存在、是否为 local 或 admin
     return {"recoverable": False}
 
-def recover_by_phone(db: Session, phone: str, code: str, new_password: str | None = None) -> dict:
+def recover_by_phone(db: Session, phone: str, code: str, new_password: str | None = None) -> dict[str, Any]:
     """第 1 步：验证手机联系方式以进行密码恢复。 """
     consume_phone_code(db, phone, code, "reset")
     user = _find_user_by_contact(db, "phone", phone)
@@ -79,7 +80,7 @@ def recover_by_phone(db: Session, phone: str, code: str, new_password: str | Non
     return {"message": "Password reset successful"}
 
 
-def recover_by_email_code(db: Session, email: str, code: str, new_password: str | None = None) -> dict:
+def recover_by_email_code(db: Session, email: str, code: str, new_password: str | None = None) -> dict[str, Any]:
     """第 1 步：验证邮箱联系方式以进行密码恢复。 """
     consume_email_code(db, email, code, "reset")
     user = _find_user_by_contact(db, "email", email)
@@ -93,9 +94,11 @@ def recover_by_email_code(db: Session, email: str, code: str, new_password: str 
     return {"message": "Password reset successful"}
 
 
-def recover_by_magic_link(db: Session, token: str, new_password: str | None = None) -> dict:
+def recover_by_magic_link(db: Session, token: str, new_password: str | None = None) -> dict[str, Any]:
     """第 1 步：验证密码恢复的魔法链接。"""
-    verify_magic_link(db, token, purpose="reset")
+    from app.modules.auth import service_auth as _service_auth
+
+    cast(Any, _service_auth.verify_magic_link)(db, token, purpose="reset")
 
     import hashlib
 
@@ -126,7 +129,7 @@ def recover_by_magic_link(db: Session, token: str, new_password: str | None = No
     return {"message": "Password reset successful"}
 
 
-def _start_user_recovery_txn(db: Session, user: User) -> dict:
+def _start_user_recovery_txn(db: Session, user: User) -> dict[str, Any]:
     """为启用了 MFA 的用户创建恢复事务，并返回requires_2fa 详情，以便调用方在重置前完成 2FA。"""
     txn_id = _generate_recovery_txn_id()
     expiry = expires_at(minutes=15)
@@ -164,7 +167,7 @@ def _generate_recovery_txn_id() -> str:
 def recover_admin_begin(
     db: Session, contact: str,
     background_tasks: BackgroundTasksLike | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """第 1 步：启动管理员恢复。服务层负责生成验证码并通过 background_tasks 发送。"""
 
     from app.modules.auth.deps import get_email_provider, get_sms_provider
@@ -200,12 +203,12 @@ def recover_admin_begin(
             check_code_rate_limit(f"recover:admin:{contact}", max_count=3, window=3600)
             code, _ = create_email_verification(db, contact, "reset")
             if background_tasks is not None:
-                background_tasks.add_task(get_email_provider().send_code, contact, code)
+                cast(Any, background_tasks).add_task(get_email_provider().send_code, contact, code)
         else:
             check_code_rate_limit(f"recover:admin:{contact}", max_count=3, window=3600)
             code, _ = create_phone_verification(db, contact, "reset")
             if background_tasks is not None:
-                background_tasks.add_task(get_sms_provider().send_code, contact, code)
+                cast(Any, background_tasks).add_task(get_sms_provider().send_code, contact, code)
 
         return {
             "message": "If the account is eligible, recovery instructions have been sent.",
@@ -233,7 +236,7 @@ def _get_recovery_txn(db: Session, txn_id: str):
     return txn
 
 
-def recover_admin_verify_contact(db: Session, txn_id: str, code: str) -> dict:
+def recover_admin_verify_contact(db: Session, txn_id: str, code: str) -> dict[str, Any]:
     """第 2 步：在恢复事务中验证管理员的邮箱/手机验证码。"""
     txn = _get_recovery_txn(db, txn_id)
 
@@ -255,9 +258,9 @@ def recover_admin_verify_contact(db: Session, txn_id: str, code: str) -> dict:
     }
 
 
-def recover_admin_verify_totp(db: Session, txn_id: str, temp_token: str) -> dict:
+def recover_admin_verify_totp(db: Session, txn_id: str, temp_token: str) -> dict[str, Any]:
     """第 3 步：确认管理员已通过此恢复事务的 2FA 验证。"""
-    from app.modules.auth.security import decode_temp_token
+    from app.modules.auth import security as _security
     from app.modules.auth.models import TempTokenUsage
     import hashlib
 
@@ -267,11 +270,11 @@ def recover_admin_verify_totp(db: Session, txn_id: str, temp_token: str) -> dict
         raise BizError(ErrCode.RECOVERY_METHOD_UNAVAILABLE, "Contact verification required first")
 
     try:
-        payload = decode_temp_token(temp_token)
+        payload = cast(dict[str, Any], cast(Any, _security.decode_temp_token)(temp_token))
     except Exception as exc:
         raise BizError(ErrCode.TOKEN_INVALID, "Invalid 2FA temp token") from exc
 
-    user_id = payload.get("user_id", payload.get("sub"))
+    user_id: Any = payload.get("user_id", payload.get("sub"))
     if user_id != txn.user_id:
         raise BizError(ErrCode.TOKEN_INVALID, "Token user does not match recovery transaction user")
 
@@ -332,7 +335,7 @@ def _consume_recovery_txn(db: Session, txn_id: str) -> User:
 
 def recover_user_complete(
     db: Session, txn_id: str, new_password: str
-) -> dict:
+) -> dict[str, Any]:
     """在 2FA 之后完成用户（非管理员）的恢复事务。"""
     user = _consume_recovery_txn(db, txn_id)
 
@@ -349,7 +352,7 @@ def recover_user_complete(
 
 def recover_admin_complete(
     db: Session, txn_id: str, new_password: str
-) -> dict:
+) -> dict[str, Any]:
     """第 4 步：使用新密码原子地完成管理员恢复。使用条件 UPDATE 确保只有一个调用方会成功。"""
     user = _consume_recovery_txn(db, txn_id)
 

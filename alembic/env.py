@@ -28,8 +28,8 @@ config.set_main_option("sqlalchemy.url", settings.database_url)
 
 # Import all models so metadata is fully populated for autogenerate
 from app.db.models import Base  # noqa: E402
-import app.modules.auth.models  # noqa: E402, F401
-import app.modules.columns.models  # noqa: E402, F401
+import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
+import app.modules.columns.models  # pyright: ignore[reportUnusedImport]
 
 target_metadata = Base.metadata
 

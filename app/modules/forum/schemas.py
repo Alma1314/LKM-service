@@ -1,5 +1,5 @@
 import json
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -34,9 +34,9 @@ class PostInfo(BaseModel):
 
     @field_validator("tags", mode="before")
     @classmethod
-    def _parse_tags(cls, v):
+    def _parse_tags(cls, v: Any) -> list[Any]:
         if isinstance(v, list):
-            return v
+            return cast(list[Any], v)
         try:
             return json.loads(v)
         except (json.JSONDecodeError, TypeError):

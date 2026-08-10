@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from typing import Any
 
 from app.core.err import BizError, ErrCode
 from app.db.models import BlogComment, BlogSeries, BlogStar, Profile, now_iso
@@ -89,7 +90,7 @@ def list_series(
     db: Session, current_user_id: int | None = None
 ) -> list[BlogSeriesInfo]:
     items = db.query(BlogSeries).order_by(BlogSeries.id.desc()).all()
-    result = []
+    result: list[BlogSeriesInfo] = []
     for s in items:
         sc = _star_count(db, s.id)
         starred = _is_starred(db, s.id, current_user_id) if current_user_id else False
@@ -109,7 +110,7 @@ def get_series(
         _is_starred(db, series_id, current_user_id) if current_user_id else False
     )
 
-    file_tree = None
+    file_tree: list[dict[str, Any]] | None = None
     if git_svc.ensure_repo_has_commits(series.repo_name):
         file_tree = git_svc.get_file_tree(series.repo_name)
 
@@ -252,7 +253,7 @@ def delete_comment(db: Session, series_id: int, comment_id: int, user_id: int) -
 # ---- files ----
 
 
-def get_file_content(db: Session, series_id: int, filepath: str) -> dict:
+def get_file_content(db: Session, series_id: int, filepath: str) -> dict[str, Any]:
     series = get_or_raise(
         db, BlogSeries, ErrCode.BLOG_SERIES_NOT_FOUND, BlogSeries.id == series_id,
     )

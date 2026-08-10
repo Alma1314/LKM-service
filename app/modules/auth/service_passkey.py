@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import struct
+from typing import Any
 
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
@@ -97,7 +98,7 @@ async def cleanup_expired_challenges() -> None:
             _log.exception("cleanup_expired_challenges: unexpected error outside DB session")
 
 
-def _parse_client_data(client_data_json_b64: str) -> dict:
+def _parse_client_data(client_data_json_b64: str) -> dict[str, Any]:
     """将 clientDataJSON 解码并解析为 UTF-8 JSON。出现任何错误时抛出 PASSKEY_VERIFICATION_FAILED。"""
     try:
         raw = _b64decode(client_data_json_b64)
@@ -106,7 +107,7 @@ def _parse_client_data(client_data_json_b64: str) -> dict:
         raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Invalid clientDataJSON") from exc
 
 
-def _parse_authenticator_data(auth_data: bytes) -> dict:
+def _parse_authenticator_data(auth_data: bytes) -> dict[str, Any]:
     """按 WebAuthn 规范 §6.1 解析 authenticatorData。"""
     if len(auth_data) < 37:
         raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Authenticator data too short")
@@ -116,7 +117,7 @@ def _parse_authenticator_data(auth_data: bytes) -> dict:
     sign_count = struct.unpack(">I", auth_data[33:37])[0]
 
     pos = 37
-    attested_credential_data = None
+    attested_credential_data: dict[str, Any] | None = None
     if flags & 0x40:  # AT 标志位
         if len(auth_data) < pos + 18:
             raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED)
@@ -133,7 +134,7 @@ def _parse_authenticator_data(auth_data: bytes) -> dict:
             "aaguid": aaguid,
             "credential_id": credential_id,
             "cose_key": cose_key,
-        }
+        }  # type: ignore[assignment]
 
     return {
         "rp_id_hash": rp_id_hash,
@@ -143,21 +144,21 @@ def _parse_authenticator_data(auth_data: bytes) -> dict:
     }
 
 
-def _parse_cose_key(data: bytes) -> tuple[dict, int]:
+def _parse_cose_key(data: bytes) -> tuple[dict[str, Any], int]:
     """解析 CBOR 编码的 COSE_Key 结构。"""
     import cbor2
 
     cose = cbor2.loads(data)
-    key_type = cose.get(1)   # kty（密钥类型）
-    alg = cose.get(3)         # alg（算法）
+    key_type: Any = cose.get(1)   # kty（密钥类型）
+    alg: Any = cose.get(3)         # alg（算法）
     consumed = len(cbor2.dumps(cose))
 
     if key_type != 2:  # EC2（椭圆曲线）
         raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, f"Unsupported COSE key type: {key_type}")
 
-    x_bytes = cose.get(-2)  # x 坐标
-    y_bytes = cose.get(-3)  # y 坐标
-    crv = cose.get(-1)       # 曲线（必须为 1 = P-256）
+    x_bytes: Any = cose.get(-2)  # x 坐标
+    y_bytes: Any = cose.get(-3)  # y 坐标
+    crv: Any = cose.get(-1)       # 曲线（必须为 1 = P-256）
 
     if crv != 1:
         raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, f"Unsupported EC curve: {crv}")
@@ -168,25 +169,25 @@ def _parse_cose_key(data: bytes) -> tuple[dict, int]:
     return {"kty": key_type, "alg": alg, "crv": crv, "x": x_bytes, "y": y_bytes}, consumed
 
 
-def _verify_origin(expected_origin: str, client_data: dict) -> None:
-    origin = client_data.get("origin", "")
+def _verify_origin(expected_origin: str, client_data: dict[str, Any]) -> None:
+    origin: Any = client_data.get("origin", "")
     if origin != expected_origin:
         raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Origin mismatch")
 
 
-def _verify_challenge(expected_challenge: str, client_data: dict) -> None:
-    challenge = client_data.get("challenge", "")
+def _verify_challenge(expected_challenge: str, client_data: dict[str, Any]) -> None:
+    challenge: Any = client_data.get("challenge", "")
     if challenge != expected_challenge:
         raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Challenge mismatch")
 
 
-def _verify_rp_id_hash(auth_data: dict) -> None:
+def _verify_rp_id_hash(auth_data: dict[str, Any]) -> None:
     expected_hash = hashlib.sha256(settings.rp_id.encode()).digest()
     if auth_data["rp_id_hash"] != expected_hash:
         raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "RP ID hash mismatch")
 
 
-def _verify_user_presence(auth_data: dict) -> None:
+def _verify_user_presence(auth_data: dict[str, Any]) -> None:
     if not (auth_data["flags"] & 0x01):  # UP 标志位（用户在场）
         raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "User presence not verified")
 
@@ -237,7 +238,7 @@ def _signature_to_der(raw_sig: bytes) -> bytes:
     inner = r_der + s_der
     return b"\x30" + bytes([len(inner)]) + inner
 
-def begin_passkey_registration(db: Session, user_id: int) -> dict:
+def begin_passkey_registration(db: Session, user_id: int) -> dict[str, Any]:
     user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == user_id)
 
     challenge_id, challenge = _store_challenge(db)
@@ -277,11 +278,11 @@ def begin_passkey_registration(db: Session, user_id: int) -> dict:
         },
     }
 
-def _prep_passkey_credential(db: Session, credential: dict, err: ErrCode) -> tuple[str, str, dict, str, dict]:
+def _prep_passkey_credential(db: Session, credential: dict[str, Any], err: ErrCode) -> tuple[str, str, dict[str, Any], str, dict[str, Any]]:
     """从 credential dict 提取并校验基础字段，消费 challenge。返回 (raw_id, challenge, response, client_data_json, client_data)。"""
     raw_id: str = credential.get("rawId")  # type: ignore[assignment]
     challenge_id: str | None = credential.get("challenge_id")
-    response: dict = credential.get("response", {})  # type: ignore[assignment]
+    response: dict[str, Any] = credential.get("response", {})  # type: ignore[assignment]
 
     if not raw_id or not challenge_id:
         raise BizError(err, "rawId and challenge_id required")
@@ -299,13 +300,13 @@ def _prep_passkey_credential(db: Session, credential: dict, err: ErrCode) -> tup
 
 
 def complete_passkey_registration(
-    db: Session, user_id: int, credential: dict
-) -> dict:
+    db: Session, user_id: int, credential: dict[str, Any]
+) -> dict[str, Any]:
     raw_id, _challenge, response, client_data_json_b64, _client_data = _prep_passkey_credential(
         db, credential, ErrCode.PASSKEY_REGISTRATION_FAILED
     )
 
-    attestation_object_b64 = response.get("attestationObject")
+    attestation_object_b64: Any = response.get("attestationObject")
 
     if not client_data_json_b64 or not attestation_object_b64:
         raise BizError(ErrCode.PASSKEY_REGISTRATION_FAILED, "clientDataJSON and attestationObject required")
@@ -324,7 +325,7 @@ def complete_passkey_registration(
     _verify_rp_id_hash(auth_data)
     _verify_user_presence(auth_data)
 
-    ata: dict = auth_data.get("attested_credential_data")  # type: ignore[assignment]
+    ata: dict[str, Any] = auth_data.get("attested_credential_data")  # type: ignore[assignment]
     if not ata:
         raise BizError(ErrCode.PASSKEY_REGISTRATION_FAILED, "No attested credential data")
 
@@ -372,7 +373,7 @@ def complete_passkey_registration(
         db.flush()
     return {"message": "Passkey registered successfully", "device_name": device_name}
 
-def begin_passkey_login(db: Session) -> dict:
+def begin_passkey_login(db: Session) -> dict[str, Any]:
     challenge_id, challenge = _store_challenge(db)
     return {
         "challenge_id": challenge_id,
@@ -384,13 +385,13 @@ def begin_passkey_login(db: Session) -> dict:
         },
     }
 
-def complete_passkey_login(db: Session, credential: dict) -> dict:
+def complete_passkey_login(db: Session, credential: dict[str, Any]) -> dict[str, Any]:
     raw_id, _challenge, response, client_data_json_b64, _client_data = _prep_passkey_credential(
         db, credential, ErrCode.PASSKEY_VERIFICATION_FAILED
     )
 
-    authenticator_data_b64 = response.get("authenticatorData")
-    signature_b64 = response.get("signature")
+    authenticator_data_b64: Any = response.get("authenticatorData")
+    signature_b64: Any = response.get("signature")
 
     if not authenticator_data_b64 or not signature_b64:
         raise BizError(
@@ -430,10 +431,11 @@ def complete_passkey_login(db: Session, credential: dict) -> dict:
     if user.account_level == "local":
         raise BizError(ErrCode.ACCOUNT_LEVEL_INSUFFICIENT)
 
-    from app.modules.auth.service_auth import _finalize_auth_response
-    return _finalize_auth_response(db, user) # type: ignore[union-attr]
-
-def list_credentials(db: Session, user_id: int) -> list[dict]:
+    from typing import cast
+    from app.modules.auth import service_auth
+    finalize: Any = cast(Any, service_auth._finalize_auth_response)  # type: ignore[reportUnknownMemberType]
+    return finalize(db, user)  # type: ignore[union-attr]
+def list_credentials(db: Session, user_id: int) -> list[dict[str, Any]]:
     creds = db.query(PasskeyCredential).filter(
         PasskeyCredential.user_id == user_id
     ).all()
@@ -447,7 +449,7 @@ def list_credentials(db: Session, user_id: int) -> list[dict]:
         for c in creds
     ]
 
-def delete_credential(db: Session, user_id: int, credential_id: int) -> dict:
+def delete_credential(db: Session, user_id: int, credential_id: int) -> dict[str, Any]:
     cred = get_or_raise(
         db, PasskeyCredential, ErrCode.PASSKEY_VERIFICATION_FAILED,
         PasskeyCredential.id == credential_id,

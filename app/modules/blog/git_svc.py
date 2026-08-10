@@ -1,9 +1,13 @@
 import os
 import subprocess
 import shutil
+from typing import Any
 
 from app.core.config import settings
 from app.core.err import BizError, ErrCode
+
+# 文件树节点：值为嵌套子树，或哨兵字符串 "__BLOB__"（表示文件）。
+TreeNode = dict[str, "TreeNode | str"]
 
 
 def _repo_path(repo_name: str) -> str:
@@ -67,16 +71,16 @@ def ensure_repo_has_commits(repo_name: str) -> bool:
         return False
 
 
-def get_file_tree(repo_name: str) -> list[dict]:
+def get_file_tree(repo_name: str) -> list[dict[str, Any]]:
     out = _run_git(repo_name, "ls-tree", "-r", "--name-only", "HEAD")
     lines = [l.strip() for l in out.splitlines() if l.strip()]
     if not lines:
         return []
 
-    root: dict[str, dict | str] = {}
+    root: TreeNode = {}
     for line in lines:
         parts = line.split("/")
-        cur = root
+        cur: TreeNode = root
         for i, part in enumerate(parts):
             if i == len(parts) - 1:
                 cur[part] = "__BLOB__"
@@ -87,12 +91,13 @@ def get_file_tree(repo_name: str) -> list[dict]:
                 if child == "__BLOB__":
                     cur[part] = {"__self__": "__BLOB__"}
                     child = cur[part]
-                cur = child
+                if isinstance(child, dict):
+                    cur = child
 
-    def _to_list(node: dict | str) -> list[dict]:
-        if node == "__BLOB__":
+    def _to_list(node: TreeNode | str) -> list[dict[str, Any]]:
+        if not isinstance(node, dict):
             return []
-        result = []
+        result: list[dict[str, Any]] = []
         for name, val in sorted(node.items()):
             if name == "__self__":
                 continue

@@ -4,8 +4,10 @@ import datetime
 import hashlib
 import hmac
 import secrets
+from typing import Any, cast
 
 from sqlalchemy import update as sa_update
+from sqlalchemy.orm import Session
 
 from app.core.err import BizError, ErrCode
 from app.core.throttle import RateLimiter
@@ -31,7 +33,11 @@ def hash_code(raw: str, purpose: str = "", contact: str = "", nonce: str = "") -
     return hmac.new(pepper, msg, hashlib.sha256).hexdigest()
 
 def _create_verification(
-    db, model, contact_attr: str, contact: str, purpose: str
+    db: Session,
+    model: type[Any],
+    contact_attr: str,
+    contact: str,
+    purpose: str,
 ) -> tuple[str, int]:
     """创建一条验证码记录并返回 (明文验证码, 记录ID)。"""
     code = generate_code()
@@ -49,7 +55,13 @@ def _create_verification(
     return code, record.id
 
 
-def _latest_verification(db, model, contact_attr: str, contact: str, purpose: str):
+def _latest_verification(
+    db: Session,
+    model: type[Any],
+    contact_attr: str,
+    contact: str,
+    purpose: str,
+) -> Any:
     """取该联系方式未使用的最新一条验证码记录。"""
     return (
         db.query(model)
@@ -64,20 +76,20 @@ def _latest_verification(db, model, contact_attr: str, contact: str, purpose: st
 
 
 def create_email_verification(
-    db, email: str, purpose: str
+    db: Session, email: str, purpose: str
 ) -> tuple[str, int]:
     """创建一个 EmailVerification 记录并返回 (明文验证码, 记录ID)。"""
     return _create_verification(db, EmailVerification, "email", email, purpose)
 
 
 def create_phone_verification(
-    db, phone: str, purpose: str
+    db: Session, phone: str, purpose: str
 ) -> tuple[str, int]:
     """创建一个 PhoneVerification 记录并返回 (明文验证码, 记录ID)。"""
     return _create_verification(db, PhoneVerification, "phone", phone, purpose)
 
 def consume_email_code(
-    db, email: str, code: str, purpose: str
+    db: Session, email: str, code: str, purpose: str
 ) -> bool:
     """验证并消费最新匹配的 EmailVerification。"""
     record = _latest_verification(db, EmailVerification, "email", email, purpose)
@@ -85,14 +97,14 @@ def consume_email_code(
 
 
 def consume_phone_code(
-    db, phone: str, code: str, purpose: str
+    db: Session, phone: str, code: str, purpose: str
 ) -> bool:
     """验证并消费最新匹配的 PhoneVerification。"""
     record = _latest_verification(db, PhoneVerification, "phone", phone, purpose)
     return _consume(db, record, code)
 
 
-def _consume(db, record, code: str) -> bool:
+def _consume(db: Session, record: Any, code: str) -> bool:
     if record is None:
         raise BizError(ErrCode.VERIFICATION_CODE_INVALID)
 
@@ -109,7 +121,7 @@ def _consume(db, record, code: str) -> bool:
     # 验证码不匹配 —— 通过子事务（保存点）递增计数器，
     contact = getattr(record, "email", None) or getattr(record, "phone", "")
     if not hmac.compare_digest(record.code_hash, hash_code(code, record.purpose, contact=contact, nonce=record.nonce)):
-        record_cls = type(record)
+        record_cls = cast(type[Any], type(record))
         isolated_update(
             db,
             sa_update(record_cls)
@@ -119,7 +131,7 @@ def _consume(db, record, code: str) -> bool:
         db.refresh(record)
         raise BizError(ErrCode.VERIFICATION_CODE_INVALID)
 
-    record_cls = type(record)
+    record_cls = cast(type[Any], type(record))
     if not consume_once(
         db,
         record_cls,

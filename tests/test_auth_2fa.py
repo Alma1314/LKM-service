@@ -335,3 +335,36 @@ class TestDisable2FA:
         with pytest.raises(BizError) as exc:
             _svc().disable_2fa(db, user.id, "000000")
         assert exc.value.errcode == ErrCode.TOTP_CODE_INVALID
+
+
+class TestGet2FAStatus:
+    """GET /auth/2fa/status — 查询 2FA 是否已开启。"""
+
+    def _unwrap(self, response):
+        import json
+        return json.loads(response.body.decode())
+
+    def should_return_false_when_not_enabled(self, db):
+        user = _create_user(db, username="statusoff")
+        from app.modules.auth.router_2fa import get_2fa_status
+
+        class FakeCurrentUser:
+            id = user.id
+            account_level = "normal"
+            role = "member"
+
+        data = self._unwrap(get_2fa_status(cur=FakeCurrentUser(), db=db))
+        assert data["data"] == {"enabled": False}
+
+    def should_return_true_when_enabled(self, db):
+        user = _create_user(db, username="statuson")
+        _enable_totp_for_user(db, user.id)
+        from app.modules.auth.router_2fa import get_2fa_status
+
+        class FakeCurrentUser:
+            id = user.id
+            account_level = "normal"
+            role = "member"
+
+        data = self._unwrap(get_2fa_status(cur=FakeCurrentUser(), db=db))
+        assert data["data"] == {"enabled": True}

@@ -22,6 +22,8 @@ class CurrentUser(BaseModel):
     id: int
     account_level: str
     role: str
+    email: str | None = None
+    phone: str | None = None
 
 
 def _parse_bearer(authorization: str | None = Header(None, alias="Authorization")) -> str:
@@ -81,6 +83,8 @@ def _resolve_current_user(token: str, db: Session) -> CurrentUser:
         id=int(user.id), # type: ignore[arg-type]
         account_level=str(user.account_level),
         role=role,
+        email=user.email,
+        phone=user.phone,
     )
 
 

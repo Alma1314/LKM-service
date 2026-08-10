@@ -1,4 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import Any
 
 from app.modules.auth.schemas import ProfileInfo
 from app.modules.blog.models import BlogSeriesStatus
@@ -64,7 +65,7 @@ class BlogSeriesDetail(BaseModel):
     updated_at: str
     star_count: int = 0
     is_starred: bool = False
-    file_tree: list[dict] | None = None
+    file_tree: list[dict[str, Any]] | None = None
 
 
 class BlogCommentInfo(BaseModel):
@@ -82,7 +83,7 @@ class BlogCommentInfo(BaseModel):
 
     @field_validator("replies", mode="before")
     @classmethod
-    def _ignore_orm_replies(cls, v):
+    def _ignore_orm_replies(cls, v: Any) -> list[Any]:
         # 树由 service 手动拼装，忽略 ORM 的 replies 关联
         return []
 

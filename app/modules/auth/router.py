@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.orm import Session
 
@@ -33,7 +35,6 @@ from app.modules.auth.service import get_profile, update_profile
 from app.modules.auth.service_auth import (
     _consume_pending_normal_registration,
     _store_pending_normal_registration,
-    login_password,
 )
 from app.modules.auth.service_verify import (
     check_code_rate_limit,
@@ -83,7 +84,7 @@ def register_normal_with_password_route(
     info: UserRegNormal,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_session),
-):
+) -> dict[str, Any]:
     """发起普通注册 """
     if not info.email and not info.phone:
         raise BizError(
@@ -96,7 +97,7 @@ def register_normal_with_password_route(
         db, info.username, info.password, info.email, info.phone
     )
 
-    result: dict = {
+    result: dict[str, Any] = {
         "message": "Verification code(s) sent",
         "txn_id": txn_id,
         "email_sent": False,

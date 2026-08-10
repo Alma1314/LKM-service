@@ -1,16 +1,19 @@
+from collections.abc import Generator
+from typing import Any
+
 from sqlalchemy import Engine, create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
 
 _engine: Engine | None = None
-_SessionLocal: sessionmaker | None = None
+_SessionLocal: sessionmaker[Session] | None = None
 
 
 def get_engine() -> Engine | None:
     global _engine
     if _engine is None:
-        connect_args: dict = {}
+        connect_args: dict[str, object] = {}
         if settings.db_driver == "sqlite":
             connect_args["check_same_thread"] = False
         _engine = create_engine(
@@ -19,10 +22,10 @@ def get_engine() -> Engine | None:
             connect_args=connect_args,
         )
         # 启用 SQLite 外键支持（必须按连接设置）
-        from sqlalchemy import event, text as sa_text
+        from sqlalchemy import event
 
         @event.listens_for(_engine, "connect")
-        def _set_sqlite_pragma(dbapi_connection, connection_record):
+        def _set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
             if settings.db_driver == "sqlite":
                 cursor = dbapi_connection.cursor()
                 cursor.execute("PRAGMA foreign_keys = ON")
@@ -30,7 +33,7 @@ def get_engine() -> Engine | None:
     return _engine
 
 
-def _get_session_local() -> sessionmaker | None:
+def _get_session_local() -> sessionmaker[Session] | None:
     global _SessionLocal
     if _SessionLocal is None:
         _SessionLocal = sessionmaker(
@@ -41,7 +44,7 @@ def _get_session_local() -> sessionmaker | None:
     return _SessionLocal
 
 
-def get_session():
+def get_session() -> Generator[Session, None, None]:
     factory = _get_session_local()
     assert factory is not None
     db = factory()
@@ -61,7 +64,7 @@ def get_session():
         db.close()
 
 
-def new_session():
+def new_session() -> Session:
     """创建独立会话，与主会话共享同一引擎（数据库连接池）但使用独立事务。"""
     factory = _get_session_local()
     assert factory is not None

@@ -233,6 +233,7 @@ class OAuthState(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     state: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     purpose: Mapped[str] = mapped_column(String(20), nullable=False)  # "login" or "bind"
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 仅 bind 场景：发起绑定的用户
     consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     expires_at: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)

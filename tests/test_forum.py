@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-import app.modules.auth.models  # noqa: F401 ensure auth tables registered
+import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
 from app.core.err import BizError, ErrCode
 from app.db.models import Base, Profile, User
 from app.db.session import get_session

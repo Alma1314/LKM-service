@@ -1,10 +1,11 @@
 import json
 import re
+from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.core.err import BizError, ErrCode
-from app.db.models import ForumComment, ForumPost, User, now_iso
+from app.db.models import ForumComment, ForumPost, User
 from app.db.repo import get_or_raise
 from app.modules.forum.models import FORUM_TABLE_PLAN
 from app.modules.forum.schemas import CommentCreate, CommentInfo, PageData, PostCreate, PostInfo
@@ -39,7 +40,7 @@ def _author_map(db: Session, user_ids: list[int]) -> dict[int, str]:
     return {u.id: _author_name(u) for u in users}
 
 
-def get_forum_plan() -> dict:
+def get_forum_plan() -> dict[str, Any]:
     return {
         "status": "implemented_minimal",
         "tables": FORUM_TABLE_PLAN,

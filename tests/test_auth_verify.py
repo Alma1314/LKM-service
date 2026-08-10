@@ -20,7 +20,7 @@ from app.modules.auth.service_verify import (
 )
 
 # Import auth models so tables get registered
-import app.modules.auth.models  # noqa: F401
+import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
 
 
 @pytest.fixture

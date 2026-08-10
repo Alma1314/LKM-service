@@ -1,6 +1,6 @@
 import enum
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field
 
@@ -195,7 +195,7 @@ class PasskeyRegisterCompleteRequest(BaseModel):
     """WebAuthn 注册完成请求体。"""
     rawId: str
     challenge_id: str
-    response: dict = Field(default_factory=dict)
+    response: dict[str, Any] = Field(default_factory=dict)
     device_name: str | None = None
 
 
@@ -203,7 +203,7 @@ class PasskeyLoginCompleteRequest(BaseModel):
     """WebAuthn 登录完成请求体。"""
     rawId: str
     challenge_id: str
-    response: dict = Field(default_factory=dict)
+    response: dict[str, Any] = Field(default_factory=dict)
 
 
 class PasskeyRegisterCompleteResponse(BaseModel):
@@ -249,3 +249,24 @@ class TOTPVerifyResponse(BaseModel):
 
 class TOTPDisableResponse(BaseModel):
     message: str
+
+
+class TOTPStatusData(BaseModel):
+    """GET /auth/2fa/status —— 2FA 是否已开启。"""
+
+    enabled: bool
+
+
+class SettingsInfo(BaseModel):
+    """GET /auth/settings —— 当前绑定状态。"""
+
+    email: str | None = None
+    phone: str | None = None
+    github: str | None = None
+    has_2fa: bool = False
+
+
+class UnbindRequest(BaseModel):
+    """DELETE /auth/settings/{type} —— 解绑请求体；已开启 2FA 时 code 必填。"""
+
+    code: str | None = Field(default=None, min_length=6, max_length=6)

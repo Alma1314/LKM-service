@@ -1,6 +1,7 @@
 """双因素认证（TOTP）服务。"""
 
 import hashlib
+from typing import Any, cast
 
 import jwt
 from sqlalchemy.orm import Session
@@ -51,14 +52,14 @@ def _reset_totp_failures(db: Session, totp_record: TOTP | None) -> None:
         db.flush()
 
 
-def _decode_temp_token(raw_token: str) -> dict:
+def _decode_temp_token(raw_token: str) -> dict[str, Any]:
     """解码并验证临时令牌 JWT，但不消费它。"""
     try:
-        payload = jwt.decode(
+        payload = cast(dict[str, Any], jwt.decode(
             raw_token,
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
-        )
+        ))
         if payload.get("type") != "temp":
             raise ValueError("not a temp token")
     except Exception as exc:
@@ -67,7 +68,7 @@ def _decode_temp_token(raw_token: str) -> dict:
     return payload
 
 
-def _check_and_consume_temp_token(db: Session, raw_token: str, user_id: int, txn_id: str | None = None) -> dict:
+def _check_and_consume_temp_token(db: Session, raw_token: str, user_id: int, txn_id: str | None = None) -> dict[str, Any]:
     """在成功的第二因素验证后原子地消费临时令牌。"""
     from sqlalchemy.exc import IntegrityError
 
@@ -101,7 +102,7 @@ def _check_and_consume_temp_token(db: Session, raw_token: str, user_id: int, txn
     return payload
 
 
-def _create_auth_tokens(db: Session, user: User, trust_device: bool = False) -> dict:
+def _create_auth_tokens(db: Session, user: User, trust_device: bool = False) -> dict[str, Any]:
     """为给定用户发放访问令牌和刷新令牌。"""
     access_token, raw_refresh = _issue_session_tokens(
         db, user, trust_device=trust_device, mfa_verified=True,
@@ -113,7 +114,7 @@ def _create_auth_tokens(db: Session, user: User, trust_device: bool = False) -> 
         "account_level": user.account_level,
     }
 
-def setup_2fa_begin(db: Session, user_id: int) -> dict:
+def setup_2fa_begin(db: Session, user_id: int) -> dict[str, Any]:
     user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == user_id)
     if user.account_level == "local":
         raise BizError(ErrCode.ACCOUNT_LEVEL_INSUFFICIENT)
@@ -137,7 +138,7 @@ def setup_2fa_begin(db: Session, user_id: int) -> dict:
 
     return {"secret": secret, "qr_code_uri": get_totp_uri(secret, user.username, settings.app_name)} # type: ignore[arg-type]
 
-def setup_2fa_complete(db: Session, user_id: int, code: str) -> dict:
+def setup_2fa_complete(db: Session, user_id: int, code: str) -> dict[str, Any]:
     totp_record = db.query(TOTP).filter(TOTP.user_id == user_id).first()
     if not totp_record or totp_record.enabled:
         raise BizError(ErrCode.TOTP_NOT_ENABLED)
@@ -166,7 +167,7 @@ def setup_2fa_complete(db: Session, user_id: int, code: str) -> dict:
     return {"recovery_codes": plain_codes, "confirmed_saved_required": True}
 
 
-def confirm_recovery_codes_saved(db: Session, user_id: int) -> dict:
+def confirm_recovery_codes_saved(db: Session, user_id: int) -> dict[str, Any]:
     """标记用户已保存其恢复码。"""
     totp_record = db.query(TOTP).filter(TOTP.user_id == user_id).first()
     if not totp_record or not totp_record.enabled:
@@ -182,7 +183,7 @@ def verify_2fa(
     code: str | None = None,
     recovery_code: str | None = None,
     trust_device: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     # 仅解码 —— 不消费。消费在成功的第二因素验证*之后*进行，
     # 错误的TOTP/恢复码不会永久地消耗临时令牌或满足恢复检查。
     payload = _decode_temp_token(raw_token=temp_token)
@@ -263,7 +264,7 @@ def verify_2fa(
     result["trust_device"] = trust_device
     return result
 
-def disable_2fa(db: Session, user_id: int, code: str) -> dict:
+def disable_2fa(db: Session, user_id: int, code: str) -> dict[str, Any]:
     totp_record = db.query(TOTP).filter(TOTP.user_id == user_id).first()
     if not totp_record or not totp_record.enabled:
         raise BizError(ErrCode.TOTP_NOT_ENABLED)
@@ -297,3 +298,18 @@ def disable_2fa(db: Session, user_id: int, code: str) -> dict:
             log_audit(db, user_id, "level_change", "admin -> normal (2FA disabled)")
 
     return {"message": "2FA disabled"}
+
+
+def verify_user_totp(db: Session, user_id: int, code: str) -> None:
+    """校验已登录用户的 TOTP 码（不改状态、不消费，仅二次确认）。失败抛 TOTP_CODE_INVALID。"""
+    totp_record = db.query(TOTP).filter(TOTP.user_id == user_id, TOTP.enabled.is_(True)).first()
+    if not totp_record:
+        raise BizError(ErrCode.TOTP_NOT_ENABLED)
+
+    _check_totp_failed(totp_record)  # type: ignore[arg-type]
+
+    plain_secret = decrypt_secret(str(totp_record.secret))
+    if verify_totp(plain_secret, code) is None:
+        _record_totp_failure(db, totp_record)  # type: ignore[arg-type]
+        raise BizError(ErrCode.TOTP_CODE_INVALID)
+    _reset_totp_failures(db, totp_record)  # type: ignore[arg-type]
