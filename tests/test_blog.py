@@ -8,7 +8,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError, CommonErr
+from app.modules.blog.errors import BlogErr
 from app.db.models import Base
 from app.db.session import get_session
 from app.main import app
@@ -187,7 +188,7 @@ class TestBlogSeries:
         with pytest.raises(BizError) as exc:
             _series(db, repo_name="taken")
 
-        assert exc.value.errcode == ErrCode.INVALID_INPUT
+        assert exc.value.errcode == CommonErr.INVALID_INPUT
 
     def should_list_series(self, db, blog_dir):
         user_id = _user(db)
@@ -241,7 +242,7 @@ class TestBlogSeries:
         with pytest.raises(BizError) as exc:
             get_series(db, 999)
 
-        assert exc.value.errcode == ErrCode.BLOG_SERIES_NOT_FOUND
+        assert exc.value.errcode == BlogErr.SERIES_NOT_FOUND
 
     def should_update_series(self, db, blog_dir):
         user_id = _user(db)
@@ -264,7 +265,7 @@ class TestBlogSeries:
         with pytest.raises(BizError) as exc:
             update_series(db, series.id, other, BlogSeriesUpdate(title="Bad!"))
 
-        assert exc.value.errcode == ErrCode.FORBIDDEN
+        assert exc.value.errcode == CommonErr.FORBIDDEN
 
     def should_delete_series(self, db, blog_dir):
         user_id = _user(db)
@@ -274,7 +275,7 @@ class TestBlogSeries:
 
         with pytest.raises(BizError) as exc:
             get_series(db, series.id)
-        assert exc.value.errcode == ErrCode.BLOG_SERIES_NOT_FOUND
+        assert exc.value.errcode == BlogErr.SERIES_NOT_FOUND
         # repo physically removed
         assert not os.path.exists(os.path.join(blog_dir, "my-blog.git"))
 
@@ -286,7 +287,7 @@ class TestBlogSeries:
         with pytest.raises(BizError) as exc:
             delete_series(db, series.id, other)
 
-        assert exc.value.errcode == ErrCode.FORBIDDEN
+        assert exc.value.errcode == CommonErr.FORBIDDEN
 
 
 # ---- stars ----
@@ -308,7 +309,7 @@ class TestBlogStars:
     def should_reject_star_nonexistent_series(self, db):
         with pytest.raises(BizError) as exc:
             toggle_star(db, 999, 1)
-        assert exc.value.errcode == ErrCode.BLOG_SERIES_NOT_FOUND
+        assert exc.value.errcode == BlogErr.SERIES_NOT_FOUND
 
     def should_count_stars_correctly(self, db, blog_dir):
         user_id = _user(db)
@@ -365,7 +366,7 @@ class TestBlogComments:
     def should_reject_comment_nonexistent_series(self, db):
         with pytest.raises(BizError) as exc:
             create_comment(db, 999, 1, BlogCommentCreate(content="Bad"))
-        assert exc.value.errcode == ErrCode.BLOG_SERIES_NOT_FOUND
+        assert exc.value.errcode == BlogErr.SERIES_NOT_FOUND
 
     def should_reject_reply_to_nonexistent_parent(self, db, blog_dir):
         user_id = _user(db)
@@ -378,7 +379,7 @@ class TestBlogComments:
                 user_id,
                 BlogCommentCreate(content="Bad reply", parent_id=999),
             )
-        assert exc.value.errcode == ErrCode.INVALID_INPUT
+        assert exc.value.errcode == CommonErr.INVALID_INPUT
 
     def should_reject_reply_parent_in_different_series(self, db, blog_dir):
         user_id = _user(db)
@@ -394,7 +395,7 @@ class TestBlogComments:
                 user_id,
                 BlogCommentCreate(content="Reply from S2", parent_id=c1.id),
             )
-        assert exc.value.errcode == ErrCode.INVALID_INPUT
+        assert exc.value.errcode == CommonErr.INVALID_INPUT
 
     def should_delete_comment(self, db, blog_dir):
         user_id = _user(db)
@@ -423,7 +424,7 @@ class TestBlogComments:
 
         with pytest.raises(BizError) as exc:
             delete_comment(db, series.id, comment.id, other)
-        assert exc.value.errcode == ErrCode.FORBIDDEN
+        assert exc.value.errcode == CommonErr.FORBIDDEN
 
     def should_reject_delete_nonexistent_comment(self, db, blog_dir):
         user_id = _user(db)
@@ -431,7 +432,7 @@ class TestBlogComments:
 
         with pytest.raises(BizError) as exc:
             delete_comment(db, series.id, 999, user_id)
-        assert exc.value.errcode == ErrCode.BLOG_COMMENT_NOT_FOUND
+        assert exc.value.errcode == BlogErr.COMMENT_NOT_FOUND
 
     def should_show_comment_with_profile(self, db, blog_dir):
         user_id = _user(db)
@@ -460,7 +461,7 @@ class TestBlogFiles:
     def should_reject_file_nonexistent_series(self, db):
         with pytest.raises(BizError) as exc:
             get_file_content(db, 999, "README.md")
-        assert exc.value.errcode == ErrCode.BLOG_SERIES_NOT_FOUND
+        assert exc.value.errcode == BlogErr.SERIES_NOT_FOUND
 
     def should_reject_path_traversal(self, db, blog_dir):
         user_id = _user(db)
@@ -469,7 +470,7 @@ class TestBlogFiles:
 
         with pytest.raises(BizError) as exc:
             get_file_content(db, series.id, "../etc/passwd")
-        assert exc.value.errcode == ErrCode.INVALID_INPUT
+        assert exc.value.errcode == CommonErr.INVALID_INPUT
 
     def should_read_nested_file(self, db, blog_dir):
         user_id = _user(db)
@@ -608,7 +609,7 @@ class TestBlogRoutes:
         assert resp.status_code == 200
         # verify gone
         resp = client.get("/api/v1/blog/series/1")
-        assert resp.json()["code"] == 3001
+        assert resp.json()["code"] == BlogErr.SERIES_NOT_FOUND
 
     def should_star_via_api(self, client, db, blog_dir):
         uid, token = self._setup_user(db)
@@ -691,7 +692,7 @@ class TestBlogRoutes:
 
     def should_get_404_for_nonexistent_series(self, client):
         resp = client.get("/api/v1/blog/series/999")
-        assert resp.json()["code"] == 3001
+        assert resp.json()["code"] == BlogErr.SERIES_NOT_FOUND
 
     def should_require_auth_for_star(self, client):
         resp = client.post("/api/v1/blog/series/1/star")

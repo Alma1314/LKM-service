@@ -2,7 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.err import BizError, ErrCode, respond
+from app.core.err import BizError, CommonErr, respond
 from app.db.models import User as UserModel
 from app.db.session import get_session
 from app.modules.auth import service_auth
@@ -67,7 +67,7 @@ def edit_profile(
     db: Session = Depends(get_session),
 ):
     if cur.id != user_id:
-        raise BizError(ErrCode.FORBIDDEN)
+        raise BizError(CommonErr.FORBIDDEN)
     update_profile(db, user_id, info)
     return get_profile(db, user_id)
 
@@ -87,7 +87,7 @@ def register_normal_with_password_route(
     """发起普通注册 """
     if not info.email and not info.phone:
         raise BizError(
-            ErrCode.INVALID_INPUT,
+            CommonErr.INVALID_INPUT,
             "At least one of email or phone is required for normal registration",
         )
 

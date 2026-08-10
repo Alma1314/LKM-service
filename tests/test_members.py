@@ -1,7 +1,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError
+from app.modules.members.errors import MemberErr
 from app.main import app
 from app.modules.members.service import get_members
 
@@ -88,12 +89,12 @@ class TestMembersService:
     def test_unknown_type_raises_biz_error(self):
         with pytest.raises(BizError) as exc:
             get_members("noSuchType")
-        assert exc.value.errcode == ErrCode.MEMBER_GROUP_NOT_FOUND
+        assert exc.value.errcode == MemberErr.GROUP_NOT_FOUND
 
     def test_unknown_group_raises_biz_error(self):
         with pytest.raises(BizError) as exc:
             get_members("projectSubGroups", "noSuchGroup")
-        assert exc.value.errcode == ErrCode.MEMBER_GROUP_NOT_FOUND
+        assert exc.value.errcode == MemberErr.GROUP_NOT_FOUND
 
     # -- 字段可选性 --
 
@@ -150,13 +151,13 @@ class TestMembersRoutes:
         resp = client.get("/api/v1/members?type=noSuchType")
         assert resp.status_code == 404
         body = resp.json()
-        assert body["code"] == ErrCode.MEMBER_GROUP_NOT_FOUND
+        assert body["code"] == MemberErr.GROUP_NOT_FOUND
 
     def test_unknown_group_returns_404(self, client):
         resp = client.get("/api/v1/members?type=projectSubGroups&group=noSuchGroup")
         assert resp.status_code == 404
         body = resp.json()
-        assert body["code"] == ErrCode.MEMBER_GROUP_NOT_FOUND
+        assert body["code"] == MemberErr.GROUP_NOT_FOUND
 
     def test_missing_type_returns_422(self, client):
         resp = client.get("/api/v1/members")

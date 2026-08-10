@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import Header
 
 from app.core.config import settings
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError, CommonErr
 
 _ALGORITHM = "pbkdf2:sha256"
 _ITERATIONS = 600_000
@@ -21,7 +21,7 @@ _HASH_FN = "sha256"
 
 def get_current_user_id(x_user_id: int = Header(..., alias="X-User-Id")) -> int:
     if x_user_id <= 0:
-        raise BizError(ErrCode.FORBIDDEN, "Invalid user identity")
+        raise BizError(CommonErr.FORBIDDEN, "Invalid user identity")
     return x_user_id
 
 

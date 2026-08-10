@@ -7,7 +7,8 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError
+from app.modules.auth.errors import AuthErr
 from app.db.models import Base, User, Profile
 import app.modules.auth.models  # noqa: F401
 from app.modules.auth.models import MagicLink, RefreshToken
@@ -223,7 +224,7 @@ class TestRecoverByPhone:
 
         with pytest.raises(BizError) as exc:
             _svc().recover_by_phone(db, "13800001111", "000000", "newpwd456")
-        assert exc.value.errcode == ErrCode.VERIFICATION_CODE_INVALID
+        assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
     def should_reject_local_user(self, db):
         _mk_local(db, username="alice", password="old123")
@@ -236,7 +237,7 @@ class TestRecoverByPhone:
 
         with pytest.raises(BizError) as exc:
             _svc().recover_by_phone(db, "13800003333", code, "newpwd456")
-        assert exc.value.errcode == ErrCode.RECOVERY_NOT_SUPPORTED
+        assert exc.value.errcode == AuthErr.RECOVERY_NOT_SUPPORTED
 
     def should_reset_failed_login_attempts_and_lock(self, db):
         user = _mk_normal(db, username="bob", password="old123", phone="13800001111")
@@ -301,7 +302,7 @@ class TestRecoverByEmailCode:
 
         with pytest.raises(BizError) as exc:
             _svc().recover_by_email_code(db, "bob@example.com", "000000", "newpwd456")
-        assert exc.value.errcode == ErrCode.VERIFICATION_CODE_INVALID
+        assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
     def should_reject_local_user(self, db):
         _mk_local(db, username="alice", password="old123")
@@ -313,7 +314,7 @@ class TestRecoverByEmailCode:
 
         with pytest.raises(BizError) as exc:
             _svc().recover_by_email_code(db, "alice@example.com", code, "newpwd456")
-        assert exc.value.errcode == ErrCode.RECOVERY_NOT_SUPPORTED
+        assert exc.value.errcode == AuthErr.RECOVERY_NOT_SUPPORTED
 
     def should_reset_failed_login_attempts_and_lock(self, db):
         user = _mk_normal(db, username="bob", password="old123", email="bob@example.com")
@@ -377,7 +378,7 @@ class TestRecoverByMagicLink:
 
         with pytest.raises(BizError) as exc:
             _svc().recover_by_magic_link(db, token, "newpwd456")
-        assert exc.value.errcode == ErrCode.TOKEN_INVALID
+        assert exc.value.errcode == AuthErr.TOKEN_INVALID
 
     def should_reject_used_token(self, db):
         _mk_normal(db, username="bob", password="old123", email="bob@example.com")
@@ -389,7 +390,7 @@ class TestRecoverByMagicLink:
         # Second use (replay) should fail
         with pytest.raises(BizError) as exc:
             _svc().recover_by_magic_link(db, token, "newpwd789")
-        assert exc.value.errcode == ErrCode.TOKEN_INVALID
+        assert exc.value.errcode == AuthErr.TOKEN_INVALID
 
     def should_reject_local_user(self, db):
         _mk_local(db, username="alice", password="old123")
@@ -401,7 +402,7 @@ class TestRecoverByMagicLink:
 
         with pytest.raises(BizError) as exc:
             _svc().recover_by_magic_link(db, token, "newpwd456")
-        assert exc.value.errcode in (ErrCode.ACCOUNT_LEVEL_INSUFFICIENT, ErrCode.RECOVERY_NOT_SUPPORTED)
+        assert exc.value.errcode in (AuthErr.ACCOUNT_LEVEL_INSUFFICIENT, AuthErr.RECOVERY_NOT_SUPPORTED)
 
     def should_reset_failed_login_attempts_and_lock(self, db):
         user = _mk_normal(db, username="bob", password="old123", email="bob@example.com")
@@ -452,7 +453,7 @@ class TestRecoverByMagicLink:
 
         with pytest.raises(BizError) as exc:
             _svc().recover_by_magic_link(db, raw, "newpwd456")
-        assert exc.value.errcode == ErrCode.TOKEN_EXPIRED
+        assert exc.value.errcode == AuthErr.TOKEN_EXPIRED
 
 
 # ===================================================================
@@ -466,7 +467,7 @@ class TestFindUserByContact:
             from app.modules.auth.service_recovery import _find_user_by_contact
 
             _find_user_by_contact(db, "email", "noone@example.com")
-        assert exc.value.errcode == ErrCode.USER_NOT_FOUND
+        assert exc.value.errcode == AuthErr.USER_NOT_FOUND
 
     def should_raise_recovery_not_supported_for_local_user(self, db):
         _mk_local(db, username="alice")
@@ -478,4 +479,4 @@ class TestFindUserByContact:
             from app.modules.auth.service_recovery import _find_user_by_contact
 
             _find_user_by_contact(db, "email", "alice@example.com")
-        assert exc.value.errcode == ErrCode.RECOVERY_NOT_SUPPORTED
+        assert exc.value.errcode == AuthErr.RECOVERY_NOT_SUPPORTED

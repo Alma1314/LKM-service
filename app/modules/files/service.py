@@ -5,7 +5,8 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError
+from app.modules.files.errors import FileErr
 from app.db.models import LibraryFile, User
 from app.db.repo import get_or_raise
 from app.modules.files.models import FILES_TABLE_PLAN
@@ -81,7 +82,7 @@ def list_files(
 
 
 def get_file(db: Session, file_id: int, bump_view: bool = False) -> FileInfo:
-    f = get_or_raise(db, LibraryFile, ErrCode.FILE_NOT_FOUND, LibraryFile.id == file_id)
+    f = get_or_raise(db, LibraryFile, FileErr.NOT_FOUND, LibraryFile.id == file_id)
 
     if bump_view:
         f.view_count += 1
@@ -121,7 +122,7 @@ def create_file(
                 total += len(chunk)
                 if total > limit:
                     raise BizError(
-                        ErrCode.FILE_TOO_LARGE,
+                        FileErr.TOO_LARGE,
                         detail=f"Upload exceeds {limit} byte limit",
                     )
                 out.write(chunk)
@@ -132,7 +133,7 @@ def create_file(
     except OSError as exc:
         if dest is not None:
             dest.unlink(missing_ok=True)
-        raise BizError(ErrCode.FILE_STORE_ERROR, detail=f"Failed to store file: {exc}") from exc
+        raise BizError(FileErr.STORE_ERROR, detail=f"Failed to store file: {exc}") from exc
 
     try:
         f = LibraryFile(
@@ -157,7 +158,7 @@ def create_file(
 
 
 def bump_download(db: Session, file_id: int) -> int:
-    f = get_or_raise(db, LibraryFile, ErrCode.FILE_NOT_FOUND, LibraryFile.id == file_id)
+    f = get_or_raise(db, LibraryFile, FileErr.NOT_FOUND, LibraryFile.id == file_id)
     f.download_count += 1
     db.flush()
     return f.download_count

@@ -14,7 +14,8 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError
+from app.modules.auth.errors import AuthErr
 from app.db.models import Base
 import app.modules.auth.models  # noqa: F401 — ensure auth tables (refresh_tokens, etc.) are created
 
@@ -150,7 +151,7 @@ class TestBindEmail:
                 cur=FakeCurrentUser(),
                 db=db,
             )
-        assert exc.value.errcode == ErrCode.ALREADY_REGISTERED
+        assert exc.value.errcode == AuthErr.ALREADY_REGISTERED
 
     def should_reject_wrong_code(self, db):
         """Should fail with wrong verification code."""
@@ -173,7 +174,7 @@ class TestBindEmail:
                 cur=FakeCurrentUser(),
                 db=db,
             )
-        assert exc.value.errcode == ErrCode.VERIFICATION_CODE_INVALID
+        assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
 
 class TestBindPhone:
@@ -236,7 +237,7 @@ class TestBindPhone:
                 cur=FakeCurrentUser(),
                 db=db,
             )
-        assert exc.value.errcode == ErrCode.ALREADY_REGISTERED
+        assert exc.value.errcode == AuthErr.ALREADY_REGISTERED
 
     def should_reject_wrong_code(self, db):
         """Should fail with wrong verification code."""
@@ -259,7 +260,7 @@ class TestBindPhone:
                 cur=FakeCurrentUser(),
                 db=db,
             )
-        assert exc.value.errcode == ErrCode.VERIFICATION_CODE_INVALID
+        assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
 
 class TestBindEmailUpgrade:

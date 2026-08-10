@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.err import BizError, ErrCode
+from app.modules.auth.errors import AuthErr
 from app.db.models import User, expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise
 from app.modules.auth.models import PasskeyChallenge, PasskeyCredential
@@ -103,13 +104,13 @@ def _parse_client_data(client_data_json_b64: str) -> dict:
         raw = _b64decode(client_data_json_b64)
         return json.loads(raw.decode("utf-8"))
     except Exception as exc:
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Invalid clientDataJSON") from exc
+        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Invalid clientDataJSON") from exc
 
 
 def _parse_authenticator_data(auth_data: bytes) -> dict:
     """按 WebAuthn 规范 §6.1 解析 authenticatorData。"""
     if len(auth_data) < 37:
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Authenticator data too short")
+        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Authenticator data too short")
 
     rp_id_hash = auth_data[:32]
     flags = auth_data[32]
@@ -119,7 +120,7 @@ def _parse_authenticator_data(auth_data: bytes) -> dict:
     attested_credential_data = None
     if flags & 0x40:  # AT 标志位
         if len(auth_data) < pos + 18:
-            raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED)
+            raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED)
         aaguid = auth_data[pos : pos + 16]
         pos += 16
         cred_id_len = struct.unpack(">H", auth_data[pos : pos + 2])[0]
@@ -153,17 +154,17 @@ def _parse_cose_key(data: bytes) -> tuple[dict, int]:
     consumed = len(cbor2.dumps(cose))
 
     if key_type != 2:  # EC2（椭圆曲线）
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, f"Unsupported COSE key type: {key_type}")
+        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, f"Unsupported COSE key type: {key_type}")
 
     x_bytes = cose.get(-2)  # x 坐标
     y_bytes = cose.get(-3)  # y 坐标
     crv = cose.get(-1)       # 曲线（必须为 1 = P-256）
 
     if crv != 1:
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, f"Unsupported EC curve: {crv}")
+        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, f"Unsupported EC curve: {crv}")
 
     if not x_bytes or not y_bytes:
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Missing COSE key coordinates")
+        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Missing COSE key coordinates")
 
     return {"kty": key_type, "alg": alg, "crv": crv, "x": x_bytes, "y": y_bytes}, consumed
 
@@ -171,24 +172,24 @@ def _parse_cose_key(data: bytes) -> tuple[dict, int]:
 def _verify_origin(expected_origin: str, client_data: dict) -> None:
     origin = client_data.get("origin", "")
     if origin != expected_origin:
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Origin mismatch")
+        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Origin mismatch")
 
 
 def _verify_challenge(expected_challenge: str, client_data: dict) -> None:
     challenge = client_data.get("challenge", "")
     if challenge != expected_challenge:
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Challenge mismatch")
+        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Challenge mismatch")
 
 
 def _verify_rp_id_hash(auth_data: dict) -> None:
     expected_hash = hashlib.sha256(settings.rp_id.encode()).digest()
     if auth_data["rp_id_hash"] != expected_hash:
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "RP ID hash mismatch")
+        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "RP ID hash mismatch")
 
 
 def _verify_user_presence(auth_data: dict) -> None:
     if not (auth_data["flags"] & 0x01):  # UP 标志位（用户在场）
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "User presence not verified")
+        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "User presence not verified")
 
 def _build_signed_data(auth_data_bytes: bytes, client_data_json_b64: str) -> bytes:
     """构建待验证的二进制数据：authenticatorData || SHA-256(clientDataJSON)。"""
@@ -209,17 +210,17 @@ def _verify_ecdsa_signature(
             ec.SECP256R1(), public_key_bytes
         )
     except Exception as exc:
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Invalid public key") from exc
+        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Invalid public key") from exc
 
     try:
         pubkey.verify(signature, signed_data, ec.ECDSA(hashes.SHA256()))
     except InvalidSignature:
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Invalid signature")
+        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Invalid signature")
 
 
 def _signature_to_der(raw_sig: bytes) -> bytes:
     if len(raw_sig) != 64:
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Invalid signature length")
+        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Invalid signature length")
     r = raw_sig[:32]
     s = raw_sig[32:]
 
@@ -238,7 +239,7 @@ def _signature_to_der(raw_sig: bytes) -> bytes:
     return b"\x30" + bytes([len(inner)]) + inner
 
 def begin_passkey_registration(db: Session, user_id: int) -> dict:
-    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == user_id)
+    user = get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == user_id)
 
     challenge_id, challenge = _store_challenge(db)
     user_handle = user_id.to_bytes(8, "big")
@@ -302,20 +303,20 @@ def complete_passkey_registration(
     db: Session, user_id: int, credential: dict
 ) -> dict:
     raw_id, _challenge, response, client_data_json_b64, _client_data = _prep_passkey_credential(
-        db, credential, ErrCode.PASSKEY_REGISTRATION_FAILED
+        db, credential, AuthErr.PASSKEY_REGISTRATION_FAILED
     )
 
     attestation_object_b64 = response.get("attestationObject")
 
     if not client_data_json_b64 or not attestation_object_b64:
-        raise BizError(ErrCode.PASSKEY_REGISTRATION_FAILED, "clientDataJSON and attestationObject required")
+        raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "clientDataJSON and attestationObject required")
 
     try:
         attestation_bytes = _b64decode(str(attestation_object_b64))
         import cbor2
         att_obj = cbor2.loads(attestation_bytes)
     except Exception as exc:
-        raise BizError(ErrCode.PASSKEY_REGISTRATION_FAILED, "Invalid attestationObject") from exc
+        raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "Invalid attestationObject") from exc
 
     fmt = att_obj.get("fmt", "")
     auth_data_bytes = att_obj.get("authData", b"")
@@ -326,7 +327,7 @@ def complete_passkey_registration(
 
     ata: dict = auth_data.get("attested_credential_data")  # type: ignore[assignment]
     if not ata:
-        raise BizError(ErrCode.PASSKEY_REGISTRATION_FAILED, "No attested credential data")
+        raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "No attested credential data")
 
     if fmt == "packed":
         att_stmt = att_obj.get("attStmt", {})
@@ -344,7 +345,7 @@ def complete_passkey_registration(
                 if isinstance(pubkey, ec.EllipticCurvePublicKey):
                     pubkey.verify(sig, signed_data_part, ec.ECDSA(hashes.SHA256()))  # pyright: ignore[reportArgumentType]
             except Exception as exc:
-                raise BizError(ErrCode.PASSKEY_REGISTRATION_FAILED, "Attestation signature invalid") from exc
+                raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "Attestation signature invalid") from exc
 
     cose_key = ata["cose_key"]
     x, y = cose_key["x"], cose_key["y"]
@@ -354,7 +355,7 @@ def complete_passkey_registration(
         PasskeyCredential.credential_id == raw_id
     ).first()
     if existing:
-        raise BizError(ErrCode.PASSKEY_REGISTRATION_FAILED, "Credential already registered")
+        raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "Credential already registered")
 
     device_name = credential.get("device_name", "Unknown device")
 
@@ -386,7 +387,7 @@ def begin_passkey_login(db: Session) -> dict:
 
 def complete_passkey_login(db: Session, credential: dict) -> dict:
     raw_id, _challenge, response, client_data_json_b64, _client_data = _prep_passkey_credential(
-        db, credential, ErrCode.PASSKEY_VERIFICATION_FAILED
+        db, credential, AuthErr.PASSKEY_VERIFICATION_FAILED
     )
 
     authenticator_data_b64 = response.get("authenticatorData")
@@ -394,7 +395,7 @@ def complete_passkey_login(db: Session, credential: dict) -> dict:
 
     if not authenticator_data_b64 or not signature_b64:
         raise BizError(
-            ErrCode.PASSKEY_VERIFICATION_FAILED,
+            AuthErr.PASSKEY_VERIFICATION_FAILED,
             "authenticatorData and signature required",
         )
 
@@ -404,7 +405,7 @@ def complete_passkey_login(db: Session, credential: dict) -> dict:
     _verify_user_presence(auth_data)
 
     passkey = get_or_raise(
-        db, PasskeyCredential, ErrCode.PASSKEY_VERIFICATION_FAILED,
+        db, PasskeyCredential, AuthErr.PASSKEY_VERIFICATION_FAILED,
         PasskeyCredential.credential_id == raw_id,
         detail="Credential not found",
     )
@@ -418,17 +419,17 @@ def complete_passkey_login(db: Session, credential: dict) -> dict:
         pubkey = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), public_key_bytes)
         pubkey.verify(signature_der, signed_data, ec.ECDSA(hashes.SHA256()))
     except (InvalidSignature, ValueError, Exception):
-        raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Invalid signature")
+        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Invalid signature")
 
     reported_count = auth_data["sign_count"]
     if reported_count > passkey.sign_count:
         passkey.sign_count = reported_count
     db.flush()
 
-    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == passkey.user_id)
+    user = get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == passkey.user_id)
 
     if user.account_level == "local":
-        raise BizError(ErrCode.ACCOUNT_LEVEL_INSUFFICIENT)
+        raise BizError(AuthErr.ACCOUNT_LEVEL_INSUFFICIENT)
 
     from app.modules.auth.service_auth import _finalize_auth_response
     return _finalize_auth_response(db, user) # type: ignore[union-attr]
@@ -449,7 +450,7 @@ def list_credentials(db: Session, user_id: int) -> list[dict]:
 
 def delete_credential(db: Session, user_id: int, credential_id: int) -> dict:
     cred = get_or_raise(
-        db, PasskeyCredential, ErrCode.PASSKEY_VERIFICATION_FAILED,
+        db, PasskeyCredential, AuthErr.PASSKEY_VERIFICATION_FAILED,
         PasskeyCredential.id == credential_id,
         PasskeyCredential.user_id == user_id,
         detail="Credential not found",

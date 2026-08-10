@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.core.err import BizError, ErrCode, respond
+from app.core.err import BizError, CommonErr, respond
 from app.db.session import get_session
 from app.modules.auth.deps import CurrentUser, get_current_user
 from app.modules.columns.schemas import (
@@ -59,7 +59,7 @@ def apply_column(
     db: Session = Depends(get_session),
 ):
     if cur.id != info.user_id:
-        raise BizError(ErrCode.FORBIDDEN)
+        raise BizError(CommonErr.FORBIDDEN)
     return create_application(db, info)
 
 
@@ -84,7 +84,7 @@ def review_column_application(
     db: Session = Depends(get_session),
 ):
     if cur.id != info.reviewer_id:
-        raise BizError(ErrCode.FORBIDDEN)
+        raise BizError(CommonErr.FORBIDDEN)
     return review_application(db, application_id, info)
 
 
@@ -109,7 +109,7 @@ def publish_column_post(
     db: Session = Depends(get_session),
 ):
     if cur.id != info.author_id:
-        raise BizError(ErrCode.FORBIDDEN)
+        raise BizError(CommonErr.FORBIDDEN)
     return create_post(db, column_id, info)
 
 
