@@ -92,6 +92,7 @@ class User(Base):
     blog_series: Mapped[list["BlogSeries"]] = relationship(back_populates="owner")
     forum_posts: Mapped[list["ForumPost"]] = relationship(back_populates="author")
     forum_comments: Mapped[list["ForumComment"]] = relationship(back_populates="user")
+    uploaded_files: Mapped[list["LibraryFile"]] = relationship(back_populates="uploader")
 
 
 class Profile(Base):
@@ -246,6 +247,29 @@ class ForumComment(Base):
     replies: Mapped[list["ForumComment"]] = relationship(
         back_populates="parent", cascade="all, delete-orphan"
     )
+
+
+class LibraryFile(Base):
+    __tablename__ = "library_files"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    uploader_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    stored_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    mime_type: Mapped[str] = mapped_column(String(100), nullable=False, default="application/octet-stream")
+    size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    category_id: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    description: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    tags: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    review_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    view_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+
+    uploader: Mapped["User"] = relationship(back_populates="uploaded_files")
 
 
 class BlogSeries(Base):

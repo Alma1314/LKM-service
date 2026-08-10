@@ -57,8 +57,9 @@ def get_session() -> Generator[Session, None, None]:
         import sys
         exc_value = sys.exc_info()[1]
         if exc_value is not None and isinstance(exc_value, IntegrityError):
-            from app.core.err import BizError, ErrCode
-            raise BizError(ErrCode.ALREADY_REGISTERED, "Resource already exists") from exc_value
+            from app.core.err import BizError
+            from app.modules.auth.errors import AuthErr
+            raise BizError(AuthErr.ALREADY_REGISTERED, "Resource already exists") from exc_value
         raise
     finally:
         db.close()

@@ -2,7 +2,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Any
 
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError, CommonErr
+from app.modules.blog.errors import BlogErr
 from app.db.models import BlogComment, BlogSeries, BlogStar, Profile, now_iso
 from app.db.repo import get_or_raise
 from app.modules.blog import git_svc
@@ -94,7 +95,7 @@ def create_series(db: Session, user_id: int, info: BlogSeriesCreate) -> BlogSeri
         db.query(BlogSeries).filter(BlogSeries.repo_name == info.repo_name).first()
     )
     if existing:
-        raise BizError(ErrCode.INVALID_INPUT, "Repository name already taken")
+        raise BizError(CommonErr.INVALID_INPUT, "Repository name already taken")
 
     git_svc.init_bare_repo(info.repo_name)
 
@@ -130,7 +131,7 @@ def get_series(
     db: Session, series_id: int, current_user_id: int | None = None
 ) -> BlogSeriesDetail:
     series = get_or_raise(
-        db, BlogSeries, ErrCode.BLOG_SERIES_NOT_FOUND, BlogSeries.id == series_id,
+        db, BlogSeries, BlogErr.SERIES_NOT_FOUND, BlogSeries.id == series_id,
     )
 
     sc = _star_count(db, series_id)
@@ -151,10 +152,10 @@ def update_series(
     db: Session, series_id: int, user_id: int, info: BlogSeriesUpdate
 ) -> BlogSeriesInfo:
     series = get_or_raise(
-        db, BlogSeries, ErrCode.BLOG_SERIES_NOT_FOUND, BlogSeries.id == series_id,
+        db, BlogSeries, BlogErr.SERIES_NOT_FOUND, BlogSeries.id == series_id,
     )
     if series.owner_id != user_id:
-        raise BizError(ErrCode.FORBIDDEN)
+        raise BizError(CommonErr.FORBIDDEN)
 
     if info.title is not None:
         series.title = info.title
@@ -173,10 +174,10 @@ def update_series(
 
 def delete_series(db: Session, series_id: int, user_id: int) -> None:
     series = get_or_raise(
-        db, BlogSeries, ErrCode.BLOG_SERIES_NOT_FOUND, BlogSeries.id == series_id,
+        db, BlogSeries, BlogErr.SERIES_NOT_FOUND, BlogSeries.id == series_id,
     )
     if series.owner_id != user_id:
-        raise BizError(ErrCode.FORBIDDEN)
+        raise BizError(CommonErr.FORBIDDEN)
 
     git_svc.delete_repo(series.repo_name)
     db.delete(series)
@@ -187,7 +188,7 @@ def delete_series(db: Session, series_id: int, user_id: int) -> None:
 
 
 def toggle_star(db: Session, series_id: int, user_id: int) -> BlogStarStatus:
-    get_or_raise(db, BlogSeries, ErrCode.BLOG_SERIES_NOT_FOUND, BlogSeries.id == series_id)
+    get_or_raise(db, BlogSeries, BlogErr.SERIES_NOT_FOUND, BlogSeries.id == series_id)
 
     existing = (
         db.query(BlogStar)
@@ -212,15 +213,15 @@ def toggle_star(db: Session, series_id: int, user_id: int) -> BlogStarStatus:
 def create_comment(
     db: Session, series_id: int, user_id: int, info: BlogCommentCreate
 ) -> BlogCommentInfo:
-    get_or_raise(db, BlogSeries, ErrCode.BLOG_SERIES_NOT_FOUND, BlogSeries.id == series_id)
+    get_or_raise(db, BlogSeries, BlogErr.SERIES_NOT_FOUND, BlogSeries.id == series_id)
 
     if info.parent_id is not None:
         parent = get_or_raise(
-            db, BlogComment, ErrCode.INVALID_INPUT,
+            db, BlogComment, CommonErr.INVALID_INPUT,
             BlogComment.id == info.parent_id,
         )
         if parent.series_id != series_id:
-            raise BizError(ErrCode.INVALID_INPUT, "Parent comment not found")
+            raise BizError(CommonErr.INVALID_INPUT, "Parent comment not found")
 
     comment = BlogComment(
         user_id=user_id,
@@ -235,7 +236,7 @@ def create_comment(
 
 
 def list_comments(db: Session, series_id: int) -> list[BlogCommentInfo]:
-    get_or_raise(db, BlogSeries, ErrCode.BLOG_SERIES_NOT_FOUND, BlogSeries.id == series_id)
+    get_or_raise(db, BlogSeries, BlogErr.SERIES_NOT_FOUND, BlogSeries.id == series_id)
 
     comments = (
         db.query(BlogComment)
@@ -268,12 +269,12 @@ def list_comments(db: Session, series_id: int) -> list[BlogCommentInfo]:
 
 def delete_comment(db: Session, series_id: int, comment_id: int, user_id: int) -> None:
     comment = get_or_raise(
-        db, BlogComment, ErrCode.BLOG_COMMENT_NOT_FOUND,
+        db, BlogComment, BlogErr.COMMENT_NOT_FOUND,
         BlogComment.id == comment_id,
         BlogComment.series_id == series_id,
     )
     if comment.user_id != user_id:
-        raise BizError(ErrCode.FORBIDDEN)
+        raise BizError(CommonErr.FORBIDDEN)
     db.delete(comment)
     db.flush()
 
@@ -283,7 +284,7 @@ def delete_comment(db: Session, series_id: int, comment_id: int, user_id: int) -
 
 def get_file_content(db: Session, series_id: int, filepath: str) -> dict[str, Any]:
     series = get_or_raise(
-        db, BlogSeries, ErrCode.BLOG_SERIES_NOT_FOUND, BlogSeries.id == series_id,
+        db, BlogSeries, BlogErr.SERIES_NOT_FOUND, BlogSeries.id == series_id,
     )
     content = git_svc.read_file(series.repo_name, filepath)
     return {"filepath": filepath, "content": content}

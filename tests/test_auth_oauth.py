@@ -172,11 +172,12 @@ class TestOauthRouterRedirect:
         from fastapi.responses import RedirectResponse
         from urllib.parse import parse_qs, urlparse
 
-        from app.core.err import BizError, ErrCode
+        from app.core.err import BizError
         from app.modules.auth import router_oauth
+        from app.modules.auth.errors import AuthErr
 
         async def _boom(db, code, state):
-            raise BizError(ErrCode.OAUTH_EMAIL_TAKEN)
+            raise BizError(AuthErr.OAUTH_EMAIL_TAKEN)
 
         with patch.object(router_oauth.service_oauth, "bind_github", new=_boom):
             resp = asyncio.run(router_oauth.github_bind_callback(code="c", state="s", db=db))

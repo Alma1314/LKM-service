@@ -5,8 +5,10 @@ from unittest.mock import patch
 
 import pytest
 
-import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError
+from app.modules.auth.errors import AuthErr
+from app.db.models import Base
+import app.modules.auth.models  # noqa: F401 ensure auth tables registered
 from app.modules.auth.models import EmailVerification, PhoneVerification
 from app.modules.auth.service_verify import (
     check_code_rate_limit,
@@ -106,14 +108,14 @@ class TestConsumeEmailCode:
 
         with pytest.raises(BizError) as exc:
             consume_email_code(db, "alice@example.com", code, "login")
-        assert exc.value.errcode == ErrCode.VERIFICATION_CODE_INVALID
+        assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
     def should_reject_wrong_code(self, db):
         create_email_verification(db, "alice@example.com", "register")
 
         with pytest.raises(BizError) as exc:
             consume_email_code(db, "alice@example.com", "000000", "register")
-        assert exc.value.errcode == ErrCode.VERIFICATION_CODE_INVALID
+        assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
     def should_invalidate_after_three_failed_attempts(self, db):
         code, _ = create_email_verification(db, "alice@example.com", "register")
@@ -121,12 +123,12 @@ class TestConsumeEmailCode:
         for _ in range(3):
             with pytest.raises(BizError) as exc:
                 consume_email_code(db, "alice@example.com", "000001", "register")
-            assert exc.value.errcode == ErrCode.VERIFICATION_CODE_INVALID
+            assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
         # The original code should be invalid now
         with pytest.raises(BizError) as exc:
             consume_email_code(db, "alice@example.com", code, "register")
-        assert exc.value.errcode == ErrCode.VERIFICATION_CODE_INVALID
+        assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
     def should_not_consume_expired_code(self, db):
         with patch("app.modules.auth.service_verify.now_iso") as mock_now:
@@ -137,7 +139,7 @@ class TestConsumeEmailCode:
             mock_now.return_value = dt.datetime(2026, 1, 2, tzinfo=dt.timezone.utc)
             with pytest.raises(BizError) as exc:
                 consume_email_code(db, "alice@example.com", code, "register")
-            assert exc.value.errcode == ErrCode.VERIFICATION_CODE_EXPIRED
+            assert exc.value.errcode == AuthErr.VERIFICATION_CODE_EXPIRED
 
 
 class TestConsumePhoneCode:
@@ -154,14 +156,14 @@ class TestConsumePhoneCode:
 
         with pytest.raises(BizError) as exc:
             consume_phone_code(db, "13800138000", code, "register")
-        assert exc.value.errcode == ErrCode.VERIFICATION_CODE_INVALID
+        assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
     def should_reject_wrong_code(self, db):
         create_phone_verification(db, "13800138000", "login")
 
         with pytest.raises(BizError) as exc:
             consume_phone_code(db, "13800138000", "000000", "login")
-        assert exc.value.errcode == ErrCode.VERIFICATION_CODE_INVALID
+        assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
     def should_invalidate_after_three_failed_attempts(self, db):
         code, _ = create_phone_verification(db, "13800138000", "login")
@@ -169,11 +171,11 @@ class TestConsumePhoneCode:
         for _ in range(3):
             with pytest.raises(BizError) as exc:
                 consume_phone_code(db, "13800138000", "000001", "login")
-            assert exc.value.errcode == ErrCode.VERIFICATION_CODE_INVALID
+            assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
         with pytest.raises(BizError) as exc:
             consume_phone_code(db, "13800138000", code, "login")
-        assert exc.value.errcode == ErrCode.VERIFICATION_CODE_INVALID
+        assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
     def should_not_consume_expired_code(self, db):
         with patch("app.modules.auth.service_verify.now_iso") as mock_now:
@@ -184,7 +186,7 @@ class TestConsumePhoneCode:
             mock_now.return_value = dt.datetime(2026, 1, 2, tzinfo=dt.timezone.utc)
             with pytest.raises(BizError) as exc:
                 consume_phone_code(db, "13800138000", code, "login")
-            assert exc.value.errcode == ErrCode.VERIFICATION_CODE_EXPIRED
+            assert exc.value.errcode == AuthErr.VERIFICATION_CODE_EXPIRED
 
 
 class TestCheckCodeRateLimit:
@@ -199,7 +201,7 @@ class TestCheckCodeRateLimit:
 
         with pytest.raises(BizError) as exc:
             check_code_rate_limit(key, max_count=5, window=3600)
-        assert exc.value.errcode == ErrCode.VERIFICATION_CODE_RATE_LIMIT
+        assert exc.value.errcode == AuthErr.VERIFICATION_CODE_RATE_LIMIT
 
     def should_allow_after_window_expiry(self):
         key = "window@example.com"
@@ -208,7 +210,7 @@ class TestCheckCodeRateLimit:
 
         with pytest.raises(BizError) as exc:
             check_code_rate_limit(key, max_count=5, window=0.1)
-        assert exc.value.errcode == ErrCode.VERIFICATION_CODE_RATE_LIMIT
+        assert exc.value.errcode == AuthErr.VERIFICATION_CODE_RATE_LIMIT
 
         time.sleep(0.15)
         check_code_rate_limit(key, max_count=5, window=0.1)
@@ -223,7 +225,7 @@ class TestCheckCodeRateLimit:
 
         with pytest.raises(BizError) as exc:
             check_code_rate_limit(key_a, max_count=5, window=3600)
-        assert exc.value.errcode == ErrCode.VERIFICATION_CODE_RATE_LIMIT
+        assert exc.value.errcode == AuthErr.VERIFICATION_CODE_RATE_LIMIT
 
         check_code_rate_limit(key_b, max_count=5, window=3600)
         # Should not raise

@@ -4,8 +4,9 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.core.err import BizError, ErrCode
-from app.db.models import ForumComment, ForumPost, User
+from app.core.err import BizError, CommonErr
+from app.modules.forum.errors import ForumErr
+from app.db.models import ForumComment, ForumPost, User, now_iso
 from app.db.repo import get_or_raise
 from app.modules.forum.models import FORUM_TABLE_PLAN
 from app.modules.forum.schemas import CommentCreate, CommentInfo, PageData, PostCreate, PostInfo
@@ -76,7 +77,7 @@ def list_posts(
 
 
 def get_post(db: Session, post_id: int, bump_view: bool = False) -> PostInfo:
-    post = get_or_raise(db, ForumPost, ErrCode.FORUM_POST_NOT_FOUND, ForumPost.id == post_id)
+    post = get_or_raise(db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id)
 
     if bump_view:
         post.view_count += 1
@@ -104,15 +105,15 @@ def create_post(db: Session, author_id: int, info: PostCreate) -> PostInfo:
 
 
 def delete_post(db: Session, post_id: int, current_user_id: int) -> None:
-    post = get_or_raise(db, ForumPost, ErrCode.FORUM_POST_NOT_FOUND, ForumPost.id == post_id)
+    post = get_or_raise(db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id)
     if post.author_id != current_user_id:
-        raise BizError(ErrCode.FORBIDDEN)
+        raise BizError(CommonErr.FORBIDDEN)
     db.delete(post)
     db.flush()
 
 
 def like_post(db: Session, post_id: int) -> int:
-    post = get_or_raise(db, ForumPost, ErrCode.FORUM_POST_NOT_FOUND, ForumPost.id == post_id)
+    post = get_or_raise(db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id)
     post.like_count += 1
     db.flush()
     return post.like_count
@@ -124,7 +125,7 @@ def list_comments(
     page: int = 1,
     limit: int = 20,
 ) -> PageData[CommentInfo]:
-    get_or_raise(db, ForumPost, ErrCode.FORUM_POST_NOT_FOUND, ForumPost.id == post_id)
+    get_or_raise(db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id)
 
     query = db.query(ForumComment).filter(ForumComment.post_id == post_id)
     total = query.count()
@@ -146,11 +147,11 @@ def create_comment(
     user_id: int,
     info: CommentCreate,
 ) -> CommentInfo:
-    post = get_or_raise(db, ForumPost, ErrCode.FORUM_POST_NOT_FOUND, ForumPost.id == post_id)
+    post = get_or_raise(db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id)
 
     if info.parent_id is not None:
         get_or_raise(
-            db, ForumComment, ErrCode.FORUM_COMMENT_NOT_FOUND,
+            db, ForumComment, ForumErr.COMMENT_NOT_FOUND,
             ForumComment.id == info.parent_id,
             ForumComment.post_id == post_id,
         )

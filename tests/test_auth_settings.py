@@ -12,8 +12,10 @@ from unittest.mock import patch
 
 import pytest
 
-from app.core.err import BizError, ErrCode
-import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
+from app.core.err import BizError, CommonErr
+from app.modules.auth.errors import AuthErr
+from app.db.models import Base
+import app.modules.auth.models  # noqa: F401 — ensure auth tables (refresh_tokens, etc.) are created
 
 
 def _unwrap(response):
@@ -131,7 +133,7 @@ class TestBindEmail:
                 cur=FakeCurrentUser(),
                 db=db,
             )
-        assert exc.value.errcode == ErrCode.ALREADY_REGISTERED
+        assert exc.value.errcode == AuthErr.ALREADY_REGISTERED
 
     def should_reject_wrong_code(self, db):
         """Should fail with wrong verification code."""
@@ -154,7 +156,7 @@ class TestBindEmail:
                 cur=FakeCurrentUser(),
                 db=db,
             )
-        assert exc.value.errcode == ErrCode.VERIFICATION_CODE_INVALID
+        assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
 
 class TestBindPhone:
@@ -217,7 +219,7 @@ class TestBindPhone:
                 cur=FakeCurrentUser(),
                 db=db,
             )
-        assert exc.value.errcode == ErrCode.ALREADY_REGISTERED
+        assert exc.value.errcode == AuthErr.ALREADY_REGISTERED
 
     def should_reject_wrong_code(self, db):
         """Should fail with wrong verification code."""
@@ -240,7 +242,7 @@ class TestBindPhone:
                 cur=FakeCurrentUser(),
                 db=db,
             )
-        assert exc.value.errcode == ErrCode.VERIFICATION_CODE_INVALID
+        assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
 
 class TestBindEmailUpgrade:
@@ -403,7 +405,7 @@ class TestUnbind:
         # 再解绑 email，将无任何登录方式 → 应拒绝
         with pytest.raises(BizError) as exc:
             unbind("email", type("Body", (), {"code": None})(), cur=FakeCurrentUser(), db=db)
-        assert exc.value.errcode == ErrCode.INVALID_INPUT
+        assert exc.value.errcode == CommonErr.INVALID_INPUT
 
     def should_require_totp_when_2fa_enabled(self, db):
         user = self._reg_with_bindings(db)
@@ -421,7 +423,7 @@ class TestUnbind:
 
         with pytest.raises(BizError) as exc:
             unbind("email", type("Body", (), {"code": None})(), cur=FakeCurrentUser(), db=db)
-        assert exc.value.errcode == ErrCode.TOTP_CODE_INVALID
+        assert exc.value.errcode == AuthErr.TOTP_CODE_INVALID
 
     def should_unbind_github(self, db):
         user = self._reg_with_bindings(db)
@@ -453,4 +455,4 @@ class TestUnbind:
 
         with pytest.raises(BizError) as exc:
             unbind("wechat", type("Body", (), {"code": None})(), cur=FakeCurrentUser(), db=db)
-        assert exc.value.errcode == ErrCode.INVALID_INPUT
+        assert exc.value.errcode == CommonErr.INVALID_INPUT

@@ -1,8 +1,11 @@
 import pytest
 
-import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
-from app.core.err import BizError, ErrCode
-from app.db.models import ForumPost, Profile, User
+import app.modules.auth.models  # noqa: F401 ensure auth tables registered
+from app.core.err import BizError, CommonErr
+from app.modules.forum.errors import ForumErr
+from app.db.models import Base, ForumPost, Profile, User
+from app.db.session import get_session
+from app.main import app
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.forum.schemas import CommentCreate, PostCreate
 from app.modules.forum.service import (
@@ -107,7 +110,7 @@ class TestForumPosts:
         with pytest.raises(BizError) as exc:
             get_post(db, 999)
 
-        assert exc.value.errcode == ErrCode.FORUM_POST_NOT_FOUND
+        assert exc.value.errcode == ForumErr.POST_NOT_FOUND
 
     def should_delete_own_post(self, db):
         user_id = _user(db)
@@ -118,7 +121,7 @@ class TestForumPosts:
         try:
             found = get_post(db, post.id)
         except BizError as exc:
-            assert exc.errcode == ErrCode.FORUM_POST_NOT_FOUND
+            assert exc.errcode == ForumErr.POST_NOT_FOUND
             return
         raise AssertionError(f"expected BizError, got post {found.id} (view={found.view_count})")
 
@@ -130,7 +133,7 @@ class TestForumPosts:
         with pytest.raises(BizError) as exc:
             delete_post(db, post.id, other)
 
-        assert exc.value.errcode == ErrCode.FORBIDDEN
+        assert exc.value.errcode == CommonErr.FORBIDDEN
 
     def should_increment_like(self, db):
         user_id = _user(db)
@@ -158,7 +161,7 @@ class TestForumComments:
         with pytest.raises(BizError) as exc:
             _comment(db, post_id=999, user_id=user_id)
 
-        assert exc.value.errcode == ErrCode.FORUM_POST_NOT_FOUND
+        assert exc.value.errcode == ForumErr.POST_NOT_FOUND
 
     def should_reject_reply_to_comment_of_another_post(self, db):
         user_id = _user(db)
@@ -169,7 +172,7 @@ class TestForumComments:
         with pytest.raises(BizError) as exc:
             _comment(db, post_id=other.id, user_id=user_id, parent_id=parent.id)
 
-        assert exc.value.errcode == ErrCode.FORUM_COMMENT_NOT_FOUND
+        assert exc.value.errcode == ForumErr.COMMENT_NOT_FOUND
 
     def should_list_comments_ordered_by_floor(self, db):
         user_id = _user(db)
@@ -197,7 +200,7 @@ class TestForumRoutes:
         )
 
         assert resp.status_code == 403
-        assert resp.json()["code"] == 1005
+        assert resp.json()["code"] == CommonErr.FORBIDDEN
 
     async def should_create_post_with_token(self, client, db):
         user_id, token = self._setup_user(db)
@@ -242,7 +245,7 @@ class TestForumRoutes:
         )
 
         assert resp.status_code == 200
-        assert (await client.get(f"/api/v1/forum/posts/{post_id}")).json()["code"] == 4001
+        assert (await client.get(f"/api/v1/forum/posts/{post_id}")).json()["code"] == ForumErr.POST_NOT_FOUND
 
 
 class TestForumGraphQL:

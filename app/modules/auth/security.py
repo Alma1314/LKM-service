@@ -11,7 +11,7 @@ from typing import Any, cast
 import jwt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from app.core.config import settings
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError
 
 _ALGORITHM = "pbkdf2:sha256"
 _ITERATIONS = 600_000

@@ -4,7 +4,8 @@ import shutil
 from typing import Any
 
 from app.core.config import settings
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError, CommonErr
+from app.modules.blog.errors import BlogErr
 
 # 文件树节点：值为嵌套子树，或哨兵字符串 "__BLOB__"（表示文件）。
 TreeNode = dict[str, "TreeNode | str"]
@@ -29,15 +30,15 @@ def _run_git(repo_name: str, *args: str) -> str:
         return result.stdout.decode("utf-8", errors="replace")
     except subprocess.CalledProcessError as e:
         detail = e.stderr.decode("utf-8", errors="replace").strip() or str(e)
-        raise BizError(ErrCode.BLOG_GIT_ERROR, detail)
+        raise BizError(BlogErr.GIT_ERROR, detail)
     except FileNotFoundError:
-        raise BizError(ErrCode.BLOG_GIT_ERROR, "git executable not found")
+        raise BizError(BlogErr.GIT_ERROR, "git executable not found")
 
 
 def init_bare_repo(repo_name: str) -> str:
     path = _repo_path(repo_name)
     if os.path.exists(path):
-        raise BizError(ErrCode.BLOG_GIT_ERROR, f"Repository '{repo_name}' already exists")
+        raise BizError(BlogErr.GIT_ERROR, f"Repository '{repo_name}' already exists")
     try:
         subprocess.run(
             ["git", "init", "--bare", path],
@@ -53,7 +54,7 @@ def init_bare_repo(repo_name: str) -> str:
         )
     except subprocess.CalledProcessError as e:
         detail = e.stderr.decode("utf-8", errors="replace").strip() or str(e)
-        raise BizError(ErrCode.BLOG_GIT_ERROR, detail)
+        raise BizError(BlogErr.GIT_ERROR, detail)
     return path
 
 
@@ -113,7 +114,7 @@ def get_file_tree(repo_name: str) -> list[dict[str, Any]]:
 def read_file(repo_name: str, filepath: str) -> str:
     filepath = filepath.lstrip("/")
     if ".." in filepath.split("/"):
-        raise BizError(ErrCode.INVALID_INPUT, "Invalid file path")
+        raise BizError(CommonErr.INVALID_INPUT, "Invalid file path")
     return _run_git(repo_name, "show", f"HEAD:{filepath}")
 
 

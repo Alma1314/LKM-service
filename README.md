@@ -77,6 +77,7 @@ GET  /api/v1/boards/status          # 分科板块模块状态
 | Auth Recovery | `/auth/recover` | 用户自助恢复 + 管理员恢复流程 |
 | Columns | `/columns` | 专栏申请、审核、文章发布 |
 | Forum | `/forum` | 社区帖子分页浏览、发布、点赞、删除，评论（含回复与楼层号） |
+| Files | `/files` | 文件库上传（pending 待审核）、列表筛选排序、详情浏览计数、下载计数 |
 | Blog | `/blog` | 博客系列 CRUD、Git 文件读取、星标、评论 |
 | Blog Git | `/blog/git` | Git HTTP 后端（仓库读写，Basic Auth 认证） |
 | Boards | `/boards` | 分科板块（规划中） |

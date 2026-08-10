@@ -13,8 +13,9 @@ import time
 
 import pytest
 
-from app.core.err import BizError, ErrCode
-from app.db.models import User
+from app.core.err import BizError
+from app.modules.auth.errors import AuthErr
+from app.db.models import Base, User
 from app.modules.auth.models import RecoveryCode, TOTP
 from app.modules.auth.security import (
     create_temp_token,
@@ -94,7 +95,7 @@ class TestSetup2FABegin:
         user = _create_user(db, username="localuser", account_level="local", email=None)
         with pytest.raises(BizError) as exc:
             _svc().setup_2fa_begin(db, user.id)
-        assert exc.value.errcode == ErrCode.ACCOUNT_LEVEL_INSUFFICIENT
+        assert exc.value.errcode == AuthErr.ACCOUNT_LEVEL_INSUFFICIENT
 
     def should_return_secret_and_uri_for_normal_user(self, db):
         user = _create_user(db, username="normaluser")
@@ -110,7 +111,7 @@ class TestSetup2FABegin:
         _enable_totp_for_user(db, user.id)
         with pytest.raises(BizError) as exc:
             _svc().setup_2fa_begin(db, user.id)
-        assert exc.value.errcode == ErrCode.TOTP_ALREADY_ENABLED
+        assert exc.value.errcode == AuthErr.TOTP_ALREADY_ENABLED
 
     def should_store_encrypted_secret(self, db):
         user = _create_user(db, username="encryptcheck")
@@ -159,14 +160,14 @@ class TestSetup2FAComplete:
         user = _create_user(db, username="nototp")
         with pytest.raises(BizError) as exc:
             _svc().setup_2fa_complete(db, user.id, "123456")
-        assert exc.value.errcode == ErrCode.TOTP_NOT_ENABLED
+        assert exc.value.errcode == AuthErr.TOTP_NOT_ENABLED
 
     def should_reject_invalid_code(self, db):
         user = _create_user(db, username="badcode")
         _svc().setup_2fa_begin(db, user.id)
         with pytest.raises(BizError) as exc:
             _svc().setup_2fa_complete(db, user.id, "000000")
-        assert exc.value.errcode == ErrCode.TOTP_CODE_INVALID
+        assert exc.value.errcode == AuthErr.TOTP_CODE_INVALID
 
     def should_reject_already_enabled(self, db):
         user = _create_user(db, username="alreadyenabled")
@@ -177,7 +178,7 @@ class TestSetup2FAComplete:
         # Second complete should fail
         with pytest.raises(BizError) as exc:
             _svc().setup_2fa_complete(db, user.id, code)
-        assert exc.value.errcode == ErrCode.TOTP_NOT_ENABLED
+        assert exc.value.errcode == AuthErr.TOTP_NOT_ENABLED
 
 
 # ===================================================================
@@ -204,7 +205,7 @@ class TestVerify2FA:
         temp_token = create_temp_token(user.id)
         with pytest.raises(BizError) as exc:
             _svc().verify_2fa(db, temp_token, code="000000")
-        assert exc.value.errcode == ErrCode.TOTP_CODE_INVALID
+        assert exc.value.errcode == AuthErr.TOTP_CODE_INVALID
 
     def should_verify_with_recovery_code(self, db):
         user = _create_user(db, username="recoveruser")
@@ -238,12 +239,12 @@ class TestVerify2FA:
         temp_token = create_temp_token(user.id)
         with pytest.raises(BizError) as exc:
             _svc().verify_2fa(db, temp_token, recovery_code="nonexistent")
-        assert exc.value.errcode == ErrCode.RECOVERY_CODE_INVALID
+        assert exc.value.errcode == AuthErr.RECOVERY_CODE_INVALID
 
     def should_reject_invalid_temp_token(self, db):
         with pytest.raises(BizError) as exc:
             _svc().verify_2fa(db, "invalid-token", code="123456")
-        assert exc.value.errcode == ErrCode.TOKEN_INVALID
+        assert exc.value.errcode == AuthErr.TOKEN_INVALID
 
     def should_override_trust_device_for_admin(self, db):
         """Admin users should always have trust_device=False."""
@@ -290,7 +291,7 @@ class TestDisable2FA:
         user = _create_user(db, username="notenabled")
         with pytest.raises(BizError) as exc:
             _svc().disable_2fa(db, user.id, "123456")
-        assert exc.value.errcode == ErrCode.TOTP_NOT_ENABLED
+        assert exc.value.errcode == AuthErr.TOTP_NOT_ENABLED
 
     def should_downgrade_admin_to_normal(self, db):
         user = _create_user(db, username="admin2fa", account_level="admin")
@@ -311,7 +312,7 @@ class TestDisable2FA:
 
         with pytest.raises(BizError) as exc:
             _svc().disable_2fa(db, user.id, "000000")
-        assert exc.value.errcode == ErrCode.TOTP_CODE_INVALID
+        assert exc.value.errcode == AuthErr.TOTP_CODE_INVALID
 
 
 class TestGet2FAStatus:

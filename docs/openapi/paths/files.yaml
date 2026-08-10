@@ -1,0 +1,148 @@
+status:
+  get:
+    tags: [files]
+    summary: 文件库模块状态
+    operationId: filesStatus
+    responses:
+      "200":
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ModuleStatus"
+
+files:
+  get:
+    tags: [files]
+    summary: 文件列表
+    description: 分页返回文件，支持按分类、审核状态筛选，可按最新或最多下载排序。
+    operationId: listFiles
+    parameters:
+      - name: page
+        in: query
+        required: false
+        schema: { type: integer, default: 1, minimum: 1 }
+      - name: limit
+        in: query
+        required: false
+        schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+      - name: category_id
+        in: query
+        required: false
+        schema: { type: string, maxLength: 50 }
+      - name: status
+        in: query
+        required: false
+        schema: { type: string, enum: [pending, approved, rejected] }
+      - name: sort
+        in: query
+        required: false
+        schema: { type: string, enum: [newest, downloads], default: newest }
+    responses:
+      "200":
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+  post:
+    tags: [files]
+    summary: 上传文件
+    description: 上传后进入待审核状态（pending）。单文件上限 100MB，超限返回 413。
+    operationId: uploadFile
+    security:
+      - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required: [file]
+            properties:
+              file:
+                type: string
+                format: binary
+              category_id: { type: string }
+              description: { type: string }
+              tags: { type: string }
+    responses:
+      "200":
+        description: 上传成功
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+      "413":
+        description: 文件超过大小上限
+
+fileDetail:
+  get:
+    tags: [files]
+    summary: 文件详情
+    description: 每次访问浏览数 +1。
+    operationId: getFileDetail
+    parameters:
+      - name: file_id
+        in: path
+        required: true
+        schema: { type: integer }
+    responses:
+      "200":
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+downloadFile:
+  post:
+    tags: [files]
+    summary: 下载文件
+    description: 下载计数 +1，返回最新下载数。
+    operationId: downloadFile
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: file_id
+        in: path
+        required: true
+        schema: { type: integer }
+    responses:
+      "200":
+        description: 下载成功
+        content:
+          application/json:
+            schema:
+              $ref: "../openapi.yaml#/components/schemas/ApiResp"
+
+components:
+  schemas:
+    FileInfo:
+      type: object
+      properties:
+        id:             { type: integer }
+        original_name:  { type: string }
+        uploader_id:    { type: integer }
+        uploader_name:  { type: string }
+        mime_type:      { type: string }
+        size:           { type: integer }
+        category_id:    { type: string }
+        category_name:  { type: string }
+        description:    { type: string }
+        tags:           { type: array, items: { type: string } }
+        status:         { type: string, enum: [pending, approved, rejected] }
+        review_comment: { type: string, nullable: true }
+        download_count: { type: integer }
+        view_count:     { type: integer }
+        created_at:     { type: string }
+
+    FileCreate:
+      type: object
+      required: [original_name, mime_type]
+      properties:
+        original_name: { type: string }
+        mime_type:     { type: string }
+        category_id:   { type: string }
+        description:   { type: string }
+        tags:          { type: array, items: { type: string } }

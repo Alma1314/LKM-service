@@ -9,7 +9,8 @@ from typing import Any, cast
 from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError
+from app.modules.auth.errors import AuthErr
 from app.core.throttle import RateLimiter
 from app.db.models import now_iso
 from app.db.repo import consume_once, isolated_update
@@ -106,17 +107,17 @@ def consume_phone_code(
 
 def _consume(db: Session, record: Any, code: str) -> bool:
     if record is None:
-        raise BizError(ErrCode.VERIFICATION_CODE_INVALID)
+        raise BizError(AuthErr.VERIFICATION_CODE_INVALID)
 
     now = now_iso()
 
     # 过期检查
     if record.expires_at <= now:
-        raise BizError(ErrCode.VERIFICATION_CODE_EXPIRED)
+        raise BizError(AuthErr.VERIFICATION_CODE_EXPIRED)
 
     # 失败尝试次数过多
     if record.failed_attempts >= _MAX_FAILED_ATTEMPTS:
-        raise BizError(ErrCode.VERIFICATION_CODE_INVALID)
+        raise BizError(AuthErr.VERIFICATION_CODE_INVALID)
 
     # 验证码不匹配 —— 通过子事务（保存点）递增计数器，
     contact = getattr(record, "email", None) or getattr(record, "phone", "")
@@ -129,7 +130,7 @@ def _consume(db: Session, record: Any, code: str) -> bool:
             .values(failed_attempts=record_cls.failed_attempts + 1),
         )
         db.refresh(record)
-        raise BizError(ErrCode.VERIFICATION_CODE_INVALID)
+        raise BizError(AuthErr.VERIFICATION_CODE_INVALID)
 
     record_cls = cast(type[Any], type(record))
     if not consume_once(
@@ -141,7 +142,7 @@ def _consume(db: Session, record: Any, code: str) -> bool:
         record_cls.failed_attempts < _MAX_FAILED_ATTEMPTS,
         record_cls.expires_at > now,
     ):
-        raise BizError(ErrCode.VERIFICATION_CODE_INVALID)
+        raise BizError(AuthErr.VERIFICATION_CODE_INVALID)
 
     return True
 
@@ -153,7 +154,7 @@ def check_code_rate_limit(
     使用全局内存中的滑动窗口速率限制器。
     """
     if not _rate_limiter.check(key, max_count, window):
-        raise BizError(ErrCode.VERIFICATION_CODE_RATE_LIMIT)
+        raise BizError(AuthErr.VERIFICATION_CODE_RATE_LIMIT)
 
 def _expires_at() -> datetime.datetime:
     return now_iso() + datetime.timedelta(minutes=_CODE_EXPIRE_MINUTES)

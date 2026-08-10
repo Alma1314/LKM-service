@@ -14,7 +14,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
-from app.core.err import BizError, ErrCode, respond
+from app.core.err import BizError, CommonErr, respond
+from app.modules.auth.errors import AuthErr
 from app.db.models import User
 from app.db.repo import get_or_raise
 from app.db.session import get_session
@@ -77,7 +78,7 @@ def bind_email_request(
     # 检查邮箱是否已被占用
     existing = db.query(User).filter(User.email == body.email).first()
     if existing:
-        raise BizError(ErrCode.ALREADY_REGISTERED, "Email already bound to another account")
+        raise BizError(AuthErr.ALREADY_REGISTERED, "Email already bound to another account")
 
     rate_limit_key = f"bind_email:{body.email}"
     check_code_rate_limit(rate_limit_key)
@@ -101,9 +102,9 @@ def bind_email_verify(
     # 确保邮箱仍未被占用（可能在请求和验证之间被占用）
     existing = db.query(User).filter(User.email == body.email).first()
     if existing:
-        raise BizError(ErrCode.ALREADY_REGISTERED, "Email already bound to another account")
+        raise BizError(AuthErr.ALREADY_REGISTERED, "Email already bound to another account")
 
-    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == cur.id)
+    user = get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == cur.id)
 
     user.email = body.email
     db.flush()
@@ -126,7 +127,7 @@ def bind_phone_request(
     # 检查手机号是否已被占用
     existing = db.query(User).filter(User.phone == body.phone).first()
     if existing:
-        raise BizError(ErrCode.ALREADY_REGISTERED, "Phone already bound to another account")
+        raise BizError(AuthErr.ALREADY_REGISTERED, "Phone already bound to another account")
 
     rate_limit_key = f"bind_phone:{body.phone}"
     check_code_rate_limit(rate_limit_key)
@@ -150,9 +151,9 @@ def bind_phone_verify(
     # 确保手机号仍未被占用
     existing = db.query(User).filter(User.phone == body.phone).first()
     if existing:
-        raise BizError(ErrCode.ALREADY_REGISTERED, "Phone already bound to another account")
+        raise BizError(AuthErr.ALREADY_REGISTERED, "Phone already bound to another account")
 
-    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == cur.id)
+    user = get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == cur.id)
 
     user.phone = body.phone
     db.flush()
@@ -170,7 +171,7 @@ def get_settings(
     db: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """返回当前用户的绑定状态（邮箱 / 手机号 / GitHub / 2FA）。"""
-    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == cur.id)
+    user = get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == cur.id)
     gh = (
         db.query(UserOAuth)
         .filter(UserOAuth.user_id == cur.id, UserOAuth.provider == "github")
@@ -198,21 +199,21 @@ def unbind(
 ):
     """解绑邮箱 / 手机号 / GitHub。已开启 2FA 时需携带 TOTP 码二次验证。"""
     if binding_type not in _ALLOWED_UNBIND:
-        raise BizError(ErrCode.INVALID_INPUT, f"Unsupported binding type: {binding_type}")
+        raise BizError(CommonErr.INVALID_INPUT, f"Unsupported binding type: {binding_type}")
 
-    user = get_or_raise(db, User, ErrCode.USER_NOT_FOUND, User.id == cur.id)
+    user = get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == cur.id)
 
     if binding_type in ("email", "phone"):
         # 2FA 门槛：已开启 2FA 必须带 TOTP 码
         totp = db.query(TOTP).filter(TOTP.user_id == cur.id, TOTP.enabled.is_(True)).first()
         if totp is not None:
             if not body.code:
-                raise BizError(ErrCode.TOTP_CODE_INVALID, "2FA 已开启，解绑需要动态验证码")
+                raise BizError(AuthErr.TOTP_CODE_INVALID, "2FA 已开启，解绑需要动态验证码")
             service_2fa.verify_user_totp(db, cur.id, body.code)
 
         # 保留至少一种登录方式：normal 用户要求 email/phone/github 至少留一个
         if _count_login_ways(user) <= 1:
-            raise BizError(ErrCode.INVALID_INPUT, "至少需要保留一种登录方式（邮箱/手机号/GitHub）")
+            raise BizError(CommonErr.INVALID_INPUT, "至少需要保留一种登录方式（邮箱/手机号/GitHub）")
 
         if binding_type == "email":
             user.email = None
@@ -229,7 +230,7 @@ def unbind(
     )
     db.flush()
     if not deleted:
-        raise BizError(ErrCode.INVALID_INPUT, "GitHub 尚未绑定")
+        raise BizError(CommonErr.INVALID_INPUT, "GitHub 尚未绑定")
     return {"message": "github unbound"}
 
 
