@@ -155,6 +155,5 @@ def check_code_rate_limit(
     if not _rate_limiter.check(key, max_count, window):
         raise BizError(ErrCode.VERIFICATION_CODE_RATE_LIMIT)
 
-def _expires_at() -> str:
-    base = datetime.datetime.fromisoformat(now_iso())
-    return (base + datetime.timedelta(minutes=_CODE_EXPIRE_MINUTES)).isoformat()
+def _expires_at() -> datetime.datetime:
+    return now_iso() + datetime.timedelta(minutes=_CODE_EXPIRE_MINUTES)

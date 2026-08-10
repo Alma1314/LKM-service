@@ -1,3 +1,5 @@
+import datetime
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.columns.models import (
@@ -25,8 +27,8 @@ class ColumnApplicationInfo(BaseModel):
     status: ColumnApplicationStatus = ColumnApplicationStatus.PENDING
     reviewer_id: int | None = None
     review_note: str | None = None
-    created_at: str
-    reviewed_at: str | None = None
+    created_at: datetime.datetime
+    reviewed_at: datetime.datetime | None = None
 
 
 class ColumnApplicationReview(BaseModel):
@@ -45,8 +47,8 @@ class ColumnInfo(BaseModel):
     description: str
     cover_url: str | None = None
     status: ColumnStatus = ColumnStatus.ACTIVE
-    created_at: str
-    updated_at: str
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
 
 
 class ColumnPostCreate(BaseModel):
@@ -65,9 +67,9 @@ class ColumnPostInfo(BaseModel):
     title: str
     summary: str | None = None
     status: ColumnPostStatus = ColumnPostStatus.DRAFT
-    created_at: str
-    updated_at: str
-    published_at: str | None = None
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
+    published_at: datetime.datetime | None = None
 
 
 class ReviewResultData(BaseModel):

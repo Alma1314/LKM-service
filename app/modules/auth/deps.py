@@ -60,22 +60,15 @@ def _resolve_current_user(token: str, db: Session) -> CurrentUser:
 
     # 密码更改会撤销现有访问令牌
     # JWT iat 必须 >= user.updated_at（允许 5 秒时钟偏差容差）
+    # user.updated_at 为 timezone-aware datetime，可直接与 iat 时间相减
     if user.updated_at:
-        try:
-            token_iat = payload.get("iat")
-            if token_iat is not None:
-                import datetime as _dt
-                updated_at: str = user.updated_at  # type: ignore[assignment]
-                updated = _dt.datetime.fromisoformat(updated_at)
-                iat = float(token_iat)  # type: ignore[arg-type]
-                token_time = _dt.datetime.fromtimestamp(iat, tz=_dt.timezone.utc)
-                if updated - token_time > _dt.timedelta(seconds=5):
-                    raise BizError(ErrCode.TOKEN_EXPIRED, "Password changed – please login again")
-        except ValueError:
-            import logging
-            logging.getLogger("auth.deps").warning(
-                "Failed to parse updated_at/iat for token revocation check (user_id=%s)", user.id
-            )
+        token_iat = payload.get("iat")
+        if token_iat is not None:
+            import datetime as _dt
+            updated: _dt.datetime = user.updated_at  # type: ignore[assignment]
+            token_time = _dt.datetime.fromtimestamp(float(token_iat), tz=_dt.timezone.utc)
+            if updated - token_time > _dt.timedelta(seconds=5):
+                raise BizError(ErrCode.TOKEN_EXPIRED, "Password changed – please login again")
 
     profile = user.profile
     role: str = profile.role if profile else "member"

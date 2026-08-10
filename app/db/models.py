@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, TypeDecorator
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from app.modules.blog.models import BlogSeriesStatus
 from app.modules.columns.models import ColumnApplicationStatus, ColumnPostStatus, ColumnStatus
@@ -23,16 +23,35 @@ class Base(DeclarativeBase):
     pass
 
 
-def now_iso() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+def now_iso() -> datetime.datetime:
+    """当前 UTC 时间（timezone-aware），用于默认值与比较。"""
+    return datetime.datetime.now(datetime.timezone.utc)
 
 
-def expires_at(days: float = 0, minutes: float = 0) -> str:
-    """从现在起 days/minutes 后的 ISO 时间戳。"""
-    return (
-        datetime.datetime.now(datetime.timezone.utc)
-        + datetime.timedelta(days=days, minutes=minutes)
-    ).isoformat()
+def expires_at(days: float = 0, minutes: float = 0) -> datetime.datetime:
+    """从现在起 days/minutes 后的 UTC 时间（timezone-aware）。"""
+    return datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
+        days=days, minutes=minutes
+    )
+
+
+class UTCDateTime(TypeDecorator):
+    """带时区的 UTC 时间列类型。
+
+    底层使用 DateTime(timezone=True)；但 SQLite 不保存时区，读回时会是 naive，
+    这里统一在读取时补上 UTC 时区，保证与 now_iso()（aware）比较不受
+    "offset-naive vs offset-aware" 问题影响（Postgres 本就返回 aware，直接透传）。
+    """
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_result_value(
+        self, value: datetime.datetime | None, dialect
+    ) -> datetime.datetime | None:
+        if value is not None and value.tzinfo is None:
+            return value.replace(tzinfo=datetime.timezone.utc)
+        return value
 
 
 class User(Base):
@@ -45,11 +64,17 @@ class User(Base):
     phone: Mapped[str | None] = mapped_column(String(20), unique=True, nullable=True)
     account_level: Mapped[str] = mapped_column(String(10), nullable=False, default="local")
     is_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    locked_until: Mapped[str | None] = mapped_column(Text, nullable=True)
+    locked_until: Mapped[datetime.datetime | None] = mapped_column(
+        UTCDateTime, nullable=True
+    )
     failed_login_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
-    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
     profile: Mapped["Profile"] = relationship(
         back_populates="user", uselist=False, cascade="all, delete-orphan"
@@ -96,8 +121,12 @@ class ColumnApplication(Base):
     )
     reviewer_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
-    reviewed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    reviewed_at: Mapped[datetime.datetime | None] = mapped_column(
+        UTCDateTime, nullable=True
+    )
     user: Mapped["User"] = relationship(
         foreign_keys=[user_id], back_populates="column_applications"
     )
@@ -123,8 +152,12 @@ class Column(Base):
     status: Mapped[ColumnStatus] = mapped_column(
         String(20), nullable=False, default=ColumnStatus.ACTIVE
     )
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
-    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
     owner: Mapped["User"] = relationship(back_populates="owned_columns")
     application: Mapped["ColumnApplication | None"] = relationship(back_populates="column")
@@ -145,9 +178,15 @@ class ColumnPost(Base):
     status: Mapped[ColumnPostStatus] = mapped_column(
         String(20), nullable=False, default=ColumnPostStatus.PUBLISHED
     )
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
-    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
-    published_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    published_at: Mapped[datetime.datetime | None] = mapped_column(
+        UTCDateTime, nullable=True
+    )
 
     column: Mapped["Column"] = relationship(back_populates="posts")
     author: Mapped["User"] = relationship(back_populates="posts")
@@ -170,8 +209,12 @@ class ForumPost(Base):
     comment_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     bookmark_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     forward_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
-    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
     author: Mapped["User"] = relationship(back_populates="forum_posts")
     comments: Mapped[list["ForumComment"]] = relationship(
@@ -191,7 +234,9 @@ class ForumComment(Base):
         ForeignKey("forum_comments.id"), nullable=True
     )
     like_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
     post: Mapped["ForumPost"] = relationship(back_populates="comments")
     user: Mapped["User"] = relationship(back_populates="forum_comments")
@@ -215,8 +260,12 @@ class BlogSeries(Base):
     status: Mapped[BlogSeriesStatus] = mapped_column(
         String(20), nullable=False, default=BlogSeriesStatus.ACTIVE
     )
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
-    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
     owner: Mapped["User"] = relationship(back_populates="blog_series")
     comments: Mapped[list["BlogComment"]] = relationship(
@@ -232,7 +281,9 @@ class BlogStar(Base):
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
     series_id: Mapped[int] = mapped_column(ForeignKey("blog_series.id"), primary_key=True)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
     user: Mapped["User"] = relationship()
     series: Mapped["BlogSeries"] = relationship(back_populates="stars")
@@ -246,8 +297,12 @@ class BlogComment(Base):
     series_id: Mapped[int] = mapped_column(ForeignKey("blog_series.id"), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("blog_comments.id"), nullable=True)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
-    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
     user: Mapped["User"] = relationship()
     series: Mapped["BlogSeries"] = relationship(back_populates="comments")

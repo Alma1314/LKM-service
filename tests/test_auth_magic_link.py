@@ -6,30 +6,12 @@ import hashlib
 import secrets
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from app.core.err import BizError, ErrCode
-from app.db.models import Base, User
 import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
+from app.core.err import BizError, ErrCode
+from app.db.models import User
 from app.modules.auth.models import MagicLink, TOTP
 from app.modules.auth.providers.console import ConsoleEmailProvider
-
-
-@pytest.fixture
-def db():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-    Base.metadata.create_all(bind=engine)
-    SessionLocal: sessionmaker = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 
 def _service():
@@ -62,9 +44,9 @@ def _make_magic_link(db, email, purpose="login", used=False, expired=False):
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
 
     if expired:
-        expires = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)).isoformat()
+        expires = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)
     else:
-        expires = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=15)).isoformat()
+        expires = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=15)
 
     record = MagicLink(
         email=email,

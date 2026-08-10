@@ -1,28 +1,9 @@
 """Tests for Github OAuth — service_oauth auth URL generation and callback logic."""
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from app.core.config import settings
-from app.db.models import Base
 import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
+from app.core.config import settings
 from app.modules.auth.models import OAuthState
-
-
-@pytest.fixture
-def db():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-    Base.metadata.create_all(bind=engine)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 
 class TestGithubAuthUrl:
@@ -129,7 +110,8 @@ class TestOauthRouterRedirect:
 
         assert isinstance(resp, RedirectResponse)
         assert resp.status_code in (302, 307)
-        qs = parse_qs(urlparse(resp.headers["location"]).query)
+        # 令牌通过 URL fragment 回传，不进 query，避免泄露
+        qs = parse_qs(urlparse(resp.headers["location"]).fragment)
         assert qs["access_token"] == ["acc123"]
         assert qs["refresh_token"] == ["ref123"]
         assert "temp_token" not in qs
@@ -159,7 +141,7 @@ class TestOauthRouterRedirect:
         ):
             resp = asyncio.run(router_oauth.github_callback(code="c", state="s", db=db))
 
-        qs = parse_qs(urlparse(resp.headers["location"]).query)
+        qs = parse_qs(urlparse(resp.headers["location"]).fragment)
         assert qs["temp_token"] == ["tmp999"]
         assert qs["requires_2fa"] == ["true"]
         assert "access_token" not in qs
@@ -180,7 +162,8 @@ class TestOauthRouterRedirect:
             resp = asyncio.run(router_oauth.github_bind_callback(code="c", state="s", db=db))
 
         assert isinstance(resp, RedirectResponse)
-        qs = parse_qs(urlparse(resp.headers["location"]).query)
+        # 绑定回调结果经 URL fragment 回传
+        qs = parse_qs(urlparse(resp.headers["location"]).fragment)
         assert qs["success"] == ["1"]
 
     def should_redirect_bind_callback_on_biz_error(self, db):
@@ -199,6 +182,6 @@ class TestOauthRouterRedirect:
             resp = asyncio.run(router_oauth.github_bind_callback(code="c", state="s", db=db))
 
         assert isinstance(resp, RedirectResponse)
-        qs = parse_qs(urlparse(resp.headers["location"]).query)
+        qs = parse_qs(urlparse(resp.headers["location"]).fragment)
         assert qs["success"] == ["0"]
         assert qs["error"] == ["OAUTH_EMAIL_TAKEN"]

@@ -54,6 +54,31 @@ def _is_starred(db: Session, series_id: int, user_id: int) -> bool:
     )
 
 
+def _star_counts(db: Session, series_ids: list[int]) -> dict[int, int]:
+    """批量统计多个系列的 star 数量，避免逐条查询的 N+1。"""
+    if not series_ids:
+        return {}
+    rows = (
+        db.query(BlogStar.series_id, func.count(BlogStar.user_id))
+        .filter(BlogStar.series_id.in_(set(series_ids)))
+        .group_by(BlogStar.series_id)
+        .all()
+    )
+    return {sid: cnt for sid, cnt in rows}
+
+
+def _starred_ids(db: Session, series_ids: list[int], user_id: int) -> set[int]:
+    """批量查当前用户 star 了哪些系列，避免逐条查询的 N+1。"""
+    if not series_ids:
+        return set()
+    rows = (
+        db.query(BlogStar.series_id)
+        .filter(BlogStar.series_id.in_(set(series_ids)), BlogStar.user_id == user_id)
+        .all()
+    )
+    return {sid for (sid,) in rows}
+
+
 def _get_profile(db: Session, user_id: int) -> ProfileInfo | None:
     profile = db.query(Profile).filter(Profile.user_id == user_id).first()
     if profile:
@@ -90,11 +115,14 @@ def list_series(
     db: Session, current_user_id: int | None = None
 ) -> list[BlogSeriesInfo]:
     items = db.query(BlogSeries).order_by(BlogSeries.id.desc()).all()
+    ids = [s.id for s in items]
+    counts = _star_counts(db, ids)
+    starred_ids = _starred_ids(db, ids, current_user_id) if current_user_id else set()
     result: list[BlogSeriesInfo] = []
     for s in items:
-        sc = _star_count(db, s.id)
-        starred = _is_starred(db, s.id, current_user_id) if current_user_id else False
-        result.append(_series_to_info(s, star_count=sc, is_starred=starred))
+        result.append(
+            _series_to_info(s, star_count=counts.get(s.id, 0), is_starred=s.id in starred_ids)
+        )
     return result
 
 

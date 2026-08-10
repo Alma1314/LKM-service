@@ -1,10 +1,6 @@
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from app.core.err import BizError, ErrCode
-from app.db.models import Base
-from app.db.models import User
 from app.modules.columns.models import ColumnApplicationStatus
 from app.modules.columns.schemas import (
     ColumnApplicationCreate,
@@ -24,44 +20,9 @@ from app.modules.columns.service import (
 )
 #以下是为user请求头校验新增的导入
 import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
-from fastapi.testclient import TestClient
-from app.main import app
-from app.db.models import User
-from app.db.session import get_session
 from app.modules.auth.security import create_access_token, hashpwd
-from sqlalchemy.pool import StaticPool
 
-
-@pytest.fixture
-def db():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},poolclass=StaticPool)
-    Base.metadata.create_all(bind=engine)
-    SessionLocal: sessionmaker = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
-
-@pytest.fixture
-def client(db):
-    def override_get_session():
-        try:
-            yield db
-        finally:
-            pass
-
-    app.dependency_overrides[get_session] = override_get_session
-    
-    try:
-        with TestClient(app) as test_client:
-            yield test_client
-    finally:
-        app.dependency_overrides.clear()
+# db 与 client fixture 均由 tests/conftest.py 提供（内存 sqlite 会话 + httpx.AsyncClient）
 
 
 def _user(db, username="alice", email="alice@example.com"):
@@ -282,7 +243,7 @@ class TestColumnRoutes:
         token = create_access_token(user_id=user_id, account_level="normal", role="member")
         return user_id, token
 
-    def should_reject_application_without_auth_header(self, client, db):
+    async def should_reject_application_without_auth_header(self, client, db):
         self._setup_user(db)
         application_data = {
             "user_id": 1,
@@ -291,19 +252,19 @@ class TestColumnRoutes:
             "reason": "希望长期整理数学学习笔记。",
         }
 
-        response = client.post(
+        response = await client.post(
             "/api/v1/columns/applications",
             json=application_data)
 
         assert response.status_code == 403
         assert response.json()["code"] == 1005
 
-    def should_reject_application_when_token_user_mismatches_body_user(self, client, db):
+    async def should_reject_application_when_token_user_mismatches_body_user(self, client, db):
         user_id_1, token = self._setup_user(db)
         # Create a second user so token for user_id=2 is valid
         _user(db, username="other", email="other@example.com")
         token_2 = create_access_token(user_id=2, account_level="normal", role="member")
-        resp = client.post(
+        resp = await client.post(
             "/api/v1/columns/applications",
             headers={"Authorization": f"Bearer {token_2}"},
             json={
@@ -317,9 +278,9 @@ class TestColumnRoutes:
         assert resp.status_code == 403
         assert resp.json()["code"] == 1005
 
-    def should_accept_application_when_token_user_matches_body_user(self, client, db):
+    async def should_accept_application_when_token_user_matches_body_user(self, client, db):
         user_id, token = self._setup_user(db)
-        resp = client.post(
+        resp = await client.post(
             "/api/v1/columns/applications",
             headers={"Authorization": f"Bearer {token}"},
             json={

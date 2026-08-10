@@ -2,16 +2,9 @@ import os
 import subprocess
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
 from app.core.err import BizError, ErrCode
-from app.db.models import Base
-from app.db.session import get_session
-from app.main import app
 from app.modules.auth.schemas import ProfileUpdate
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.auth.service import update_profile
@@ -36,24 +29,7 @@ from app.modules.blog.service import (
 
 
 # ---- fixtures ----
-
-
-@pytest.fixture
-def db():
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
-    Base.metadata.create_all(bind=engine)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
+# db 与 client fixture 均由 tests/conftest.py 提供（内存 sqlite 会话 + httpx.AsyncClient）
 
 
 @pytest.fixture
@@ -62,22 +38,6 @@ def blog_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "blog_repo_dir", path)
     yield path
     monkeypatch.setattr(settings, "blog_repo_dir", "blog_repos")
-
-
-@pytest.fixture
-def client(db):
-    def override_get_session():
-        try:
-            yield db
-        finally:
-            pass
-
-    app.dependency_overrides[get_session] = override_get_session
-    try:
-        with TestClient(app) as test_client:
-            yield test_client
-    finally:
-        app.dependency_overrides.clear()
 
 
 # ---- helpers ----
@@ -497,9 +457,9 @@ class TestBlogRoutes:
     def _auth_header(self, token: str):
         return {"Authorization": f"Bearer {token}"}
 
-    def should_create_series_via_api(self, client, db, blog_dir):
+    async def should_create_series_via_api(self, client, db, blog_dir):
         uid, token = self._setup_user(db)
-        resp = client.post(
+        resp = await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
             json={
@@ -514,72 +474,72 @@ class TestBlogRoutes:
         assert data["repo_name"] == "api-blog"
         assert os.path.isdir(os.path.join(blog_dir, "api-blog.git"))
 
-    def should_reject_create_without_auth(self, client):
-        resp = client.post(
+    async def should_reject_create_without_auth(self, client):
+        resp = await client.post(
             "/api/v1/blog/series",
             json={"title": "X", "repo_name": "x"},
         )
         assert resp.status_code == 403
 
-    def should_list_series_via_api(self, client, db, blog_dir):
+    async def should_list_series_via_api(self, client, db, blog_dir):
         uid, token = self._setup_user(db)
-        client.post(
+        await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
             json={"title": "A", "repo_name": "a"},
         )
 
-        resp = client.get("/api/v1/blog/series")
+        resp = await client.get("/api/v1/blog/series")
         assert resp.status_code == 200
         assert len(resp.json()["data"]["items"]) == 1
         assert resp.json()["data"]["items"][0]["star_count"] == 0
         assert not resp.json()["data"]["items"][0]["is_starred"]
 
-    def should_list_series_with_star_as_authenticated(self, client, db, blog_dir):
+    async def should_list_series_with_star_as_authenticated(self, client, db, blog_dir):
         uid, token = self._setup_user(db)
-        client.post(
+        await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
             json={"title": "A", "repo_name": "a"},
         )
-        client.post("/api/v1/blog/series/1/star", headers=self._auth_header(token))
+        await client.post("/api/v1/blog/series/1/star", headers=self._auth_header(token))
 
-        resp = client.get("/api/v1/blog/series", headers=self._auth_header(token))
+        resp = await client.get("/api/v1/blog/series", headers=self._auth_header(token))
         item = resp.json()["data"]["items"][0]
         assert item["star_count"] == 1
         assert item["is_starred"]
 
-    def should_get_series_detail_via_api(self, client, db, blog_dir):
+    async def should_get_series_detail_via_api(self, client, db, blog_dir):
         uid, token = self._setup_user(db)
-        client.post(
+        await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
             json={"title": "A", "repo_name": "a"},
         )
 
-        resp = client.get("/api/v1/blog/series/1")
+        resp = await client.get("/api/v1/blog/series/1")
         assert resp.status_code == 200
         assert resp.json()["data"]["title"] == "A"
         assert resp.json()["data"]["file_tree"] is None
 
-    def should_update_series_via_api(self, client, db, blog_dir):
+    async def should_update_series_via_api(self, client, db, blog_dir):
         uid, token = self._setup_user(db)
-        client.post(
+        await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
             json={"title": "A", "repo_name": "a"},
         )
 
-        resp = client.put(
+        resp = await client.put(
             "/api/v1/blog/series/1",
             headers=self._auth_header(token),
             json={"title": "Updated"},
         )
         assert resp.json()["data"]["title"] == "Updated"
 
-    def should_reject_update_by_other_via_api(self, client, db, blog_dir):
+    async def should_reject_update_by_other_via_api(self, client, db, blog_dir):
         uid, token = self._setup_user(db)
-        client.post(
+        await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
             json={"title": "A", "repo_name": "a"},
@@ -589,52 +549,52 @@ class TestBlogRoutes:
         _user(db, username="other", email="other@example.com")
         token2 = create_access_token(user_id=2, account_level="normal", role="member")
 
-        resp = client.put(
+        resp = await client.put(
             "/api/v1/blog/series/1",
             headers=self._auth_header(token2),
             json={"title": "Stolen"},
         )
         assert resp.status_code == 403
 
-    def should_delete_series_via_api(self, client, db, blog_dir):
+    async def should_delete_series_via_api(self, client, db, blog_dir):
         uid, token = self._setup_user(db)
-        client.post(
+        await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
             json={"title": "A", "repo_name": "a"},
         )
 
-        resp = client.delete("/api/v1/blog/series/1", headers=self._auth_header(token))
+        resp = await client.delete("/api/v1/blog/series/1", headers=self._auth_header(token))
         assert resp.status_code == 200
         # verify gone
-        resp = client.get("/api/v1/blog/series/1")
+        resp = await client.get("/api/v1/blog/series/1")
         assert resp.json()["code"] == 3001
 
-    def should_star_via_api(self, client, db, blog_dir):
+    async def should_star_via_api(self, client, db, blog_dir):
         uid, token = self._setup_user(db)
-        client.post(
+        await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
             json={"title": "A", "repo_name": "a"},
         )
 
-        resp = client.post("/api/v1/blog/series/1/star", headers=self._auth_header(token))
+        resp = await client.post("/api/v1/blog/series/1/star", headers=self._auth_header(token))
         assert resp.json()["data"]["starred"]
         assert resp.json()["data"]["star_count"] == 1
 
-        resp = client.post("/api/v1/blog/series/1/star", headers=self._auth_header(token))
+        resp = await client.post("/api/v1/blog/series/1/star", headers=self._auth_header(token))
         assert not resp.json()["data"]["starred"]
         assert resp.json()["data"]["star_count"] == 0
 
-    def should_comment_via_api(self, client, db, blog_dir):
+    async def should_comment_via_api(self, client, db, blog_dir):
         uid, token = self._setup_user(db)
-        client.post(
+        await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
             json={"title": "A", "repo_name": "a"},
         )
 
-        resp = client.post(
+        resp = await client.post(
             "/api/v1/blog/series/1/comments",
             headers=self._auth_header(token),
             json={"content": "Great!"},
@@ -642,57 +602,57 @@ class TestBlogRoutes:
         assert resp.status_code == 200
         assert resp.json()["data"]["content"] == "Great!"
 
-    def should_list_comments_threaded_via_api(self, client, db, blog_dir):
+    async def should_list_comments_threaded_via_api(self, client, db, blog_dir):
         uid, token = self._setup_user(db)
-        client.post(
+        await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
             json={"title": "A", "repo_name": "a"},
         )
-        resp = client.post(
+        resp = await client.post(
             "/api/v1/blog/series/1/comments",
             headers=self._auth_header(token),
             json={"content": "Root"},
         )
         parent_id = resp.json()["data"]["id"]
 
-        client.post(
+        await client.post(
             "/api/v1/blog/series/1/comments",
             headers=self._auth_header(token),
             json={"content": "Child", "parent_id": parent_id},
         )
 
-        resp = client.get("/api/v1/blog/series/1/comments")
+        resp = await client.get("/api/v1/blog/series/1/comments")
         items = resp.json()["data"]["items"]
         assert len(items) == 1
         assert len(items[0]["replies"]) == 1
         assert items[0]["replies"][0]["content"] == "Child"
 
-    def should_delete_comment_via_api(self, client, db, blog_dir):
+    async def should_delete_comment_via_api(self, client, db, blog_dir):
         uid, token = self._setup_user(db)
-        client.post(
+        await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
             json={"title": "A", "repo_name": "a"},
         )
-        client.post(
+        await client.post(
             "/api/v1/blog/series/1/comments",
             headers=self._auth_header(token),
             json={"content": "Delete me"},
         )
 
-        resp = client.delete(
+        resp = await client.delete(
             "/api/v1/blog/series/1/comments/1", headers=self._auth_header(token)
         )
         assert resp.status_code == 200
 
-        resp = client.get("/api/v1/blog/series/1/comments")
+        resp = await client.get("/api/v1/blog/series/1/comments")
         assert resp.json()["data"]["items"] == []
 
-    def should_get_404_for_nonexistent_series(self, client):
-        resp = client.get("/api/v1/blog/series/999")
+    async def should_get_404_for_nonexistent_series(self, client):
+        resp = await client.get("/api/v1/blog/series/999")
         assert resp.json()["code"] == 3001
 
-    def should_require_auth_for_star(self, client):
-        resp = client.post("/api/v1/blog/series/1/star")
+    async def should_require_auth_for_star(self, client):
+        resp = await client.post("/api/v1/blog/series/1/star")
         assert resp.status_code == 403

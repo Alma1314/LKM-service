@@ -422,6 +422,13 @@ def complete_passkey_login(db: Session, credential: dict[str, Any]) -> dict[str,
         raise BizError(ErrCode.PASSKEY_VERIFICATION_FAILED, "Invalid signature")
 
     reported_count = auth_data["sign_count"]
+    # WebAuthn（W3C）建议：计数回拨表明认证器可能被克隆/凭据被复制，应视为认证失败。
+    # 若计数回拨则拒绝本次认证，低于 0 只会等于 0。< 分支仅在认证器乱序时触发，属防御性判断。
+    if reported_count < passkey.sign_count:
+        raise BizError(
+            ErrCode.PASSKEY_VERIFICATION_FAILED,
+            "Authenticator sign counter rolled back (potential clone)",
+        )
     if reported_count > passkey.sign_count:
         passkey.sign_count = reported_count
     db.flush()

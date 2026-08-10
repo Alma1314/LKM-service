@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.models import Base, now_iso
+from app.db.models import Base, now_iso, UTCDateTime
 
 if TYPE_CHECKING:
     from app.db.models import User
@@ -21,9 +22,15 @@ class RefreshToken(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     mfa_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    expires_at: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
-    revoked_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    revoked_at: Mapped[datetime.datetime | None] = mapped_column(
+        UTCDateTime, nullable=True
+    )
 
     user: Mapped["User"] = relationship(back_populates="refresh_tokens")
 
@@ -39,10 +46,14 @@ class EmailVerification(Base):
     code_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     purpose: Mapped[str] = mapped_column(String(50), nullable=False)
     nonce: Mapped[str] = mapped_column(String(32), nullable=False, default="")
-    expires_at: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False
+    )
     used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     failed_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
 
 class PhoneVerification(Base):
@@ -56,10 +67,14 @@ class PhoneVerification(Base):
     code_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     purpose: Mapped[str] = mapped_column(String(50), nullable=False)
     nonce: Mapped[str] = mapped_column(String(32), nullable=False, default="")
-    expires_at: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False
+    )
     used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     failed_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
 
 class MagicLink(Base):
@@ -72,9 +87,13 @@ class MagicLink(Base):
     email: Mapped[str] = mapped_column(String(200), nullable=False)
     token_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     purpose: Mapped[str] = mapped_column(String(50), nullable=False)
-    expires_at: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False
+    )
     used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
 
 class UserOAuth(Base):
@@ -88,7 +107,9 @@ class UserOAuth(Base):
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
     provider_user_id: Mapped[str] = mapped_column(String(200), nullable=False)
     provider_email: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
     user: Mapped["User"] = relationship(back_populates="oauth_bindings")
 
@@ -102,7 +123,9 @@ class TOTP(Base):
     confirmed_saved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     failed_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_counter: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
     user: Mapped["User"] = relationship(back_populates="totp")
 
@@ -117,7 +140,9 @@ class RecoveryCode(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     code_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
     user: Mapped["User"] = relationship(back_populates="recovery_codes")
 
@@ -133,7 +158,9 @@ class TempTokenUsage(Base):
     purpose: Mapped[str] = mapped_column(String(20), nullable=False, default="2fa")
     txn_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
 
 class SetupTransaction(Base):
@@ -145,8 +172,12 @@ class SetupTransaction(Base):
     token_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    expires_at: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    expires_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
 
 class PendingRegistration(Base):
@@ -161,8 +192,12 @@ class PendingRegistration(Base):
     email: Mapped[str | None] = mapped_column(String(200), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    expires_at: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    expires_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
 
 class RecoveryTransaction(Base):
@@ -182,9 +217,15 @@ class RecoveryTransaction(Base):
     failed_second_factor_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_setup_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     recovery_jti_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    completed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
-    expires_at: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    completed_at: Mapped[datetime.datetime | None] = mapped_column(
+        UTCDateTime, nullable=True
+    )
+    expires_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
 
 class PasskeyCredential(Base):
@@ -196,7 +237,9 @@ class PasskeyCredential(Base):
     public_key: Mapped[str] = mapped_column(Text, nullable=False)
     sign_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     device_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
     user: Mapped["User"] = relationship(back_populates="passkey_credentials")
 
@@ -209,7 +252,9 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(200), nullable=False)
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
 
 class PasskeyChallenge(Base):
@@ -221,8 +266,12 @@ class PasskeyChallenge(Base):
     challenge_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     challenge: Mapped[str] = mapped_column(Text, nullable=False)
     consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    expires_at: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    expires_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
 
 class OAuthState(Base):
@@ -233,7 +282,13 @@ class OAuthState(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     state: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     purpose: Mapped[str] = mapped_column(String(20), nullable=False)  # "login" or "bind"
-    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 仅 bind 场景：发起绑定的用户
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )  # 仅 bind 场景：发起绑定的用户
     consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    expires_at: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
+    expires_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )

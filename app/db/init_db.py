@@ -1,42 +1,22 @@
-from sqlalchemy import Engine, inspect
-from sqlalchemy import text as sql_text
+"""数据库初始化 —— Alembic 为 schema 唯一权威。
 
-from app.db.models import Base
-from app.db.session import get_engine
-import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
-
-
-def _ensure_auth_columns(engine: Engine) -> None:
-    """create_all 不会更新已存在的表；此处幂等补齐开发期新加的列。"""
-    insp = inspect(engine)
-    if insp.has_table("oauth_states"):
-        cols = {col["name"] for col in insp.get_columns("oauth_states")}
-        if "user_id" not in cols:
-            with engine.begin() as conn:
-                conn.execute(sql_text("ALTER TABLE oauth_states ADD COLUMN user_id INTEGER NULL"))
-
-
-def _ensure_forum_columns(engine: Engine) -> None:
-    """幂等补齐论坛/资料两张表本次新增的列（create_all 不会改已存在的表）。"""
-    insp = inspect(engine)
-    if insp.has_table("forum_posts"):
-        cols = {col["name"] for col in insp.get_columns("forum_posts")}
-        if "forward_count" not in cols:
-            with engine.begin() as conn:
-                conn.execute(
-                    sql_text("ALTER TABLE forum_posts ADD COLUMN forward_count INTEGER NOT NULL DEFAULT 0")
-                )
-    if insp.has_table("profiles"):
-        cols = {col["name"] for col in insp.get_columns("profiles")}
-        if "bio" not in cols:
-            with engine.begin() as conn:
-                conn.execute(sql_text("ALTER TABLE profiles ADD COLUMN bio TEXT NULL"))
+官方推荐：由 Alembic 迁移统一管理 schema（含全新建库、增列、索引等），
+本地 `Base.metadata.create_all` 不参与运行时建表，避免双份 schema 真相源漂移。
+"""
 
 
 def init_db() -> None:
-    # 开发环境自动建表。生产环境使用 Alembic。
-    engine = get_engine()
-    assert engine is not None
-    Base.metadata.create_all(bind=engine)
-    _ensure_auth_columns(engine)
-    _ensure_forum_columns(engine)
+    """把数据库 schema 升到 Alembic head。
+
+    既负责全新环境的建库（基线迁移建全部表），也负责后续的增量迁移。
+    生产与开发复用同一迁移链。
+    """
+    from alembic import command
+    from alembic.config import Config
+    from pathlib import Path
+
+    # 复用后端仓库根下的 alembic.ini（含 script_location 与 env.py），
+    # 迁移沿用 env.py 的 sqlalchemy.url（来自 settings），不在此覆盖。
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    cfg = Config(str(repo_root / "alembic.ini"))
+    command.upgrade(cfg, "head")

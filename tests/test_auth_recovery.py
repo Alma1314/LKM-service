@@ -1,32 +1,15 @@
 """Tests for password recovery (service_recovery)."""
 
+import datetime as dt
 import hashlib
 import re
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from app.core.err import BizError, ErrCode
-from app.db.models import Base, User, Profile
+from app.db.models import User, Profile
 import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
 from app.modules.auth.models import MagicLink, RefreshToken
-
-
-@pytest.fixture
-def db():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-    Base.metadata.create_all(bind=engine)
-    SessionLocal: sessionmaker = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +73,7 @@ def _svc():
 
 
 def should_default_new_recovery_state_and_counters(db):
+    import datetime as dt
     from app.modules.auth.models import RecoveryTransaction
 
     user = _mk_admin(db)
@@ -97,7 +81,7 @@ def should_default_new_recovery_state_and_counters(db):
         txn_id="txn-model",
         user_id=user.id,
         contact=user.email,
-        expires_at="2099-01-01T00:00:00+00:00",
+        expires_at=dt.datetime(2099, 1, 1, tzinfo=dt.timezone.utc),
     )
     db.add(txn)
     db.flush()
@@ -128,7 +112,7 @@ def _create_magic_link(db, email, purpose="reset"):
 
     raw = secrets.token_hex(32)
     token_hash = hashlib.sha256(raw.encode()).hexdigest()
-    expires = (dt.datetime.fromisoformat(_now()) + dt.timedelta(minutes=15)).isoformat()
+    expires = _now() + dt.timedelta(minutes=15)
 
     link = MagicLink(email=email, token_hash=token_hash, purpose=purpose, expires_at=expires)
     db.add(link)
@@ -242,7 +226,7 @@ class TestRecoverByPhone:
         user = _mk_normal(db, username="bob", password="old123", phone="13800001111")
         user.failed_login_attempts = 4
         user.is_locked = True
-        user.locked_until = "2099-01-01T00:00:00+00:00"
+        user.locked_until = dt.datetime(2099, 1, 1, tzinfo=dt.timezone.utc)
         db.flush()
 
         code, _ = _create_phone_code(db, "13800001111", "reset")
@@ -261,7 +245,7 @@ class TestRecoverByPhone:
         tok = RefreshToken(
             user_id=user.id,
             token_hash="abc123",
-            expires_at=(dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=7)).isoformat(),
+            expires_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=7),
         )
         db.add(tok)
         db.flush()
@@ -319,7 +303,7 @@ class TestRecoverByEmailCode:
         user = _mk_normal(db, username="bob", password="old123", email="bob@example.com")
         user.failed_login_attempts = 3
         user.is_locked = True
-        user.locked_until = "2099-01-01T00:00:00+00:00"
+        user.locked_until = dt.datetime(2099, 1, 1, tzinfo=dt.timezone.utc)
         db.flush()
 
         code, _ = _create_email_code(db, "bob@example.com", "reset")
@@ -337,7 +321,7 @@ class TestRecoverByEmailCode:
         tok = RefreshToken(
             user_id=user.id,
             token_hash="def456",
-            expires_at=(dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=7)).isoformat(),
+            expires_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=7),
         )
         db.add(tok)
         db.flush()
@@ -407,7 +391,7 @@ class TestRecoverByMagicLink:
         user = _mk_normal(db, username="bob", password="old123", email="bob@example.com")
         user.failed_login_attempts = 5
         user.is_locked = True
-        user.locked_until = "2099-01-01T00:00:00+00:00"
+        user.locked_until = dt.datetime(2099, 1, 1, tzinfo=dt.timezone.utc)
         db.flush()
 
         token = _create_magic_link(db, "bob@example.com", "reset")
@@ -425,7 +409,7 @@ class TestRecoverByMagicLink:
         tok = RefreshToken(
             user_id=user.id,
             token_hash="ghi789",
-            expires_at=(dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=7)).isoformat(),
+            expires_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=7),
         )
         db.add(tok)
         db.flush()
@@ -445,7 +429,7 @@ class TestRecoverByMagicLink:
 
         raw = secrets.token_hex(32)
         token_hash = hashlib.sha256(raw.encode()).hexdigest()
-        expires = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)).isoformat()
+        expires = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)
         link = MagicLink(email="bob@example.com", token_hash=token_hash, purpose="reset", expires_at=expires)
         db.add(link)
         db.flush()

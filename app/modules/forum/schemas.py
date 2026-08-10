@@ -1,3 +1,4 @@
+import datetime
 import json
 from typing import Any, Generic, TypeVar, cast
 
@@ -31,7 +32,7 @@ class PostInfo(BaseModel):
     comment_count: int
     bookmark_count: int
     forward_count: int = 0
-    created_at: str
+    created_at: datetime.datetime
 
     @field_validator("tags", mode="before")
     @classmethod
@@ -60,7 +61,7 @@ class CommentInfo(BaseModel):
     floor_number: int
     parent_id: int | None = None
     like_count: int
-    created_at: str
+    created_at: datetime.datetime
 
 
 class PageData(BaseModel, Generic[T]):

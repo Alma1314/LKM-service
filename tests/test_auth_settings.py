@@ -11,11 +11,8 @@ import json
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from app.core.err import BizError, ErrCode
-from app.db.models import Base
 import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
 
 
@@ -25,24 +22,8 @@ def _unwrap(response):
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Tests
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def db():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-    Base.metadata.create_all(bind=engine)
-    SessionLocal: sessionmaker = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 
 # ---------------------------------------------------------------------------

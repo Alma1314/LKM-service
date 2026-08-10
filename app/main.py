@@ -84,13 +84,12 @@ def create_app() -> FastAPI:
 
     from strawberry.fastapi import GraphQLRouter
 
-    from app.modules.forum.graphql import schema as forum_graphql_schema
+    from app.modules.forum.graphql import GraphQLContext, schema as forum_graphql_schema
     from app.db.session import get_session as get_graphql_session
-    from typing import Any
 
-    async def _graphql_context(db: Any = Depends(get_graphql_session)) -> dict[str, Any]:
+    async def _graphql_context(db=Depends(get_graphql_session)) -> GraphQLContext:
         # 会话生命周期由 FastAPI 的 Depends 管理，解析器只读不关闭
-        return {"db": db}
+        return GraphQLContext(db=db)
 
     graphql_router = GraphQLRouter(
         forum_graphql_schema,

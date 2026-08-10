@@ -127,7 +127,7 @@ def resp_json(
 
     return JSONResponse(
         status_code=status,
-        content=ApiResp(code=errcode, msg=detail or msg, data=data).model_dump(),
+        content=ApiResp(code=errcode, msg=detail or msg, data=data).model_dump(mode="json"),
     )
 
 

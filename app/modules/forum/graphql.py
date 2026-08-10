@@ -23,11 +23,13 @@
 """
 
 import json
+from dataclasses import dataclass
 
 import strawberry
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from strawberry import ID
+from strawberry.fastapi import BaseContext
 from strawberry.types.info import Info
 
 from app.db.models import ForumPost, User
@@ -68,8 +70,8 @@ class PostConnection:
 
 
 def _iso_text(p: ForumPost) -> str:
-    """created_at 可能是文本或日期对象，统一转字符串。"""
-    return p.created_at if isinstance(p.created_at, str) else str(p.created_at)
+    """created_at 是 timezone-aware datetime，转 ISO 字符串输出给前端。"""
+    return p.created_at.isoformat()
 
 
 def _display_name(user: User) -> str | None:
@@ -118,9 +120,20 @@ def _post_to_graphql(p: ForumPost, author: Author | None) -> Post:
     )
 
 
+@dataclass
+class GraphQLContext(BaseContext):
+    """GraphQL 请求上下文：持有当前请求的数据库会话。
+
+    会话由 main.py 中 GraphQLRouter 的 context_getter 经 FastAPI 依赖注入
+    （Depends(get_session)），与 REST 端点共用同一会话依赖，便于测试 override。
+    """
+
+    db: Session
+
+
 def _get_db(info: Info) -> Session:
-    """从请求上下文取会话（由 main.py 的 context_getter 经 DI 注入）。"""
-    return info.context["db"]
+    """从请求上下文取会话。"""
+    return info.context.db
 
 
 @strawberry.type

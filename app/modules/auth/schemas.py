@@ -1,3 +1,4 @@
+import datetime
 import enum
 from enum import StrEnum
 from typing import Annotated, Any
@@ -215,7 +216,7 @@ class PasskeyCredentialItem(BaseModel):
     id: int
     credential_id: str
     device_name: str
-    created_at: str  # ISO datetime
+    created_at: datetime.datetime  # UTC 时间
 
 
 # ── TOTP 验证响应 ─────────────────────────────────────────────

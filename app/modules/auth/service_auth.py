@@ -55,7 +55,7 @@ def _hash_refresh_token(raw: str) -> str:
 
 
 def _store_refresh_token(db: Session, user_id: object, raw: str, mfa_verified: object = False) -> str:
-    """持久化哈希后的刷新令牌并返回其过期时间戳字符串。"""
+    """持久化哈希后的刷新令牌并返回其过期时间（timezone-aware datetime）。"""
     days = settings.refresh_token_expire_days
     expires_str = expires_at(days=days)
     tok = RefreshToken(

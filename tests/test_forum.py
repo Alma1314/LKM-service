@@ -1,14 +1,8 @@
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
 from app.core.err import BizError, ErrCode
-from app.db.models import Base, ForumPost, Profile, User
-from app.db.session import get_session
-from app.main import app
+from app.db.models import ForumPost, Profile, User
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.forum.schemas import CommentCreate, PostCreate
 from app.modules.forum.service import (
@@ -20,41 +14,6 @@ from app.modules.forum.service import (
     list_comments,
     list_posts,
 )
-
-
-@pytest.fixture
-def db():
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
-    Base.metadata.create_all(bind=engine)
-    SessionLocal: sessionmaker = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
-
-
-@pytest.fixture
-def client(db):
-    def override_get_session():
-        try:
-            yield db
-        finally:
-            pass
-
-    app.dependency_overrides[get_session] = override_get_session
-
-    try:
-        with TestClient(app) as test_client:
-            yield test_client
-    finally:
-        app.dependency_overrides.clear()
 
 
 def _user(db, username="alice", email="alice@example.com", nickname=None):
@@ -230,9 +189,9 @@ class TestForumRoutes:
         token = create_access_token(user_id=user_id, account_level="normal", role="member")
         return user_id, token
 
-    def should_reject_create_post_without_auth(self, client, db):
+    async def should_reject_create_post_without_auth(self, client, db):
         self._setup_user(db)
-        resp = client.post(
+        resp = await client.post(
             "/api/v1/forum/posts",
             json={"title": "标题", "content": "正文", "category_id": "math", "tags": []},
         )
@@ -240,9 +199,9 @@ class TestForumRoutes:
         assert resp.status_code == 403
         assert resp.json()["code"] == 1005
 
-    def should_create_post_with_token(self, client, db):
+    async def should_create_post_with_token(self, client, db):
         user_id, token = self._setup_user(db)
-        resp = client.post(
+        resp = await client.post(
             "/api/v1/forum/posts",
             headers={"Authorization": f"Bearer {token}"},
             json={"title": "标题", "content": "正文", "category_id": "math", "tags": ["数学"]},
@@ -252,54 +211,55 @@ class TestForumRoutes:
         assert resp.json()["code"] == 0
         assert resp.json()["data"]["author_id"] == user_id
 
-    def should_list_posts_publicly(self, client, db):
+    async def should_list_posts_publicly(self, client, db):
         user_id, token = self._setup_user(db)
-        client.post(
+        await client.post(
             "/api/v1/forum/posts",
             headers={"Authorization": f"Bearer {token}"},
             json={"title": "公开帖", "content": "正文", "category_id": "math"},
         )
 
-        resp = client.get("/api/v1/forum/posts")
+        resp = await client.get("/api/v1/forum/posts")
 
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["total"] == 1
         assert data["items"][0]["title"] == "公开帖"
 
-    def should_delete_own_post_through_api(self, client, db):
+    async def should_delete_own_post_through_api(self, client, db):
         user_id, token = self._setup_user(db)
-        created = client.post(
+        created_resp = await client.post(
             "/api/v1/forum/posts",
             headers={"Authorization": f"Bearer {token}"},
             json={"title": "待删除", "content": "正文", "category_id": "math"},
-        ).json()["data"]
+        )
+        created = created_resp.json()["data"]
         post_id = created["id"]
 
-        resp = client.delete(
+        resp = await client.delete(
             f"/api/v1/forum/posts/{post_id}",
             headers={"Authorization": f"Bearer {token}"},
         )
 
         assert resp.status_code == 200
-        assert client.get(f"/api/v1/forum/posts/{post_id}").json()["code"] == 4001
+        assert (await client.get(f"/api/v1/forum/posts/{post_id}")).json()["code"] == 4001
 
 
 class TestForumGraphQL:
     """论坛 GraphQL 查询契约测试（对齐前端 queries.ts）。"""
 
-    def _run(self, client, query, variables):
-        resp = client.post("/graphql", json={"query": query, "variables": variables})
+    async def _run(self, client, query, variables):
+        resp = await client.post("/graphql", json={"query": query, "variables": variables})
         assert resp.status_code == 200
         body = resp.json()
         assert "errors" not in body, body.get("errors")
         return body["data"]
 
-    def should_query_posts_with_author(self, client, db):
+    async def should_query_posts_with_author(self, client, db):
         user_id = _user(db, username="alice", nickname="爱丽丝")
         post = _post(db, author_id=user_id, title="如何学习微积分", category_id="math")
 
-        data = self._run(
+        data = await self._run(
             client,
             """
             query PostList($categoryId: ID, $page: Int!, $pageSize: Int!) {
@@ -326,12 +286,12 @@ class TestForumGraphQL:
         assert item["author"]["displayName"] == "爱丽丝"
         assert item["author"]["username"] == "alice"
 
-    def should_filter_posts_by_category(self, client, db):
+    async def should_filter_posts_by_category(self, client, db):
         user_id = _user(db)
         _post(db, author_id=user_id, title="数学", category_id="math")
         _post(db, author_id=user_id, title="物理", category_id="physics")
 
-        data = self._run(
+        data = await self._run(
             client,
             "query($categoryId: ID){ posts(categoryId: $categoryId, page: 1, pageSize: 20){ total items{ id } } }",
             {"categoryId": "math"},
@@ -339,7 +299,7 @@ class TestForumGraphQL:
 
         assert data["posts"]["total"] == 1
 
-    def should_query_post_detail_with_bio_and_forward_count(self, client, db):
+    async def should_query_post_detail_with_bio_and_forward_count(self, client, db):
         user_id = _user(db, username="bob", nickname="鲍勃", email="bob@example.com")
         # 给 Profile 设置 bio
         prof = db.query(Profile).filter(Profile.user_id == user_id).first()
@@ -350,7 +310,7 @@ class TestForumGraphQL:
         post_orm.forward_count = 7
         db.flush()
 
-        data = self._run(
+        data = await self._run(
             client,
             """
             query PostDetail($id: ID!) {
@@ -370,8 +330,8 @@ class TestForumGraphQL:
         assert p["author"]["bio"] == "热爱物理与数学"
         assert p["author"]["displayName"] == "鲍勃"
 
-    def should_return_null_when_post_missing(self, client, db):
-        data = self._run(
+    async def should_return_null_when_post_missing(self, client, db):
+        data = await self._run(
             client,
             "query($id: ID!){ post(id: $id){ id } }",
             {"id": "999"},

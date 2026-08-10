@@ -12,11 +12,9 @@ import hashlib
 import time
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from app.core.err import BizError, ErrCode
-from app.db.models import Base, User
+from app.db.models import User
 from app.modules.auth.models import RecoveryCode, TOTP
 from app.modules.auth.security import (
     create_temp_token,
@@ -27,27 +25,6 @@ from app.modules.auth.security import (
 
 # Re-import the settings so that get_totp_uri uses the same app_name
 from app.core.config import settings
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def db():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-    Base.metadata.create_all(bind=engine)
-    SessionLocal: sessionmaker = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 
 # ---------------------------------------------------------------------------

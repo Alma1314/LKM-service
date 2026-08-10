@@ -7,14 +7,11 @@ import struct
 import os
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from app.core.err import BizError, ErrCode
-from app.db.models import Base
 import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
 from app.modules.auth.models import PasskeyCredential
 
@@ -64,22 +61,6 @@ def _der_to_raw(der_sig: bytes) -> bytes:
     from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
     r, s = decode_dss_signature(der_sig)
     return r.to_bytes(32, "big") + s.to_bytes(32, "big")
-
-
-@pytest.fixture
-def db():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-    Base.metadata.create_all(bind=engine)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 
 def _service():

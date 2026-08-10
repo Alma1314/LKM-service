@@ -1,3 +1,4 @@
+import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Any
 
@@ -45,8 +46,8 @@ class BlogSeriesInfo(BaseModel):
     cover_url: str | None = None
     repo_name: str
     status: BlogSeriesStatus = BlogSeriesStatus.ACTIVE
-    created_at: str
-    updated_at: str
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
     star_count: int = 0
     is_starred: bool = False
 
@@ -61,8 +62,8 @@ class BlogSeriesDetail(BaseModel):
     cover_url: str | None = None
     repo_name: str
     status: BlogSeriesStatus = BlogSeriesStatus.ACTIVE
-    created_at: str
-    updated_at: str
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
     star_count: int = 0
     is_starred: bool = False
     file_tree: list[dict[str, Any]] | None = None
@@ -76,8 +77,8 @@ class BlogCommentInfo(BaseModel):
     series_id: int
     content: str
     parent_id: int | None = None
-    created_at: str
-    updated_at: str
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
     profile: ProfileInfo | None = None
     replies: list["BlogCommentInfo"] = []
 

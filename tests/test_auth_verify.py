@@ -1,13 +1,12 @@
+import datetime as dt
 import re
 import time
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
+import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
 from app.core.err import BizError, ErrCode
-from app.db.models import Base
 from app.modules.auth.models import EmailVerification, PhoneVerification
 from app.modules.auth.service_verify import (
     check_code_rate_limit,
@@ -18,25 +17,6 @@ from app.modules.auth.service_verify import (
     generate_code,
     hash_code,
 )
-
-# Import auth models so tables get registered
-import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
-
-
-@pytest.fixture
-def db():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-    Base.metadata.create_all(bind=engine)
-    SessionLocal: sessionmaker = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 
 class TestGenerateCode:
@@ -150,11 +130,11 @@ class TestConsumeEmailCode:
 
     def should_not_consume_expired_code(self, db):
         with patch("app.modules.auth.service_verify.now_iso") as mock_now:
-            mock_now.return_value = "2026-01-01T00:00:00+00:00"
+            mock_now.return_value = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
             code, _ = create_email_verification(db, "alice@example.com", "register")
 
         with patch("app.modules.auth.service_verify.now_iso") as mock_now:
-            mock_now.return_value = "2026-01-02T00:00:00+00:00"
+            mock_now.return_value = dt.datetime(2026, 1, 2, tzinfo=dt.timezone.utc)
             with pytest.raises(BizError) as exc:
                 consume_email_code(db, "alice@example.com", code, "register")
             assert exc.value.errcode == ErrCode.VERIFICATION_CODE_EXPIRED
@@ -197,11 +177,11 @@ class TestConsumePhoneCode:
 
     def should_not_consume_expired_code(self, db):
         with patch("app.modules.auth.service_verify.now_iso") as mock_now:
-            mock_now.return_value = "2026-01-01T00:00:00+00:00"
+            mock_now.return_value = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
             code, _ = create_phone_verification(db, "13800138000", "login")
 
         with patch("app.modules.auth.service_verify.now_iso") as mock_now:
-            mock_now.return_value = "2026-01-02T00:00:00+00:00"
+            mock_now.return_value = dt.datetime(2026, 1, 2, tzinfo=dt.timezone.utc)
             with pytest.raises(BizError) as exc:
                 consume_phone_code(db, "13800138000", code, "login")
             assert exc.value.errcode == ErrCode.VERIFICATION_CODE_EXPIRED

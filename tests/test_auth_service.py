@@ -3,29 +3,10 @@ import hashlib
 import time
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from app.core.err import BizError, ErrCode
-from app.db.models import Base
 import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
+from app.core.err import BizError, ErrCode
 from app.modules.auth.models import RefreshToken
-
-
-@pytest.fixture
-def db():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-    Base.metadata.create_all(bind=engine)
-    SessionLocal: sessionmaker = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -389,7 +370,7 @@ class TestRefresh:
         import datetime as dt
 
         tok = db.query(RefreshToken).filter(RefreshToken.token_hash == tok_hash).first()
-        tok.expires_at = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).isoformat()
+        tok.expires_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
         db.flush()
 
         svc = _service()
