@@ -2,7 +2,8 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    model_config = {"env_prefix": "LKM_"}
+    # 支持项目根目录的 .env 加载（本地开发）；生产无 .env 时走环境变量/默认值
+    model_config = {"env_prefix": "LKM_", "env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     app_name: str = "LKM-API"
     app_version: str = "0.0.1"
