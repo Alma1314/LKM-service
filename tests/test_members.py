@@ -170,3 +170,26 @@ class TestMembersRoutes:
         assert "msg" in body
         assert "data" in body
         assert "items" in body["data"]
+
+    def test_get_subgroups_project(self, client):
+        """验证 /api/v1/members/subgroups 返回完整分组结构。"""
+        resp = client.get("/api/v1/members/subgroups?type=projectSubGroups")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["code"] == 0
+        groups = body["data"]["items"]
+        assert len(groups) == 2
+        textbooks = next(g for g in groups if g["key"] == "textbooks")
+        assert textbooks["label"] == "教材项目组"
+        assert textbooks["desc"]
+        assert len(textbooks["members"]) == 3
+        assert "key" in textbooks
+
+    def test_get_subgroups_unknown_returns_404(self, client):
+        resp = client.get("/api/v1/members/subgroups?type=noSuchType")
+        assert resp.status_code == 404
+        assert resp.json()["code"] == ErrCode.MEMBER_GROUP_NOT_FOUND
+
+    def test_get_subgroups_missing_type_returns_422(self, client):
+        resp = client.get("/api/v1/members/subgroups")
+        assert resp.status_code == 422

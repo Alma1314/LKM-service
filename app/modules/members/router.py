@@ -2,9 +2,9 @@ from fastapi import APIRouter, Query
 
 from app.core.err import respond
 from app.modules.common import ApiResp, ListData
-from app.modules.members.models import ALL_TYPES
-from app.modules.members.schemas import Member
-from app.modules.members.service import get_members
+from app.modules.members.models import ALL_TYPES, SUB_GROUP_MAPS
+from app.modules.members.schemas import Member, SubGroupItem
+from app.modules.members.service import get_members, get_sub_groups
 
 router = APIRouter(prefix="/members", tags=["members"])
 
@@ -16,3 +16,12 @@ def get_member_list(
     group: str | None = Query(None, description="子组标识，仅 subGroupMaps 需要"),
 ):
     return get_members(type, group).model_dump()
+
+
+@router.get("/subgroups", response_model=ApiResp[ListData[SubGroupItem]])
+@respond
+def get_member_subgroups(
+    type: str = Query(..., description=f"子组集合标识，可选：{', '.join(sorted(SUB_GROUP_MAPS.keys()))}"),
+):
+    """返回某 subGroupMap 类型的完整分组结构（含 label/desc/members）。"""
+    return get_sub_groups(type).model_dump()
