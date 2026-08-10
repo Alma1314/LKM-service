@@ -29,6 +29,8 @@ tags:
     description: 专栏申请、审核、发文
   - name: forum
     description: 社区论坛帖子与评论
+  - name: files
+    description: 文件库上传、下载、分类筛选
   - name: blog
     description: 博客系列、文件内容、收藏、评论
   - name: blog-git
@@ -178,6 +180,15 @@ paths:
     $ref: "paths/forum.yaml#/likePost"
   /forum/posts/{post_id}/comments:
     $ref: "paths/forum.yaml#/comments"
+
+  /files/status:
+    $ref: "paths/files.yaml#/status"
+  /files:
+    $ref: "paths/files.yaml#/files"
+  /files/{file_id}:
+    $ref: "paths/files.yaml#/fileDetail"
+  /files/{file_id}/download:
+    $ref: "paths/files.yaml#/downloadFile"
 
   /blog/series:
     $ref: "paths/blog.yaml#/series"
