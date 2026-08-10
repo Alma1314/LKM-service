@@ -54,7 +54,7 @@ class RecoverPhoneVerifyRequest(BaseModel):
     code: str = Field(..., min_length=6, max_length=6)
     # 此处不接受 new_password — recover_user_complete 步骤
     # 在 2FA 验证通过后才接收密码
-    new_password: str | None = Field(None, min_length=12, deprecated=True)
+    new_password: str | None = Field(None, min_length=6, deprecated=True)
 
 
 class RecoverEmailRequest(BaseModel):
@@ -66,7 +66,7 @@ class RecoverEmailVerifyRequest(BaseModel):
     code: str = Field(..., min_length=6, max_length=6)
     # 此处不接受 new_password — recover_user_complete 步骤
     # 在 2FA 验证通过后才接收密码
-    new_password: str | None = Field(None, min_length=12, deprecated=True)
+    new_password: str | None = Field(None, min_length=6, deprecated=True)
 
 
 class RecoverMagicLinkRequest(BaseModel):
@@ -75,7 +75,7 @@ class RecoverMagicLinkRequest(BaseModel):
 
 class RecoverMagicLinkVerifyRequest(BaseModel):
     token: str = Field(..., min_length=1)
-    new_password: str | None = Field(None, min_length=12)
+    new_password: str | None = Field(None, min_length=6)
 
 @router.post("/check", response_model=ApiResp[RecoverCheckResponse])
 @respond
@@ -167,7 +167,7 @@ class RecoverUserVerifyTOTPRequest(BaseModel):
 
 class RecoverUserCompleteRequest(BaseModel):
     txn_id: str = Field(..., min_length=1)
-    new_password: str = Field(..., min_length=12)
+    new_password: str = Field(..., min_length=6)
 
 
 @router.post("/verify-totp", response_model=ApiResp[AdminRecoverVerifyTOTPResponse])
@@ -203,7 +203,7 @@ class RecoverAdminVerifyTOTPRequest(BaseModel):
 
 class RecoverAdminCompleteRequest(BaseModel):
     txn_id: str = Field(..., min_length=1)
-    new_password: str = Field(..., min_length=12)
+    new_password: str = Field(..., min_length=6)
 
 
 @router.post("/admin/begin", response_model=ApiResp[AdminRecoverBeginResponse])
