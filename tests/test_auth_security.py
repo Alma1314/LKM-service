@@ -22,7 +22,7 @@ from app.core.config import settings
 # ---------------------------------------------------------------------------
 
 class TestAccessToken:
-    def should_create_and_decode(self):
+    async def should_create_and_decode(self):
         token = create_access_token(user_id=1, account_level="normal", role="member")
         payload = decode_access_token(token)
         assert payload["user_id"] == 1
@@ -30,13 +30,13 @@ class TestAccessToken:
         assert payload["role"] == "member"
         assert payload["type"] == "access"
 
-    def should_reject_wrong_secret(self):
+    async def should_reject_wrong_secret(self):
         token = create_access_token(user_id=2, account_level="normal", role="member")
         wrong_key = "wrong-secret-key-hopefully-not-used"
         with pytest.raises(jwt.exceptions.InvalidSignatureError):
             jwt.decode(token, wrong_key, algorithms=[settings.jwt_algorithm])
 
-    def should_reject_expired_token(self):
+    async def should_reject_expired_token(self):
         # Build an already-expired JWT manually
         now = int(time.time())
         payload = {
@@ -51,7 +51,7 @@ class TestAccessToken:
         with pytest.raises(jwt.exceptions.ExpiredSignatureError):
             decode_access_token(token)
 
-    def should_reject_non_access_type(self):
+    async def should_reject_non_access_type(self):
         token = create_temp_token(user_id=4)
         with pytest.raises(ValueError, match="non-access token"):
             decode_access_token(token)
@@ -62,13 +62,13 @@ class TestAccessToken:
 # ---------------------------------------------------------------------------
 
 class TestTempToken:
-    def should_create_and_decode(self):
+    async def should_create_and_decode(self):
         token = create_temp_token(user_id=5)
         payload = decode_temp_token(token)
         assert payload["user_id"] == 5
         assert payload["type"] == "temp"
 
-    def should_reject_non_temp_type(self):
+    async def should_reject_non_temp_type(self):
         token = create_access_token(user_id=6, account_level="normal", role="member")
         with pytest.raises(ValueError, match="non-temp token"):
             decode_temp_token(token)
@@ -79,21 +79,21 @@ class TestTempToken:
 # ---------------------------------------------------------------------------
 
 class TestTOTP:
-    def should_generate_valid_secret(self):
+    async def should_generate_valid_secret(self):
         secret = generate_totp_secret()
         assert len(secret) >= 16  # base32 encoding of 20 bytes
         # should be base32 decodable
         import base64
         base64.b32decode(secret, casefold=True)
 
-    def should_generate_uri(self):
+    async def should_generate_uri(self):
         secret = generate_totp_secret()
         uri = get_totp_uri(secret, "alice", "TestIssuer")
         assert uri.startswith("otpauth://totp/")
         assert "alice" in uri
         assert "TestIssuer" in uri
 
-    def should_verify_valid_code(self):
+    async def should_verify_valid_code(self):
         secret = generate_totp_secret()
         # Generate a valid TOTP code from secret for time step now
         import base64
@@ -111,11 +111,11 @@ class TestTOTP:
 
         assert verify_totp(secret, code_str, window=0) is not None
 
-    def should_reject_wrong_code(self):
+    async def should_reject_wrong_code(self):
         secret = generate_totp_secret()
         assert verify_totp(secret, "000000", window=0) is None
 
-    def should_accept_code_within_window(self):
+    async def should_accept_code_within_window(self):
         secret = generate_totp_secret()
         import base64
         import hmac
@@ -139,18 +139,18 @@ class TestTOTP:
 # ---------------------------------------------------------------------------
 
 class TestRecoveryCodes:
-    def should_generate_n_codes(self):
+    async def should_generate_n_codes(self):
         codes = generate_recovery_codes(10)
         assert len(codes) == 10
 
-    def should_be_unique(self):
+    async def should_be_unique(self):
         codes = generate_recovery_codes(100)
         plains = [c[0] for c in codes]
         hashes = [c[1] for c in codes]
         assert len(set(plains)) == 100
         assert len(set(hashes)) == 100
 
-    def should_have_correct_tuple_structure(self):
+    async def should_have_correct_tuple_structure(self):
         codes = generate_recovery_codes(5)
         for plain, hashed in codes:
             assert isinstance(plain, str)
@@ -165,13 +165,13 @@ class TestRecoveryCodes:
 # ---------------------------------------------------------------------------
 
 class TestEncryptDecrypt:
-    def should_roundtrip_secret(self):
+    async def should_roundtrip_secret(self):
         plain = "JBSWY3DPEHPK3PXP"
         cipher = encrypt_secret(plain)
         assert cipher != plain
         assert decrypt_secret(cipher) == plain
 
-    def should_produce_different_ciphertexts(self):
+    async def should_produce_different_ciphertexts(self):
         plain = "JBSWY3DPEHPK3PXP"
         c1 = encrypt_secret(plain)
         c2 = encrypt_secret(plain)

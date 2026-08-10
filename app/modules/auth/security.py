@@ -7,6 +7,7 @@ import secrets
 import struct
 import time
 from typing import Any, cast
+from urllib.parse import quote
 
 import jwt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -103,8 +104,6 @@ def generate_totp_secret() -> str:
 
 
 def get_totp_uri(secret: str, username: str, issuer: str) -> str:
-    from urllib.parse import quote
-
     label = quote(f"{issuer}:{username}")
     params = f"secret={quote(secret)}&issuer={quote(issuer)}&algorithm=SHA1&digits={_TOTP_DIGITS}&period={_TOTP_STEP}"
     return f"otpauth://totp/{label}?{params}"

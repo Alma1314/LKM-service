@@ -20,19 +20,22 @@
 - post.id / author.id 在后端为 int，GraphQL ID 直接使用 int，前端同步为 number。
 - categoryId 前后端均为字符串（板块 slug）。
 - forwardCount / bio 为本次新增的 DB 列。
+- 列表/详情查询复用 REST 的 service（forum/service.py），仅在此组装作者对象，
+  避免同一套论坛分页/过滤逻辑在 REST 与 GraphQL 各写一份。
 """
 
-import json
 from dataclasses import dataclass
 
 import strawberry
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from strawberry import ID
 from strawberry.fastapi import BaseContext
 from strawberry.types.info import Info
 
-from app.db.models import ForumPost, User
+from app.db.models import User
+from app.modules.forum.service import get_post as service_get_post, list_posts as service_list_posts
 
 
 @strawberry.type
@@ -69,11 +72,6 @@ class PostConnection:
     total: int
 
 
-def _iso_text(p: ForumPost) -> str:
-    """created_at 是 timezone-aware datetime，转 ISO 字符串输出给前端。"""
-    return p.created_at.isoformat()
-
-
 def _display_name(user: User) -> str | None:
     """displayName 取昵称，缺失时回退为 None（前端有兜底）。"""
     if user.profile and user.profile.nickname:
@@ -92,32 +90,15 @@ def _to_author(user: User) -> Author:
     )
 
 
-def _load_authors(db: Session, user_ids: list[int]) -> dict[int, Author]:
+async def _load_authors(db: AsyncSession, user_ids: list[int]) -> dict[int, Author]:
     """批量加载作者，避免逐条查询的 N+1。"""
     if not user_ids:
         return {}
-    users = db.query(User).filter(User.id.in_(set(user_ids))).all()
-    return {u.id: _to_author(u) for u in users}
-
-
-def _post_to_graphql(p: ForumPost, author: Author | None) -> Post:
-    return Post(
-        id=p.id,
-        title=p.title,
-        excerpt=p.excerpt,
-        content=p.content,
-        categoryId=p.category_id,
-        tags=(json.loads(p.tags) if p.tags else []),
-        isPinned=bool(p.is_pinned),
-        isFeatured=bool(p.is_featured),
-        viewCount=p.view_count,
-        likeCount=p.like_count,
-        commentCount=p.comment_count,
-        bookmarkCount=p.bookmark_count,
-        forwardCount=p.forward_count,
-        createdAt=_iso_text(p),
-        author=author,
+    result = await db.execute(
+        select(User).where(User.id.in_(set(user_ids))).options(selectinload(User.profile))
     )
+    users = result.scalars().all()
+    return {u.id: _to_author(u) for u in users}
 
 
 @dataclass
@@ -128,10 +109,10 @@ class GraphQLContext(BaseContext):
     （Depends(get_session)），与 REST 端点共用同一会话依赖，便于测试 override。
     """
 
-    db: Session
+    db: AsyncSession
 
 
-def _get_db(info: Info) -> Session:
+def _get_db(info: Info) -> AsyncSession:
     """从请求上下文取会话。"""
     return info.context.db
 
@@ -139,7 +120,7 @@ def _get_db(info: Info) -> Session:
 @strawberry.type
 class Query:
     @strawberry.field
-    def posts(
+    async def posts(
         self,
         info: Info,
         category_id: ID | None = None,
@@ -148,30 +129,61 @@ class Query:
     ) -> PostConnection:
         db = _get_db(info)
         cat: str | None = str(category_id) if category_id is not None else None
-        total = db.query(func.count(ForumPost.id))
-        base = db.query(ForumPost)
-        if cat:
-            total = total.filter(ForumPost.category_id == cat)
-            base = base.filter(ForumPost.category_id == cat)
-        total_count = total.scalar() or 0
-        posts = (
-            base.order_by(ForumPost.is_pinned.desc(), ForumPost.id.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
-            .all()
-        )
-        authors = _load_authors(db, [p.author_id for p in posts])
-        items = [_post_to_graphql(p, authors.get(p.author_id)) for p in posts]
-        return PostConnection(items=items, total=total_count)
+
+        page_data = await service_list_posts(db, page=page, limit=page_size, category_id=cat)
+
+        author_ids = list({p.author_id for p in page_data.items})
+        authors = await _load_authors(db, author_ids)
+
+        items = [
+            Post(
+                id=p.id,
+                title=p.title,
+                excerpt=p.excerpt,
+                content=p.content,
+                categoryId=p.category_id,
+                tags=p.tags,
+                isPinned=p.is_pinned,
+                isFeatured=p.is_featured,
+                viewCount=p.view_count,
+                likeCount=p.like_count,
+                commentCount=p.comment_count,
+                bookmarkCount=p.bookmark_count,
+                forwardCount=p.forward_count,
+                createdAt=p.created_at.isoformat(),
+                author=authors.get(p.author_id),
+            )
+            for p in page_data.items
+        ]
+        return PostConnection(items=items, total=page_data.total)
 
     @strawberry.field
-    def post(self, info: Info, id: ID) -> Post | None:
+    async def post(self, info: Info, id: ID) -> Post | None:
         db = _get_db(info)
-        post_obj = db.query(ForumPost).filter(ForumPost.id == int(id)).first()
-        if post_obj is None:
+        try:
+            post_info = await service_get_post(db, int(id), bump_view=False)
+        except Exception:
             return None
-        authors = _load_authors(db, [post_obj.author_id])
-        return _post_to_graphql(post_obj, authors.get(post_obj.author_id))
+
+        authors = await _load_authors(db, [post_info.author_id])
+        author = authors.get(post_info.author_id)
+        return Post(
+            id=post_info.id,
+            title=post_info.title,
+            excerpt=post_info.excerpt,
+            content=post_info.content,
+            categoryId=post_info.category_id,
+            tags=post_info.tags,
+            isPinned=post_info.is_pinned,
+            isFeatured=post_info.is_featured,
+            viewCount=post_info.view_count,
+            likeCount=post_info.like_count,
+            commentCount=post_info.comment_count,
+            bookmarkCount=post_info.bookmark_count,
+            forwardCount=post_info.forward_count,
+            createdAt=post_info.created_at.isoformat(),
+            author=author,
+        )
 
 
 schema = strawberry.Schema(query=Query)

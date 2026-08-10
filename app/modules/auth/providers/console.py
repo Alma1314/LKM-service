@@ -5,6 +5,7 @@
 """
 
 import logging
+from urllib.parse import urlparse
 
 from app.modules.auth.providers.base import EmailProvider, SmsProvider
 
@@ -37,7 +38,6 @@ class ConsoleEmailProvider(EmailProvider):
 
     async def send_magic_link(self, email: str, link: str) -> None:
         # 仅记录域名，不记录完整的带令牌链接
-        from urllib.parse import urlparse
         try:
             parsed = urlparse(link)
             safe = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"

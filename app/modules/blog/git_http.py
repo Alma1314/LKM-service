@@ -3,6 +3,7 @@ import os
 import subprocess
 
 from fastapi import APIRouter, HTTPException, Request, Response
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.db.models import User
@@ -35,13 +36,13 @@ async def git_http_backend(repo_name: str, rest: str, request: Request):
         try:
             decoded = base64.b64decode(auth[6:]).decode("utf-8")
             username, password = decoded.split(":", 1)
-            db = new_session()
+            db = await new_session()
             try:
-                user = db.query(User).filter(User.username == username).first()
+                user = (await db.execute(select(User).where(User.username == username))).scalars().first()
                 if user and verifypwd(password, user.hashed_password):
                     env["REMOTE_USER"] = username
             finally:
-                db.close()
+                await db.close()
         except Exception:
             pass
 

@@ -1,7 +1,8 @@
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.err import BizError, CommonErr, respond
@@ -47,43 +48,45 @@ from app.modules.common import ApiResp
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+
 @router.get("/me", response_model=ApiResp[CurrentUser])
 @respond
-def get_me(cur: CurrentUser = Depends(get_current_user)):
+async def get_me(cur: CurrentUser = Depends(get_current_user)):
     return cur
 
 
 @router.get("/{user_id}", response_model=ApiResp[ProfileInfo])
 @respond
-def get_user(user_id: int, db: Session = Depends(get_session)):
-    return get_profile(db, user_id)
+async def get_user(user_id: int, db: AsyncSession = Depends(get_session)):
+    return await get_profile(db, user_id)
 
 
 @router.put("/{user_id}/profile", response_model=ApiResp[ProfileInfo])
 @respond
-def edit_profile(
+async def edit_profile(
     user_id: int,
     info: ProfileUpdate,
     cur: CurrentUser = Depends(get_current_user),
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_session),
 ):
     if cur.id != user_id:
         raise BizError(CommonErr.FORBIDDEN)
-    update_profile(db, user_id, info)
-    return get_profile(db, user_id)
+    await update_profile(db, user_id, info)
+    return await get_profile(db, user_id)
+
 
 @router.post("/reg/local", response_model=ApiResp[AuthTokenData])
 @respond
-def register_local(info: UserRegLocal, db: Session = Depends(get_session)):
-    return service_auth.register_local(db, info)
+async def register_local(info: UserRegLocal, db: AsyncSession = Depends(get_session)):
+    return await service_auth.register_local(db, info)
 
 
 @router.post("/reg/normal", response_model=ApiResp[RegNormalResponse])
 @respond
-def register_normal_with_password_route(
+async def register_normal_with_password_route(
     info: UserRegNormal,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """发起普通注册 """
     if not info.email and not info.phone:
@@ -93,7 +96,7 @@ def register_normal_with_password_route(
         )
 
     # 存储待处理的注册数据
-    txn_id = _store_pending_normal_registration(
+    txn_id = await _store_pending_normal_registration(
         db, info.username, info.password, info.email, info.phone
     )
 
@@ -106,13 +109,13 @@ def register_normal_with_password_route(
 
     if info.email:
         check_code_rate_limit(f"reg:email:{info.email}", max_count=5, window=3600)
-        email_code, _ = create_email_verification(db, info.email, "register")
+        email_code, _ = await create_email_verification(db, info.email, "register")
         background_tasks.add_task(get_email_provider().send_code, info.email, email_code)
         result["email_sent"] = True
 
     if info.phone:
         check_code_rate_limit(f"reg:phone:{info.phone}", max_count=5, window=3600)
-        phone_code, _ = create_phone_verification(db, info.phone, "register")
+        phone_code, _ = await create_phone_verification(db, info.phone, "register")
         background_tasks.add_task(get_sms_provider().send_code, info.phone, phone_code)
         result["phone_sent"] = True
 
@@ -121,70 +124,70 @@ def register_normal_with_password_route(
 
 @router.post("/reg/normal/verify", response_model=ApiResp[AuthTokenData])
 @respond
-def register_normal_verify(
+async def register_normal_verify(
     txn_id: str,
     email_code: str | None = None,
     phone_code: str | None = None,
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_session),
 ):
     """使用用户名+密码+联系方式完成普通注册。"""
-    return _consume_pending_normal_registration(
+    return await _consume_pending_normal_registration(
         db, txn_id, email_code=email_code, phone_code=phone_code
     )
 
 
 @router.post("/reg/phone", response_model=ApiResp[RegByPhoneResponse])
 @respond
-def register_phone(
+async def register_phone(
     info: UserRegByPhone,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_session),
 ):
     """发起仅手机号的注册。发送短信验证码。"""
     check_code_rate_limit(f"reg:phone:{info.phone}", max_count=5, window=3600)
-    code, _ = create_phone_verification(db, info.phone, "register")
+    code, _ = await create_phone_verification(db, info.phone, "register")
     background_tasks.add_task(get_sms_provider().send_code, info.phone, code)
     return {"phone": info.phone, "message": "SMS verification code sent"}
 
 
 @router.post("/reg/phone/verify", response_model=ApiResp[AuthTokenData])
 @respond
-def register_phone_verify(phone: str, code: str, db: Session = Depends(get_session)):
+async def register_phone_verify(phone: str, code: str, db: AsyncSession = Depends(get_session)):
     """完成仅手机号的注册 — 创建一个普通账号（无密码）。"""
     check_code_rate_limit(f"reg:phone:verify:{phone}", max_count=5, window=3600)
-    consume_phone_code(db, phone, code, "register")
-    return service_auth.register_by_verify(db, "phone", phone)
+    await consume_phone_code(db, phone, code, "register")
+    return await service_auth.register_by_verify(db, "phone", phone)
 
 
 @router.post("/reg/email", response_model=ApiResp[RegByEmailResponse])
 @respond
-def register_email(
+async def register_email(
     info: UserRegByEmail,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_session),
 ):
     """发起仅邮箱的注册。发送邮箱验证码。"""
     check_code_rate_limit(f"reg:email:{info.email}", max_count=5, window=3600)
-    code, _ = create_email_verification(db, info.email, "register")
+    code, _ = await create_email_verification(db, info.email, "register")
     background_tasks.add_task(get_email_provider().send_code, info.email, code)
     return {"email": info.email, "message": "Email verification code sent"}
 
 
 @router.post("/reg/email/verify", response_model=ApiResp[AuthTokenData])
 @respond
-def register_email_verify(email: str, code: str, db: Session = Depends(get_session)):
+async def register_email_verify(email: str, code: str, db: AsyncSession = Depends(get_session)):
     """完成仅邮箱的注册 — 创建一个普通账号（无密码）。"""
     check_code_rate_limit(f"reg:email:verify:{email}", max_count=5, window=3600)
-    consume_email_code(db, email, code, "register")
-    return service_auth.register_by_verify(db, "email", email)
+    await consume_email_code(db, email, code, "register")
+    return await service_auth.register_by_verify(db, "email", email)
 
 
 @router.post("/login/code/request", response_model=ApiResp[MessageResponse])
 @respond
-def login_code_request(
+async def login_code_request(
     contact: str,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_session),
 ):
     """请求登录验证码。自动检测邮箱还是手机号。"""
 
@@ -193,9 +196,9 @@ def login_code_request(
 
     # 检查用户是否存在且符合条件
     if "@" in contact:
-        user = db.query(UserModel).filter(UserModel.email == contact).first()
+        user = (await db.execute(select(UserModel).where(UserModel.email == contact))).scalars().first()
     else:
-        user = db.query(UserModel).filter(UserModel.phone == contact).first()
+        user = (await db.execute(select(UserModel).where(UserModel.phone == contact))).scalars().first()
 
     if not user or user.account_level == "local":
         # 统一响应 — 不泄露用户是否存在
@@ -203,10 +206,10 @@ def login_code_request(
 
     # 用户存在 — 创建并发送验证码
     if "@" in contact:
-        code, _ = create_email_verification(db, contact, "login")
+        code, _ = await create_email_verification(db, contact, "login")
         background_tasks.add_task(get_email_provider().send_code, contact, code)
     else:
-        code, _ = create_phone_verification(db, contact, "login")
+        code, _ = await create_phone_verification(db, contact, "login")
         background_tasks.add_task(get_sms_provider().send_code, contact, code)
 
     return {"message": "Verification code sent"}
@@ -214,45 +217,45 @@ def login_code_request(
 
 @router.post("/login/code", response_model=ApiResp[AuthTokenData])
 @respond
-def login_code(
+async def login_code(
     contact: str,
     code: str,
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_session),
 ):
     """使用验证码登录。仅限普通/管理员用户。"""
     check_code_rate_limit(f"login:code:verify:{contact}", max_count=5, window=3600)
-    return service_auth.login_code(db, contact, code)
+    return await service_auth.login_code(db, contact, code)
 
 
 @router.post("/login/password", response_model=ApiResp[AuthTokenData])
 @respond
-def login_password_route(info: UserLoginPassword, db: Session = Depends(get_session)):
-    return service_auth.login_password(db, info)
+async def login_password_route(info: UserLoginPassword, db: AsyncSession = Depends(get_session)):
+    return await service_auth.login_password(db, info)
 
 
 @router.post("/refresh", response_model=ApiResp[TokenPair])
 @respond
-def refresh_access_token_route(info: RefreshRequest, db: Session = Depends(get_session)):
+async def refresh_access_token_route(info: RefreshRequest, db: AsyncSession = Depends(get_session)):
     check_code_rate_limit("token:refresh:global", max_count=30, window=60)
-    return service_auth.refresh_access_token(db, info.refresh_token)
+    return await service_auth.refresh_access_token(db, info.refresh_token)
 
 
 @router.post("/logout", response_model=ApiResp[MessageResponse])
 @respond
-def logout_route(cur: CurrentUser = Depends(get_current_user), db: Session = Depends(get_session)):
-    service_auth.revoke_all_refresh_tokens(db, cur.id)
+async def logout_route(cur: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_session)):
+    await service_auth.revoke_all_refresh_tokens(db, cur.id)
     return {"message": "Logged out successfully"}
 
 
 @router.post("/login/magic-link/request", response_model=ApiResp[MessageResponse])
 @respond
-def magic_link_request(
+async def magic_link_request(
     background_tasks: BackgroundTasks,
     email: str = Query(...),
     email_provider: EmailProvider = Depends(get_email_provider),
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_session),
 ):
-    service_auth.request_magic_link(
+    await service_auth.request_magic_link(
         db,
         email,
         email_provider,
@@ -265,9 +268,9 @@ def magic_link_request(
 
 @router.get("/login/magic-link/verify", response_model=ApiResp[AuthTokenData])
 @respond
-def magic_link_verify(
+async def magic_link_verify(
     token: str,
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_session),
 ):
     check_code_rate_limit("magic-link:verify:global", max_count=10, window=3600)
-    return service_auth.verify_magic_link(db, token, purpose="login")
+    return await service_auth.verify_magic_link(db, token, purpose="login")

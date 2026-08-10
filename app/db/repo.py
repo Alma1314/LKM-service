@@ -8,31 +8,36 @@
 
 from typing import Any, TypeVar
 
-from sqlalchemy import Update, update as sa_update
+from sqlalchemy import Select, Update, select, update as sa_update
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, ErrCode
 
 M = TypeVar("M")
 
 
-def get_or_raise(
-    db: Session,
+async def get_or_raise(
+    db: AsyncSession,
     model: type[M],
     errcode: ErrCode,
     *conditions: Any,
     detail: str | None = None,
+    options: tuple[Any, ...] = (),
 ) -> M:
     """按条件查一行，未命中则抛出 ``BizError(errcode)``。"""
-    obj = db.query(model).filter(*conditions).first()
+    stmt: Select = select(model).where(*conditions)
+    if options:
+        stmt = stmt.options(*options)
+    result = await db.execute(stmt)
+    obj = result.scalars().first()
     if obj is None:
         raise BizError(errcode, detail)
     return obj
 
 
-def consume_once(
-    db: Session,
+async def consume_once(
+    db: AsyncSession,
     model: type[M],
     values: dict[str, object],
     *conditions: Any,
@@ -41,20 +46,20 @@ def consume_once(
 
     用于一次性 token / 恢复事务 / 挑战码的原子消费，防止并发重放。
     """
-    result = db.execute(sa_update(model).where(*conditions).values(**values))
-    db.flush()
+    result = await db.execute(sa_update(model).where(*conditions).values(**values))
+    await db.flush()
     return (getattr(result, "rowcount", 0) or 0) == 1
 
 
-def isolated_update(db: Session, stmt: Update) -> None:
+async def isolated_update(db: AsyncSession, stmt: Update) -> None:
     """在 savepoint 中执行一条 UPDATE，失败时静默回滚。
 
     失败计数器等"即使调用方事务回滚也要保留"的修改用它。
     """
-    sp = db.begin_nested()
+    sp = await db.begin_nested()
     try:
-        db.execute(stmt)
-        db.flush()
-        sp.commit()
+        await db.execute(stmt)
+        await db.flush()
+        await sp.commit()
     except (IntegrityError, OperationalError):
-        sp.rollback()
+        await sp.rollback()

@@ -6,6 +6,8 @@ from typing import Any, Callable, Coroutine, ParamSpec, cast
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.modules.common import ApiResp
+
 
 class Namespace:
     """Error-code namespace: encodes ns_id<<16 | local so modules stay collision-free."""
@@ -92,8 +94,6 @@ def resp_json(
     detail: str | None = None,
 ) -> JSONResponse:
     status, msg = ERRTABLE[errcode]
-
-    from app.modules.common import ApiResp
 
     return JSONResponse(
         status_code=status,

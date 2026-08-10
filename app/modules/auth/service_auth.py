@@ -1,22 +1,29 @@
 """认证服务 —— 注册、密码登录、升级、刷新令牌。"""
 
+import datetime
 import hashlib
+import logging
 import secrets
 from typing import Any, Protocol, runtime_checkable
 
-from sqlalchemy.orm import Session
-
-
-@runtime_checkable
-class BackgroundTasksLike(Protocol):
-    def add_task(self, func: Any, /, *args: Any, **kwargs: Any) -> None: ...
+from sqlalchemy import or_, select, update as sa_update
+from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.err import BizError, CommonErr
+from app.core.throttle import check_password_login_rate_limit
 from app.modules.auth.errors import AuthErr
 from app.db.models import User, Profile, expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise, isolated_update
-from app.modules.auth.models import AuditLog, MagicLink, RefreshToken, TOTP
+from app.modules.auth.models import (
+    AuditLog,
+    MagicLink,
+    PendingRegistration,
+    RefreshToken,
+    TOTP,
+)
 from app.modules.auth.schemas import (
     UserLoginPassword,
     UserRegLocal,
@@ -28,11 +35,22 @@ from app.modules.auth.security import (
     hashpwd,
     verifypwd,
 )
-from app.modules.auth.service_verify import check_code_rate_limit
+from app.modules.auth.service_verify import (
+    check_code_rate_limit,
+    consume_email_code,
+    consume_phone_code,
+)
 from app.modules.auth.providers.base import EmailProvider
+
+logger = logging.getLogger(__name__)
 
 _FAIL_LOCK_THRESHOLD = 5
 _FAIL_LOCK_MINUTES = 15
+
+
+@runtime_checkable
+class BackgroundTasksLike(Protocol):
+    def add_task(self, func: Any, /, *args: Any, **kwargs: Any) -> None: ...
 
 
 def _normalize_username(username: str) -> str:
@@ -55,7 +73,7 @@ def _hash_refresh_token(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def _store_refresh_token(db: Session, user_id: object, raw: str, mfa_verified: object = False) -> str:
+async def _store_refresh_token(db: AsyncSession, user_id: object, raw: str, mfa_verified: object = False) -> datetime.datetime:
     """持久化哈希后的刷新令牌并返回其过期时间（timezone-aware datetime）。"""
     days = settings.refresh_token_expire_days
     expires_str = expires_at(days=days)
@@ -66,14 +84,17 @@ def _store_refresh_token(db: Session, user_id: object, raw: str, mfa_verified: o
         expires_at=expires_str,
     )
     db.add(tok)
-    db.flush()
+    await db.flush()
     return expires_str
 
 
-def _issue_session_tokens(
-    db: Session, user: User, *, trust_device: bool = False, mfa_verified: bool = False
+async def _issue_session_tokens(
+    db: AsyncSession, user: User, *, trust_device: bool = False, mfa_verified: bool = False
 ) -> tuple[str, str]:
     """发放访问令牌 + 刷新令牌，返回 (access_token, raw_refresh)。"""
+    # async 下不能对未加载的 relationship 做 lazy load，统一确保 profile 已初始化
+    if "profile" not in user.__dict__:
+        await db.refresh(user, attribute_names=["profile"])
     profile = user.profile
     role = profile.role if profile else "member"
     access_token = create_access_token(
@@ -84,12 +105,12 @@ def _issue_session_tokens(
         token_version=user.token_version,
     )
     raw_refresh = _generate_refresh_token()
-    _store_refresh_token(db, user.id, raw_refresh, mfa_verified=mfa_verified)
+    await _store_refresh_token(db, user.id, raw_refresh, mfa_verified=mfa_verified)
     return access_token, raw_refresh
 
 
-def _create_auth_response(
-    db: Session, user: User, requires_2fa: bool = False
+async def _create_auth_response(
+    db: AsyncSession, user: User, requires_2fa: bool = False
 ) -> dict[str, Any]:
     """构建作为登录 / 注册响应返回的字典。"""
     if requires_2fa:
@@ -103,7 +124,7 @@ def _create_auth_response(
             "temp_token": temp_token,
         }
 
-    access_token, raw_refresh = _issue_session_tokens(db, user)
+    access_token, raw_refresh = await _issue_session_tokens(db, user)
     return {
         "access_token": access_token,
         "refresh_token": raw_refresh,
@@ -114,15 +135,14 @@ def _create_auth_response(
     }
 
 
-def _check_account_locked(user: User) -> None:
+async def _check_account_locked(user: User) -> None:
     """检查用户是否被锁定 —— 但返回 INVALID_CREDENTIALS 以防止通过锁检测进行账号枚举。"""
     if not user.is_locked:
         return
     if user.locked_until:
         if user.locked_until > now_iso():
             # 执行虚拟哈希以保持时序一致
-            from app.modules.auth.security import verifypwd as _vp
-            _vp("dummy", "$dummy$" + "a" * 64)
+            verifypwd("dummy", "$dummy$" + "a" * 64)
             raise BizError(AuthErr.INVALID_CREDENTIALS)
         # 锁定已过期 —— 自动解锁
         user.is_locked = False
@@ -130,38 +150,40 @@ def _check_account_locked(user: User) -> None:
         user.failed_login_attempts = 0
 
 
-def _record_failed_attempt(db: Session, user: User) -> None:
+async def _record_failed_attempt(db: AsyncSession, user: User) -> None:
     """通过子事务（保存点）递增登录失败计数器。"""
-    from sqlalchemy import update as sa_update
-
-    isolated_update(
+    await isolated_update(
         db,
         sa_update(User)
         .where(User.id == user.id)
         .values(failed_login_attempts=User.failed_login_attempts + 1),
     )
-    db.refresh(user)
+    await db.refresh(user)
 
     if user.failed_login_attempts >= _FAIL_LOCK_THRESHOLD:
         locked_until = expires_at(minutes=_FAIL_LOCK_MINUTES)
-        isolated_update(
+        await isolated_update(
             db,
             sa_update(User)
             .where(User.id == user.id)
             .values(is_locked=True, locked_until=locked_until),
         )
-        db.refresh(user)
+        await db.refresh(user)
 
-def register_local(db: Session, info: UserRegLocal) -> dict[str, Any]:
+
+async def register_local(db: AsyncSession, info: UserRegLocal) -> dict[str, Any]:
     """创建一个 ``local`` 账户，若已存在且密码正确则自动登录。"""
     username = _normalize_username(info.username)
-    existing = db.query(User).filter(User.username == username).first()
+    result = await db.execute(
+        select(User).where(User.username == username).options(selectinload(User.profile))
+    )
+    existing = result.scalars().first()
     if existing:
         hashed: str = existing.hashed_password  # type: ignore[assignment]
         if not hashed or not verifypwd(info.password, hashed):
             raise BizError(AuthErr.ALREADY_REGISTERED, "Account exists but password is incorrect")
-        upgrade_to_normal(db, existing) # type: ignore[arg-type]
-        return _create_auth_response(db, existing) # type: ignore[arg-type]
+        await upgrade_to_normal(db, existing)  # type: ignore[arg-type]
+        return await _create_auth_response(db, existing)  # type: ignore[arg-type]
 
     user = User(
         username=username,
@@ -169,24 +191,23 @@ def register_local(db: Session, info: UserRegLocal) -> dict[str, Any]:
         account_level="local",
     )
     db.add(user)
-    db.flush()
+    await db.flush()
 
     db.add(Profile(user_id=user.id, role="member"))
-    db.flush()
+    await db.flush()
 
-    return _create_auth_response(db, user)
+    return await _create_auth_response(db, user)
 
 
 def _handle_duplicate_user_error(exc: Exception) -> None:
     """如果是唯一性违规，将 IntegrityError 重新抛出为 ALREADY_REGISTERED。"""
-    from sqlalchemy.exc import IntegrityError
     if isinstance(exc, IntegrityError):
         raise BizError(AuthErr.ALREADY_REGISTERED, "Account already exists") from exc
     raise
 
 
-def register_normal_with_password(
-    db: Session,
+async def register_normal_with_password(
+    db: AsyncSession,
     info: UserRegNormal,
     email_verified: bool = False,
     phone_verified: bool = False,
@@ -205,14 +226,16 @@ def register_normal_with_password(
     email_normalized = _normalize_email(info.email) if info.email else None
 
     existing = (
-        db.query(User)
-        .filter(
-            (User.username == username)
-            | ((User.email == email_normalized) if email_normalized else False)
-            | (User.phone == info.phone)
+        await db.execute(
+            select(User)
+            .where(
+                (User.username == username)
+                | ((User.email == email_normalized) if email_normalized else False)
+                | (User.phone == info.phone)
+            )
+            .options(selectinload(User.profile))
         )
-        .first()
-    )
+    ).scalars().first()
     if existing:
         hashed: str = existing.hashed_password  # type: ignore[assignment]
         if not hashed or not verifypwd(info.password, hashed):
@@ -221,9 +244,9 @@ def register_normal_with_password(
             existing.email = email_normalized
         if info.phone and not existing.phone:
             existing.phone = info.phone
-        upgrade_to_normal(db, existing) # type: ignore[arg-type]
-        db.flush()
-        return _create_auth_response(db, existing) # type: ignore[arg-type]
+        await upgrade_to_normal(db, existing)  # type: ignore[arg-type]
+        await db.flush()
+        return await _create_auth_response(db, existing)  # type: ignore[arg-type]
 
     user = User(
         username=username,
@@ -233,15 +256,15 @@ def register_normal_with_password(
         account_level="normal",
     )
     db.add(user)
-    db.flush()
+    await db.flush()
 
     db.add(Profile(user_id=user.id, role="member"))
-    db.flush()
+    await db.flush()
 
-    return _create_auth_response(db, user)
+    return await _create_auth_response(db, user)
 
 
-def register_by_verify(db: Session, field: str, value: str) -> dict[str, Any]:
+async def register_by_verify(db: AsyncSession, field: str, value: str) -> dict[str, Any]:
     """通过邮箱或手机验证创建一个*无密码*的普通用户，若已存在则自动登录。"""
     if field not in ("email", "phone"):
         raise BizError(CommonErr.INVALID_INPUT, "field must be 'email' or 'phone'")
@@ -249,16 +272,24 @@ def register_by_verify(db: Session, field: str, value: str) -> dict[str, Any]:
     # 规范化并检查重复
     if field == "email":
         normalized_value = _normalize_email(value)
-        existing = db.query(User).filter(User.email == normalized_value).first()
+        existing = (
+            await db.execute(
+                select(User).where(User.email == normalized_value).options(selectinload(User.profile))
+            )
+        ).scalars().first()
     else:
         normalized_value = value
-        existing = db.query(User).filter(User.phone == normalized_value).first()
+        existing = (
+            await db.execute(
+                select(User).where(User.phone == normalized_value).options(selectinload(User.profile))
+            )
+        ).scalars().first()
 
     if existing:
-        upgrade_to_normal(db, existing)  # type: ignore[arg-type]
-        db.flush()
-        log_audit(db, existing.id, "register_code", f"auto-login via {field}")
-        return _create_auth_response(db, existing)  # type: ignore[arg-type]
+        await upgrade_to_normal(db, existing)  # type: ignore[arg-type]
+        await db.flush()
+        await log_audit(db, existing.id, "register_code", f"auto-login via {field}")
+        return await _create_auth_response(db, existing)  # type: ignore[arg-type]
 
     # 从值中派生用户名
     if field == "email":
@@ -269,7 +300,7 @@ def register_by_verify(db: Session, field: str, value: str) -> dict[str, Any]:
     # 确保唯一性
     suffix = 1
     base = username
-    while db.query(User).filter(User.username == username).first():
+    while (await db.execute(select(User).where(User.username == username))).scalars().first():
         username = f"{base}{suffix}"
         suffix += 1
 
@@ -281,24 +312,22 @@ def register_by_verify(db: Session, field: str, value: str) -> dict[str, Any]:
         account_level="normal",
     )
     db.add(user)
-    db.flush()
+    await db.flush()
     db.add(Profile(user_id=user.id, role="member"))
-    db.flush()
+    await db.flush()
 
-    log_audit(db, user.id, "register_code", f"registered via {field}")
-    return _create_auth_response(db, user)
+    await log_audit(db, user.id, "register_code", f"registered via {field}")
+    return await _create_auth_response(db, user)
 
-def _store_pending_normal_registration(
-    db: Session,
+
+async def _store_pending_normal_registration(
+    db: AsyncSession,
     username: str,
     password: str,
     email: str | None,
     phone: str | None,
 ) -> str:
-    from app.modules.auth.models import PendingRegistration
-    import secrets as _s
-
-    txn_id = _s.token_hex(32)
+    txn_id = secrets.token_hex(32)
     expiry = expires_at(minutes=15)
 
     record = PendingRegistration(
@@ -311,20 +340,17 @@ def _store_pending_normal_registration(
         expires_at=expiry,
     )
     db.add(record)
-    db.flush()
+    await db.flush()
     return txn_id
 
 
-def _consume_pending_normal_registration(
-    db: Session,
+async def _consume_pending_normal_registration(
+    db: AsyncSession,
     txn_id: str,
     email_code: str | None = None,
     phone_code: str | None = None,
 ) -> dict[str, Any]:
-    from app.modules.auth.models import PendingRegistration
-    from app.modules.auth.service_verify import consume_email_code, consume_phone_code
-
-    pending = get_or_raise(
+    pending = await get_or_raise(
         db, PendingRegistration, AuthErr.TOKEN_INVALID,
         PendingRegistration.txn_id == txn_id,
         detail="Invalid registration transaction",
@@ -335,29 +361,34 @@ def _consume_pending_normal_registration(
         raise BizError(AuthErr.TOKEN_EXPIRED, "Registration expired")
 
     # 验证所有提交的联系方式 —— 每个提供的联系方式都必须经过验证。
-    from sqlalchemy.exc import IntegrityError, OperationalError
-    sp = db.begin_nested()
+    sp = await db.begin_nested()
     try:
         if pending.email:
             assert email_code is not None
-            consume_email_code(db, str(pending.email), email_code, "register")
+            await consume_email_code(db, str(pending.email), email_code, "register")
         if pending.phone:
             assert phone_code is not None
-            consume_phone_code(db, str(pending.phone), phone_code, "register")
-        sp.commit()
+            await consume_phone_code(db, str(pending.phone), phone_code, "register")
+        await sp.commit()
     except (IntegrityError, OperationalError):
-        sp.rollback()
+        await sp.rollback()
         raise
 
     pending.consumed = True
-    db.flush()
+    await db.flush()
 
     # 检查重复 —— 如果已存在且密码正确则自动登录
-    existing = db.query(User).filter(
-        (User.username == pending.username)
-        | ((User.email == pending.email) if pending.email else False)
-        | ((User.phone == pending.phone) if pending.phone else False)
-    ).first()
+    existing = (
+        await db.execute(
+            select(User)
+            .where(
+                (User.username == pending.username)
+                | ((User.email == pending.email) if pending.email else False)
+                | ((User.phone == pending.phone) if pending.phone else False)
+            )
+            .options(selectinload(User.profile))
+        )
+    ).scalars().first()
     if existing:
         hashed: str = existing.hashed_password  # type: ignore[assignment]
         pending_hashed: str = pending.hashed_password  # type: ignore[assignment]
@@ -368,10 +399,10 @@ def _consume_pending_normal_registration(
             existing.email = pending.email
         if pending.phone and not existing.phone:
             existing.phone = pending.phone
-        upgrade_to_normal(db, existing) # type: ignore[arg-type]
-        db.flush()
-        log_audit(db, existing.id, "register_normal", "auto-login via registration")
-        return _create_auth_response(db, existing) # type: ignore[arg-type]
+        await upgrade_to_normal(db, existing)  # type: ignore[arg-type]
+        await db.flush()
+        await log_audit(db, existing.id, "register_normal", "auto-login via registration")
+        return await _create_auth_response(db, existing)  # type: ignore[arg-type]
 
     user = User(
         username=str(pending.username),
@@ -381,18 +412,19 @@ def _consume_pending_normal_registration(
         account_level="normal",
     )
     db.add(user)
-    db.flush()
+    await db.flush()
     db.add(Profile(user_id=user.id, role="member"))
-    db.flush()
+    await db.flush()
 
-    log_audit(db, user.id, "register_normal", "password registration complete")
-    return _create_auth_response(db, user)
+    await log_audit(db, user.id, "register_normal", "password registration complete")
+    return await _create_auth_response(db, user)
 
-def _check_admin_totp_required(db: Session, user: User) -> dict[str, Any] | None:
+
+async def _check_admin_totp_required(db: AsyncSession, user: User) -> dict[str, Any] | None:
     """如果用户是管理员但尚未设置 TOTP，返回 setup 响应；否则返回 None。"""
     if str(user.account_level) != "admin":
         return None
-    totp = db.query(TOTP).filter(TOTP.user_id == user.id).first()
+    totp = (await db.execute(select(TOTP).where(TOTP.user_id == user.id))).scalars().first()
     if totp and totp.enabled:
         return None
     setup_token = create_temp_token(user.id, purpose="setup")
@@ -407,24 +439,25 @@ def _check_admin_totp_required(db: Session, user: User) -> dict[str, Any] | None
     }
 
 
-def _finalize_auth_response(db: Session, user: User) -> dict[str, Any]:
+async def _finalize_auth_response(db: AsyncSession, user: User) -> dict[str, Any]:
     """检查管理员 TOTP 和 2FA 要求，返回认证响应。"""
-    admin_setup = _check_admin_totp_required(db, user)
+    admin_setup = await _check_admin_totp_required(db, user)
     if admin_setup is not None:
         return admin_setup
 
     requires_2fa = False
     if str(user.account_level) in ("normal", "admin"):
-        totp = db.query(TOTP).filter(TOTP.user_id == user.id, TOTP.enabled.is_(True)).first()
+        totp = (
+            await db.execute(select(TOTP).where(TOTP.user_id == user.id, TOTP.enabled.is_(True)))
+        ).scalars().first()
         if totp:
             requires_2fa = True
 
-    return _create_auth_response(db, user, requires_2fa=requires_2fa)  # type: ignore[arg-type]
+    return await _create_auth_response(db, user, requires_2fa=requires_2fa)  # type: ignore[arg-type]
 
 
-def login_password(db: Session, info: UserLoginPassword, ip_address: str = "") -> dict[str, Any]:
+async def login_password(db: AsyncSession, info: UserLoginPassword, ip_address: str = "") -> dict[str, Any]:
     """通过用户名、邮箱或手机号 + 密码进行认证。"""
-    from app.core.throttle import check_password_login_rate_limit
     if ip_address:
         check_password_login_rate_limit(ip_address)
 
@@ -432,76 +465,79 @@ def login_password(db: Session, info: UserLoginPassword, ip_address: str = "") -
     email_normalized = _normalize_email(info.account)
 
     user = (
-        db.query(User)
-        .filter(
-            (User.username == account)
-            | (User.email == email_normalized)
-            | (User.phone == info.account.strip())
+        await db.execute(
+            select(User)
+            .where(
+                (User.username == account)
+                | (User.email == email_normalized)
+                | (User.phone == info.account.strip())
+            )
+            .options(selectinload(User.profile))
         )
-        .first()
-    )
+    ).scalars().first()
 
     if not user:
         # 防御用户枚举：执行一个相同成本的虚拟哈希，
         verifypwd(info.password, "$dummy$" + "a" * 64)
         raise BizError(AuthErr.INVALID_CREDENTIALS)
 
-    _check_account_locked(user) # type: ignore[arg-type]
+    await _check_account_locked(user)  # type: ignore[arg-type]
 
     try:
         ok = verifypwd(info.password, str(user.hashed_password))
     except (ValueError, TypeError):
-        import logging
-        logging.getLogger("auth.login").exception(
+        logger.exception(
             "verifypwd raised exception for user_id=%s (possible corrupted hash)", user.id
         )
         ok = False
     if not ok:
-        _record_failed_attempt(db, user) # type: ignore[arg-type]
+        await _record_failed_attempt(db, user)  # type: ignore[arg-type]
         if user.failed_login_attempts >= _FAIL_LOCK_THRESHOLD:
-            log_audit(db, user.id, "account_locked", "5 failed login attempts")
+            await log_audit(db, user.id, "account_locked", "5 failed login attempts")
         raise BizError(AuthErr.INVALID_CREDENTIALS)
 
     # 成功 —— 通过子事务（savepoint）原子性地重置计数器，
     # 防止调用方回滚时把失败计数器也一并回滚。
-    from sqlalchemy import update as sa_update
-    isolated_update(
+    await isolated_update(
         db,
         sa_update(User)
         .where(User.id == user.id)
         .values(failed_login_attempts=0, is_locked=False, locked_until=None),
     )
-    db.refresh(user)
+    await db.refresh(user)
 
-    log_audit(db, user.id, "login_password", "success")
+    await log_audit(db, user.id, "login_password", "success")
 
-    return _finalize_auth_response(db, user) # type: ignore[arg-type]
+    return await _finalize_auth_response(db, user)  # type: ignore[arg-type]
 
 
-def login_code(db: Session, contact: str, code: str) -> dict[str, Any]:
+async def login_code(db: AsyncSession, contact: str, code: str) -> dict[str, Any]:
     """使用有时效性的验证码进行认证。"""
-    from app.modules.auth.service_verify import consume_email_code, consume_phone_code
-
     if "@" in contact:
-        consume_email_code(db, contact, code, "login")
-        user = get_or_raise(
+        await consume_email_code(db, contact, code, "login")
+        user = await get_or_raise(
             db, User, AuthErr.USER_NOT_FOUND, User.email == _normalize_email(contact),
+            options=(selectinload(User.profile),),
         )
     else:
-        consume_phone_code(db, contact, code, "login")
-        user = get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.phone == contact)
+        await consume_phone_code(db, contact, code, "login")
+        user = await get_or_raise(
+            db, User, AuthErr.USER_NOT_FOUND, User.phone == contact,
+            options=(selectinload(User.profile),),
+        )
 
     if user.account_level == "local":
         raise BizError(AuthErr.ACCOUNT_LEVEL_INSUFFICIENT)
 
     if user.is_locked:
-        _check_account_locked(user) # type: ignore[arg-type]
+        await _check_account_locked(user)  # type: ignore[arg-type]
 
     # 没有 TOTP 的管理员 —— 与密码登录相同的设置流程
-    return _finalize_auth_response(db, user) # type: ignore[arg-type]
+    return await _finalize_auth_response(db, user)  # type: ignore[arg-type]
 
-def request_magic_link(
-    db: Session,
+
+async def request_magic_link(
+    db: AsyncSession,
     email: str,
     email_provider: EmailProvider,
     purpose: str = "login",
@@ -519,7 +555,7 @@ def request_magic_link(
     rate_limit_key = f"magiclink:{email}"
     check_code_rate_limit(rate_limit_key, max_count=5, window=3600)
 
-    user = db.query(User).filter(User.email == email).first()
+    user = (await db.execute(select(User).where(User.email == email))).scalars().first()
     if not user or user.account_level == "local":
         # 无操作：不创建也不发送，但速率限制在上方已被消耗
         return
@@ -536,7 +572,7 @@ def request_magic_link(
         expires_at=expiry,
     )
     db.add(link_record)
-    db.flush()
+    await db.flush()
 
     base_url = frontend_url or settings.api_prefix
     link = f"{base_url}/auth/login/magic-link/verify?token={raw_token}"
@@ -545,8 +581,8 @@ def request_magic_link(
         background_tasks.add_task(email_provider.send_magic_link, email, link)
 
 
-def verify_magic_link(
-    db: Session,
+async def verify_magic_link(
+    db: AsyncSession,
     token: str,
     purpose: str = "login",
 ) -> dict[str, Any]:
@@ -565,7 +601,7 @@ def verify_magic_link(
 
     # 原子消费：仅在尚未使用、未过期且用途匹配时才标记为已使用。
     # 这可防止并发重放攻击。
-    if not consume_once(
+    if not await consume_once(
         db,
         MagicLink,
         {"used": True},
@@ -576,10 +612,8 @@ def verify_magic_link(
     ):
         # 令牌可能已过期或不存在 —— 检查具体是哪一种情况
         link_record = (
-            db.query(MagicLink)
-            .filter(MagicLink.token_hash == token_hash)
-            .first()
-        )
+            await db.execute(select(MagicLink).where(MagicLink.token_hash == token_hash))
+        ).scalars().first()
         if not link_record:
             raise BizError(AuthErr.TOKEN_INVALID)
         if link_record.purpose != purpose:
@@ -590,13 +624,14 @@ def verify_magic_link(
         raise BizError(AuthErr.TOKEN_EXPIRED)
 
     # 原子更新后重新获取
-    link_record = get_or_raise(
+    link_record = await get_or_raise(
         db, MagicLink, AuthErr.TOKEN_INVALID,
         MagicLink.token_hash == token_hash,
     )
 
-    user = get_or_raise(
+    user = await get_or_raise(
         db, User, AuthErr.USER_NOT_FOUND, User.email == link_record.email,
+        options=(selectinload(User.profile),),
     )
 
     if user.account_level == "local":
@@ -604,33 +639,36 @@ def verify_magic_link(
 
     # 没有 TOTP 的管理员必须设置它
     if user.account_level == "admin":
-        totp = db.query(TOTP).filter(TOTP.user_id == user.id).first()
+        totp = (await db.execute(select(TOTP).where(TOTP.user_id == user.id))).scalars().first()
         if not totp or not totp.enabled:
             raise BizError(AuthErr.TOTP_SETUP_REQUIRED)
 
     # 与 login_password 相同的 2FA 检查
     requires_2fa = False
     if user.account_level in ("normal", "admin"):
-        totp = db.query(TOTP).filter(TOTP.user_id == user.id, TOTP.enabled.is_(True)).first()
+        totp = (
+            await db.execute(select(TOTP).where(TOTP.user_id == user.id, TOTP.enabled.is_(True)))
+        ).scalars().first()
         if totp:
             requires_2fa = True
 
-    return _create_auth_response(db, user, requires_2fa=requires_2fa) # type: ignore[arg-type]
+    return await _create_auth_response(db, user, requires_2fa=requires_2fa)  # type: ignore[arg-type]
 
-def upgrade_to_normal(db: Session, user: User) -> None:
+
+async def upgrade_to_normal(db: AsyncSession, user: User) -> None:
     """将 ``local`` 用户升级为 ``normal``。对于已是 normal 或 admin 的用户无操作。"""
     if user.account_level == "local":
         user.account_level = "normal"
-        db.flush()
-        log_audit(db, user.id, "level_change", "local -> normal")
+        await db.flush()
+        await log_audit(db, user.id, "level_change", "local -> normal")
 
 
-def refresh_access_token(db: Session, raw_refresh: str) -> dict[str, Any]:
+async def refresh_access_token(db: AsyncSession, raw_refresh: str) -> dict[str, Any]:
     tok_hash = _hash_refresh_token(raw_refresh)
     now = now_iso()
 
     # 原子撤销：仅在令牌存在且尚未被撤销时才撤销
-    if not consume_once(
+    if not await consume_once(
         db,
         RefreshToken,
         {"revoked_at": now},
@@ -641,7 +679,7 @@ def refresh_access_token(db: Session, raw_refresh: str) -> dict[str, Any]:
         raise BizError(AuthErr.TOKEN_INVALID)
 
     # 现在获取记录以得到 user_id 和 mfa_verified
-    stored = get_or_raise(
+    stored = await get_or_raise(
         db, RefreshToken, AuthErr.TOKEN_INVALID,
         RefreshToken.token_hash == tok_hash,
     )
@@ -651,33 +689,37 @@ def refresh_access_token(db: Session, raw_refresh: str) -> dict[str, Any]:
         raise BizError(AuthErr.TOKEN_EXPIRED)
 
     # 发放新令牌
-    user = get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == stored.user_id)
+    user = await get_or_raise(
+        db, User, AuthErr.USER_NOT_FOUND, User.id == stored.user_id,
+        options=(selectinload(User.profile),),
+    )
 
     # 管理员用户的刷新令牌会话必须经过 MFA 认证
     if user.account_level == "admin" and not stored.mfa_verified:
         raise BizError(AuthErr.TOKEN_INVALID, "Admin refresh token requires MFA assurance")
 
-    access_token, raw_new = _issue_session_tokens(db, user, mfa_verified=stored.mfa_verified)
+    access_token, raw_new = await _issue_session_tokens(db, user, mfa_verified=stored.mfa_verified)
     return {"access_token": access_token, "refresh_token": raw_new}
 
-def revoke_all_refresh_tokens(db: Session, user_id: int) -> None:
+
+async def revoke_all_refresh_tokens(db: AsyncSession, user_id: int) -> None:
     """撤销指定用户所有未撤销的刷新令牌，并使其所有访问令牌失效。"""
-    db.query(RefreshToken).filter(
-        RefreshToken.user_id == user_id,
-        RefreshToken.revoked_at.is_(None),
-    ).update({"revoked_at": now_iso()}, synchronize_session="fetch")
+    await db.execute(
+        sa_update(RefreshToken)
+        .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=now_iso())
+    )
     # 递增 token_version 以使所有现有访问令牌失效
-    from sqlalchemy import update as sa_update
-    db.execute(
+    await db.execute(
         sa_update(User)
         .where(User.id == user_id)
         .values(token_version=User.token_version + 1)
     )
-    db.flush()
+    await db.flush()
 
 
-def log_audit(
-    db: Session,
+async def log_audit(
+    db: AsyncSession,
     user_id: object,
     action: str,
     detail: str | None = None,
@@ -692,4 +734,4 @@ def log_audit(
         ip_address=ip_address,
     )
     db.add(entry)
-    db.flush()
+    await db.flush()

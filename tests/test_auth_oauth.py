@@ -1,5 +1,6 @@
 """Tests for Github OAuth — service_oauth auth URL generation and callback logic."""
 import pytest
+from sqlalchemy import select
 
 import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
 from app.core.config import settings
@@ -7,35 +8,35 @@ from app.modules.auth.models import OAuthState
 
 
 class TestGithubAuthUrl:
-    def should_contain_github_authorize_url(self, db):
+    async def should_contain_github_authorize_url(self, db):
         from app.modules.auth.service_oauth import get_github_auth_url
 
-        url = get_github_auth_url(db)
+        url = await get_github_auth_url(db)
         assert "github.com/login/oauth/authorize" in url
 
-    def should_contain_client_id(self, db):
+    async def should_contain_client_id(self, db):
         from app.modules.auth.service_oauth import get_github_auth_url
 
-        url = get_github_auth_url(db)
+        url = await get_github_auth_url(db)
         assert f"client_id={settings.github_client_id}" in url
 
-    def should_contain_user_email_scope(self, db):
+    async def should_contain_user_email_scope(self, db):
         from app.modules.auth.service_oauth import get_github_auth_url
 
-        url = get_github_auth_url(db)
+        url = await get_github_auth_url(db)
         assert "scope=user" in url
         assert "email" in url
 
-    def should_contain_redirect_uri(self, db):
+    async def should_contain_redirect_uri(self, db):
         from app.modules.auth.service_oauth import get_github_auth_url
 
-        url = get_github_auth_url(db)
+        url = await get_github_auth_url(db)
         assert "redirect_uri=" in url
 
-    def should_generate_server_state_token(self, db):
+    async def should_generate_server_state_token(self, db):
         from app.modules.auth.service_oauth import get_github_auth_url
 
-        url = get_github_auth_url(db)
+        url = await get_github_auth_url(db)
         # state is now server-generated; must be non-empty
         assert "&state=" in url
         # state should not be the empty placeholder
@@ -47,49 +48,48 @@ class TestGithubAuthUrl:
 
 
 class TestOAuthState:
-    def should_store_and_consume_state(self, db):
+    async def should_store_and_consume_state(self, db):
         from app.modules.auth.service_oauth import _generate_oauth_state, _consume_oauth_state
 
-        state = _generate_oauth_state(db, "login")
+        state = await _generate_oauth_state(db, "login")
         assert len(state) > 0
 
-        records = db.query(OAuthState).filter(OAuthState.state == state).all()
+        records = (await db.execute(select(OAuthState).where(OAuthState.state == state))).scalars().all()
         assert len(records) == 1
         assert not records[0].consumed
 
-        _consume_oauth_state(db, state, "login")
-        db.refresh(records[0])
+        await _consume_oauth_state(db, state, "login")
+        await db.refresh(records[0])
         assert records[0].consumed
 
-    def should_reject_already_consumed_state(self, db):
+    async def should_reject_already_consumed_state(self, db):
         from app.modules.auth.service_oauth import _generate_oauth_state, _consume_oauth_state
         from app.core.err import BizError
 
-        state = _generate_oauth_state(db, "login")
-        _consume_oauth_state(db, state, "login")
+        state = await _generate_oauth_state(db, "login")
+        await _consume_oauth_state(db, state, "login")
 
         with pytest.raises(BizError):
-            _consume_oauth_state(db, state, "login")
+            await _consume_oauth_state(db, state, "login")
 
-    def should_reject_wrong_purpose(self, db):
+    async def should_reject_wrong_purpose(self, db):
         from app.modules.auth.service_oauth import _generate_oauth_state, _consume_oauth_state
         from app.core.err import BizError
 
-        state = _generate_oauth_state(db, "login")
+        state = await _generate_oauth_state(db, "login")
         with pytest.raises(BizError):
-            _consume_oauth_state(db, state, "bind")
+            await _consume_oauth_state(db, state, "bind")
 
 
 class TestOauthRouterRedirect:
     """Github callback 重定向到前端（302）—— 携带令牌 / temp_token / 绑定结果。"""
 
-    def should_redirect_login_callback_with_tokens(self, db):
-        import asyncio
+    async def should_redirect_login_callback_with_tokens(self, db):
         from unittest.mock import AsyncMock, patch
         from fastapi.responses import RedirectResponse
+        from urllib.parse import parse_qs, urlparse
 
         from app.modules.auth import router_oauth
-        from urllib.parse import parse_qs, urlparse
 
         payload = {
             "access_token": "acc123",
@@ -106,7 +106,7 @@ class TestOauthRouterRedirect:
             "handle_github_callback",
             new=AsyncMock(return_value=payload),
         ):
-            resp = asyncio.run(router_oauth.github_callback(code="c", state="s", db=db))
+            resp = await router_oauth.github_callback(code="c", state="s", db=db)
 
         assert isinstance(resp, RedirectResponse)
         assert resp.status_code in (302, 307)
@@ -116,8 +116,7 @@ class TestOauthRouterRedirect:
         assert qs["refresh_token"] == ["ref123"]
         assert "temp_token" not in qs
 
-    def should_redirect_login_callback_with_temp_token_when_2fa(self, db):
-        import asyncio
+    async def should_redirect_login_callback_with_temp_token_when_2fa(self, db):
         from unittest.mock import AsyncMock, patch
         from fastapi.responses import RedirectResponse
         from urllib.parse import parse_qs, urlparse
@@ -139,15 +138,14 @@ class TestOauthRouterRedirect:
             "handle_github_callback",
             new=AsyncMock(return_value=payload),
         ):
-            resp = asyncio.run(router_oauth.github_callback(code="c", state="s", db=db))
+            resp = await router_oauth.github_callback(code="c", state="s", db=db)
 
         qs = parse_qs(urlparse(resp.headers["location"]).fragment)
         assert qs["temp_token"] == ["tmp999"]
         assert qs["requires_2fa"] == ["true"]
         assert "access_token" not in qs
 
-    def should_redirect_bind_callback_on_success(self, db):
-        import asyncio
+    async def should_redirect_bind_callback_on_success(self, db):
         from unittest.mock import AsyncMock, patch
         from fastapi.responses import RedirectResponse
         from urllib.parse import parse_qs, urlparse
@@ -159,15 +157,14 @@ class TestOauthRouterRedirect:
             "bind_github",
             new=AsyncMock(return_value={"message": "Github account bound"}),
         ):
-            resp = asyncio.run(router_oauth.github_bind_callback(code="c", state="s", db=db))
+            resp = await router_oauth.github_bind_callback(code="c", state="s", db=db)
 
         assert isinstance(resp, RedirectResponse)
         # 绑定回调结果经 URL fragment 回传
         qs = parse_qs(urlparse(resp.headers["location"]).fragment)
         assert qs["success"] == ["1"]
 
-    def should_redirect_bind_callback_on_biz_error(self, db):
-        import asyncio
+    async def should_redirect_bind_callback_on_biz_error(self, db):
         from unittest.mock import AsyncMock, patch
         from fastapi.responses import RedirectResponse
         from urllib.parse import parse_qs, urlparse
@@ -180,7 +177,7 @@ class TestOauthRouterRedirect:
             raise BizError(AuthErr.OAUTH_EMAIL_TAKEN)
 
         with patch.object(router_oauth.service_oauth, "bind_github", new=_boom):
-            resp = asyncio.run(router_oauth.github_bind_callback(code="c", state="s", db=db))
+            resp = await router_oauth.github_bind_callback(code="c", state="s", db=db)
 
         assert isinstance(resp, RedirectResponse)
         qs = parse_qs(urlparse(resp.headers["location"]).fragment)

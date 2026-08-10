@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import RedirectResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.err import BizError, respond
@@ -19,9 +19,9 @@ router = APIRouter(prefix="/auth/oauth", tags=["oauth"])
 
 
 @router.get("/github/login")
-def github_login(db: Session = Depends(get_session)):
+async def github_login(db: AsyncSession = Depends(get_session)):
     """将用户重定向到 Github OAuth 授权页面。"""
-    url = service_oauth.get_github_auth_url(db, purpose="login")
+    url = await service_oauth.get_github_auth_url(db, purpose="login")
     return RedirectResponse(url=url)
 
 
@@ -29,7 +29,7 @@ def github_login(db: Session = Depends(get_session)):
 async def github_callback(
     code: str = Query(...),
     state: str = Query(...),
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_session),
 ):
     """处理 Github OAuth 登录回调，302 到前端并携带会话令牌（或 2FA 的 temp_token）。
 
@@ -52,9 +52,9 @@ async def github_callback(
 
 @router.post("/github/login/redirect", response_model=ApiResp[OAuthRedirectResponse])
 @respond
-def github_bind_redirect(cur: CurrentUser = Depends(get_current_user), db: Session = Depends(get_session)):
+async def github_bind_redirect(cur: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_session)):
     """返回用于绑定的 OAuth 授权 URL（从 JS 客户端调用）。将发起用户写入 OAuth state。"""
-    url = service_oauth.get_github_auth_url(db, purpose="bind", user_id=cur.id)
+    url = await service_oauth.get_github_auth_url(db, purpose="bind", user_id=cur.id)
     return {"url": url}
 
 
@@ -62,7 +62,7 @@ def github_bind_redirect(cur: CurrentUser = Depends(get_current_user), db: Sessi
 async def github_bind_callback(
     code: str = Query(...),
     state: str = Query(...),
-    db: Session = Depends(get_session),
+    db: AsyncSession = Depends(get_session),
 ):
     """处理绑定 Github OAuth 回调：302 到前端携带结果（无需 header JWT，归属由 state 记录决定）。
 

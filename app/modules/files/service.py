@@ -2,7 +2,9 @@ import json
 import uuid
 from pathlib import Path
 
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.err import BizError
@@ -35,10 +37,13 @@ def _file_to_schema(f: LibraryFile, uploader_name: str) -> FileInfo:
     return FileInfo.model_validate(f).model_copy(update={"uploader_name": uploader_name})
 
 
-def _uploader_map(db: Session, user_ids: list[int]) -> dict[int, str]:
+async def _uploader_map(db: AsyncSession, user_ids: list[int]) -> dict[int, str]:
     if not user_ids:
         return {}
-    users = db.query(User).filter(User.id.in_(set(user_ids))).all()
+    result = await db.execute(
+        select(User).where(User.id.in_(set(user_ids))).options(selectinload(User.profile))
+    )
+    users = result.scalars().all()
     return {u.id: _uploader_name(u) for u in users}
 
 
@@ -53,50 +58,47 @@ def _make_stored_name(original_name: str) -> str:
     return f"{uuid.uuid4().hex}{suffix}"
 
 
-def list_files(
-    db: Session,
+async def list_files(
+    db: AsyncSession,
     page: int = 1,
     limit: int = 20,
     category_id: str | None = None,
     status: str | None = None,
     sort: str = "newest",
 ) -> PageData[FileInfo]:
-    query = db.query(LibraryFile)
+    base = select(LibraryFile)
     if category_id:
-        query = query.filter(LibraryFile.category_id == category_id)
+        base = base.where(LibraryFile.category_id == category_id)
     if status:
-        query = query.filter(LibraryFile.status == status)
+        base = base.where(LibraryFile.status == status)
 
-    total = query.count()
+    total = await db.scalar(select(func.count()).select_from(base.subquery())) or 0
     order = LibraryFile.download_count.desc() if sort == "downloads" else LibraryFile.id.desc()
     files = (
-        query.order_by(order)
-        .offset((page - 1) * limit)
-        .limit(limit)
-        .all()
-    )
+        await db.execute(base.order_by(order).offset((page - 1) * limit).limit(limit))
+    ).scalars().all()
 
-    names = _uploader_map(db, [f.uploader_id for f in files])
+    names = await _uploader_map(db, [f.uploader_id for f in files])
     items = [_file_to_schema(f, names.get(f.uploader_id, "")) for f in files]
     return PageData(items=items, total=total, page=page, pages=(total + limit - 1) // limit)
 
 
-def get_file(db: Session, file_id: int, bump_view: bool = False) -> FileInfo:
-    f = get_or_raise(db, LibraryFile, FileErr.NOT_FOUND, LibraryFile.id == file_id)
+async def get_file(db: AsyncSession, file_id: int, bump_view: bool = False) -> FileInfo:
+    f = await get_or_raise(db, LibraryFile, FileErr.NOT_FOUND, LibraryFile.id == file_id)
 
     if bump_view:
         f.view_count += 1
-        db.flush()
+        await db.flush()
 
-    names = _uploader_map(db, [f.uploader_id])
+    names = await _uploader_map(db, [f.uploader_id])
     return _file_to_schema(f, names.get(f.uploader_id, ""))
 
 
 _CHUNK = 1024 * 1024  # 分块读写，避免整文件载入内存
 
 
-def create_file(
-    db: Session,
+async def create_file(
+    db: AsyncSession,
     uploader_id: int,
     info: FileCreate,
     stream,
@@ -147,18 +149,17 @@ def create_file(
             tags=json.dumps(info.tags, ensure_ascii=False),
         )
         db.add(f)
-        db.flush()
-        db.refresh(f)
+        await db.flush()
     except Exception:
         dest.unlink(missing_ok=True)
         raise
 
-    names = _uploader_map(db, [f.uploader_id])
+    names = await _uploader_map(db, [f.uploader_id])
     return _file_to_schema(f, names.get(f.uploader_id, ""))
 
 
-def bump_download(db: Session, file_id: int) -> int:
-    f = get_or_raise(db, LibraryFile, FileErr.NOT_FOUND, LibraryFile.id == file_id)
+async def bump_download(db: AsyncSession, file_id: int) -> int:
+    f = await get_or_raise(db, LibraryFile, FileErr.NOT_FOUND, LibraryFile.id == file_id)
     f.download_count += 1
-    db.flush()
+    await db.flush()
     return f.download_count

@@ -47,21 +47,21 @@ def blog_dir(monkeypatch, tmp_path):
 # ---- helpers ----
 
 
-def _user(db, username="alice", email="alice@example.com"):
+async def _user(db, username="alice", email="alice@example.com"):
     from app.db.models import User, Profile
     user = User(
         username=username, email=email,
         hashed_password=hashpwd("secret123456"), account_level="normal",
     )
     db.add(user)
-    db.flush()
+    await db.flush()
     db.add(Profile(user_id=user.id))
-    db.flush()
+    await db.flush()
     return user.id
 
 
-def _series(db, user_id=1, repo_name="my-blog"):
-    return create_series(
+async def _series(db, user_id=1, repo_name="my-blog"):
+    return await create_series(
         db,
         user_id,
         BlogSeriesCreate(
@@ -131,9 +131,9 @@ def _seed_bare_repo(repo_dir: str, repo_name: str, files: dict[str, str]):
 
 
 class TestBlogSeries:
-    def should_create_series(self, db, blog_dir):
-        user_id = _user(db)
-        series = _series(db, user_id=user_id)
+    async def should_create_series(self, db, blog_dir):
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
 
         assert series.id == 1
         assert series.owner_id == user_id
@@ -144,52 +144,52 @@ class TestBlogSeries:
         # verify bare repo on disk
         assert os.path.isdir(os.path.join(blog_dir, "my-blog.git"))
 
-    def should_reject_duplicate_repo_name(self, db, blog_dir):
-        _user(db)
-        _series(db, repo_name="taken")
+    async def should_reject_duplicate_repo_name(self, db, blog_dir):
+        await _user(db)
+        await _series(db, repo_name="taken")
 
         with pytest.raises(BizError) as exc:
-            _series(db, repo_name="taken")
+            await _series(db, repo_name="taken")
 
         assert exc.value.errcode == CommonErr.INVALID_INPUT
 
-    def should_list_series(self, db, blog_dir):
-        user_id = _user(db)
-        _series(db, user_id=user_id, repo_name="blog-a")
-        _series(db, user_id=user_id, repo_name="blog-b")
+    async def should_list_series(self, db, blog_dir):
+        user_id = await _user(db)
+        await _series(db, user_id=user_id, repo_name="blog-a")
+        await _series(db, user_id=user_id, repo_name="blog-b")
 
-        items = list_series(db)
+        items = await list_series(db)
         assert len(items) == 2
 
-    def should_list_series_with_star_info(self, db, blog_dir):
-        user_id = _user(db)
-        series = _series(db, user_id=user_id)
+    async def should_list_series_with_star_info(self, db, blog_dir):
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
 
-        toggle_star(db, series.id, user_id)
-        items = list_series(db, current_user_id=user_id)
+        await toggle_star(db, series.id, user_id)
+        items = await list_series(db, current_user_id=user_id)
         assert items[0].star_count == 1
         assert items[0].is_starred
 
-    def should_list_series_guest(self, db, blog_dir):
-        user_id = _user(db)
-        series = _series(db, user_id=user_id)
+    async def should_list_series_guest(self, db, blog_dir):
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
 
-        toggle_star(db, series.id, user_id)
-        items = list_series(db, current_user_id=None)
+        await toggle_star(db, series.id, user_id)
+        items = await list_series(db, current_user_id=None)
         assert items[0].star_count == 1
         assert not items[0].is_starred
 
-    def should_get_series(self, db, blog_dir):
-        user_id = _user(db)
-        series = _series(db, user_id=user_id)
+    async def should_get_series(self, db, blog_dir):
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
 
-        detail = get_series(db, series.id)
+        detail = await get_series(db, series.id)
         assert detail.id == series.id
         assert detail.file_tree is None  # empty repo
 
-    def should_get_series_with_file_tree(self, db, blog_dir):
-        user_id = _user(db)
-        series = _series(db, user_id=user_id)
+    async def should_get_series_with_file_tree(self, db, blog_dir):
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
 
         _seed_bare_repo(
             blog_dir,
@@ -197,21 +197,21 @@ class TestBlogSeries:
             {"README.md": "# Hello", "posts/2026-01-01.md": "# Post"},
         )
 
-        detail = get_series(db, series.id)
+        detail = await get_series(db, series.id)
         assert detail.file_tree is not None
         assert len(detail.file_tree) == 2  # README.md + posts/
 
-    def should_reject_nonexistent_series(self, db):
+    async def should_reject_nonexistent_series(self, db):
         with pytest.raises(BizError) as exc:
-            get_series(db, 999)
+            await get_series(db, 999)
 
         assert exc.value.errcode == BlogErr.SERIES_NOT_FOUND
 
-    def should_update_series(self, db, blog_dir):
-        user_id = _user(db)
-        series = _series(db, user_id=user_id)
+    async def should_update_series(self, db, blog_dir):
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
 
-        updated = update_series(
+        updated = await update_series(
             db,
             series.id,
             user_id,
@@ -220,35 +220,35 @@ class TestBlogSeries:
         assert updated.title == "New Title"
         assert updated.description == "New desc"
 
-    def should_reject_update_by_non_owner(self, db, blog_dir):
-        user_id = _user(db)
-        other = _user(db, username="bob", email="bob@bob.com")
-        series = _series(db, user_id=user_id)
+    async def should_reject_update_by_non_owner(self, db, blog_dir):
+        user_id = await _user(db)
+        other = await _user(db, username="bob", email="bob@bob.com")
+        series = await _series(db, user_id=user_id)
 
         with pytest.raises(BizError) as exc:
-            update_series(db, series.id, other, BlogSeriesUpdate(title="Bad!"))
+            await update_series(db, series.id, other, BlogSeriesUpdate(title="Bad!"))
 
         assert exc.value.errcode == CommonErr.FORBIDDEN
 
-    def should_delete_series(self, db, blog_dir):
-        user_id = _user(db)
-        series = _series(db, user_id=user_id)
+    async def should_delete_series(self, db, blog_dir):
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
 
-        delete_series(db, series.id, user_id)
+        await delete_series(db, series.id, user_id)
 
         with pytest.raises(BizError) as exc:
-            get_series(db, series.id)
+            await get_series(db, series.id)
         assert exc.value.errcode == BlogErr.SERIES_NOT_FOUND
         # repo physically removed
         assert not os.path.exists(os.path.join(blog_dir, "my-blog.git"))
 
-    def should_reject_delete_by_non_owner(self, db, blog_dir):
-        user_id = _user(db)
-        other = _user(db, username="bob", email="bob@bob.com")
-        series = _series(db, user_id=user_id)
+    async def should_reject_delete_by_non_owner(self, db, blog_dir):
+        user_id = await _user(db)
+        other = await _user(db, username="bob", email="bob@bob.com")
+        series = await _series(db, user_id=user_id)
 
         with pytest.raises(BizError) as exc:
-            delete_series(db, series.id, other)
+            await delete_series(db, series.id, other)
 
         assert exc.value.errcode == CommonErr.FORBIDDEN
 
@@ -257,32 +257,32 @@ class TestBlogSeries:
 
 
 class TestBlogStars:
-    def should_star_and_unstar(self, db, blog_dir):
-        user_id = _user(db)
-        series = _series(db, user_id=user_id)
+    async def should_star_and_unstar(self, db, blog_dir):
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
 
-        result = toggle_star(db, series.id, user_id)
+        result = await toggle_star(db, series.id, user_id)
         assert result.starred
         assert result.star_count == 1
 
-        result = toggle_star(db, series.id, user_id)
+        result = await toggle_star(db, series.id, user_id)
         assert not result.starred
         assert result.star_count == 0
 
-    def should_reject_star_nonexistent_series(self, db):
+    async def should_reject_star_nonexistent_series(self, db):
         with pytest.raises(BizError) as exc:
-            toggle_star(db, 999, 1)
+            await toggle_star(db, 999, 1)
         assert exc.value.errcode == BlogErr.SERIES_NOT_FOUND
 
-    def should_count_stars_correctly(self, db, blog_dir):
-        user_id = _user(db)
-        other = _user(db, username="bob", email="bob@bob.com")
-        series = _series(db, user_id=user_id)
+    async def should_count_stars_correctly(self, db, blog_dir):
+        user_id = await _user(db)
+        other = await _user(db, username="bob", email="bob@bob.com")
+        series = await _series(db, user_id=user_id)
 
-        toggle_star(db, series.id, user_id)
-        toggle_star(db, series.id, other)
+        await toggle_star(db, series.id, user_id)
+        await toggle_star(db, series.id, other)
 
-        items = list_series(db)
+        items = await list_series(db)
         assert items[0].star_count == 2
 
 
@@ -290,53 +290,53 @@ class TestBlogStars:
 
 
 class TestBlogComments:
-    def should_create_comment(self, db, blog_dir):
-        user_id = _user(db)
-        series = _series(db, user_id=user_id)
+    async def should_create_comment(self, db, blog_dir):
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
 
-        comment = create_comment(db, series.id, user_id, BlogCommentCreate(content="Nice post!"))
+        comment = await create_comment(db, series.id, user_id, BlogCommentCreate(content="Nice post!"))
         assert comment.id == 1
         assert comment.content == "Nice post!"
         assert comment.parent_id is None
         assert comment.replies == []
 
-    def should_create_reply(self, db, blog_dir):
-        user_id = _user(db)
-        series = _series(db, user_id=user_id)
-        parent = create_comment(db, series.id, user_id, BlogCommentCreate(content="Root"))
+    async def should_create_reply(self, db, blog_dir):
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
+        parent = await create_comment(db, series.id, user_id, BlogCommentCreate(content="Root"))
 
-        reply = create_comment(
+        reply = await create_comment(
             db, series.id, user_id, BlogCommentCreate(content="Reply", parent_id=parent.id)
         )
         assert reply.parent_id == parent.id
 
-    def should_list_threaded_comments(self, db, blog_dir):
-        user_id = _user(db)
-        series = _series(db, user_id=user_id)
+    async def should_list_threaded_comments(self, db, blog_dir):
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
 
-        c1 = create_comment(db, series.id, user_id, BlogCommentCreate(content="Comment 1"))
-        create_comment(
+        c1 = await create_comment(db, series.id, user_id, BlogCommentCreate(content="Comment 1"))
+        await create_comment(
             db, series.id, user_id, BlogCommentCreate(content="Reply to 1", parent_id=c1.id)
         )
-        create_comment(db, series.id, user_id, BlogCommentCreate(content="Comment 2"))
+        await create_comment(db, series.id, user_id, BlogCommentCreate(content="Comment 2"))
 
-        comments = list_comments(db, series.id)
+        comments = await list_comments(db, series.id)
         assert len(comments) == 2  # 2 roots
         c1_found = next(c for c in comments if c.id == c1.id)
         assert len(c1_found.replies) == 1
         assert c1_found.replies[0].content == "Reply to 1"
 
-    def should_reject_comment_nonexistent_series(self, db):
+    async def should_reject_comment_nonexistent_series(self, db):
         with pytest.raises(BizError) as exc:
-            create_comment(db, 999, 1, BlogCommentCreate(content="Bad"))
+            await create_comment(db, 999, 1, BlogCommentCreate(content="Bad"))
         assert exc.value.errcode == BlogErr.SERIES_NOT_FOUND
 
-    def should_reject_reply_to_nonexistent_parent(self, db, blog_dir):
-        user_id = _user(db)
-        series = _series(db, user_id=user_id)
+    async def should_reject_reply_to_nonexistent_parent(self, db, blog_dir):
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
 
         with pytest.raises(BizError) as exc:
-            create_comment(
+            await create_comment(
                 db,
                 series.id,
                 user_id,
@@ -344,15 +344,15 @@ class TestBlogComments:
             )
         assert exc.value.errcode == CommonErr.INVALID_INPUT
 
-    def should_reject_reply_parent_in_different_series(self, db, blog_dir):
-        user_id = _user(db)
-        s1 = _series(db, user_id=user_id, repo_name="blog-1")
-        s2 = _series(db, user_id=user_id, repo_name="blog-2")
+    async def should_reject_reply_parent_in_different_series(self, db, blog_dir):
+        user_id = await _user(db)
+        s1 = await _series(db, user_id=user_id, repo_name="blog-1")
+        s2 = await _series(db, user_id=user_id, repo_name="blog-2")
 
-        c1 = create_comment(db, s1.id, user_id, BlogCommentCreate(content="S1 comment"))
+        c1 = await create_comment(db, s1.id, user_id, BlogCommentCreate(content="S1 comment"))
 
         with pytest.raises(BizError) as exc:
-            create_comment(
+            await create_comment(
                 db,
                 s2.id,
                 user_id,
@@ -360,49 +360,49 @@ class TestBlogComments:
             )
         assert exc.value.errcode == CommonErr.INVALID_INPUT
 
-    def should_delete_comment(self, db, blog_dir):
-        user_id = _user(db)
-        series = _series(db, user_id=user_id)
-        comment = create_comment(db, series.id, user_id, BlogCommentCreate(content="Delete me"))
+    async def should_delete_comment(self, db, blog_dir):
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
+        comment = await create_comment(db, series.id, user_id, BlogCommentCreate(content="Delete me"))
 
-        delete_comment(db, series.id, comment.id, user_id)
-        assert list_comments(db, series.id) == []
+        await delete_comment(db, series.id, comment.id, user_id)
+        assert await list_comments(db, series.id) == []
 
-    def should_cascade_delete_replies(self, db, blog_dir):
-        user_id = _user(db)
-        series = _series(db, user_id=user_id)
-        c1 = create_comment(db, series.id, user_id, BlogCommentCreate(content="Root"))
-        create_comment(
+    async def should_cascade_delete_replies(self, db, blog_dir):
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
+        c1 = await create_comment(db, series.id, user_id, BlogCommentCreate(content="Root"))
+        await create_comment(
             db, series.id, user_id, BlogCommentCreate(content="Reply", parent_id=c1.id)
         )
 
-        delete_comment(db, series.id, c1.id, user_id)
-        assert list_comments(db, series.id) == []
+        await delete_comment(db, series.id, c1.id, user_id)
+        assert await list_comments(db, series.id) == []
 
-    def should_reject_delete_comment_wrong_user(self, db, blog_dir):
-        user_id = _user(db)
-        other = _user(db, username="bob", email="bob@bob.com")
-        series = _series(db, user_id=user_id)
-        comment = create_comment(db, series.id, user_id, BlogCommentCreate(content="Mine"))
+    async def should_reject_delete_comment_wrong_user(self, db, blog_dir):
+        user_id = await _user(db)
+        other = await _user(db, username="bob", email="bob@bob.com")
+        series = await _series(db, user_id=user_id)
+        comment = await create_comment(db, series.id, user_id, BlogCommentCreate(content="Mine"))
 
         with pytest.raises(BizError) as exc:
-            delete_comment(db, series.id, comment.id, other)
+            await delete_comment(db, series.id, comment.id, other)
         assert exc.value.errcode == CommonErr.FORBIDDEN
 
-    def should_reject_delete_nonexistent_comment(self, db, blog_dir):
-        user_id = _user(db)
-        series = _series(db, user_id=user_id)
+    async def should_reject_delete_nonexistent_comment(self, db, blog_dir):
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
 
         with pytest.raises(BizError) as exc:
-            delete_comment(db, series.id, 999, user_id)
+            await delete_comment(db, series.id, 999, user_id)
         assert exc.value.errcode == BlogErr.COMMENT_NOT_FOUND
 
-    def should_show_comment_with_profile(self, db, blog_dir):
-        user_id = _user(db)
-        update_profile(db, user_id, ProfileUpdate(nickname="Alice"))
-        series = _series(db, user_id=user_id)
+    async def should_show_comment_with_profile(self, db, blog_dir):
+        user_id = await _user(db)
+        await update_profile(db, user_id, ProfileUpdate(nickname="Alice"))
+        series = await _series(db, user_id=user_id)
 
-        comment = create_comment(db, series.id, user_id, BlogCommentCreate(content="Hello"))
+        comment = await create_comment(db, series.id, user_id, BlogCommentCreate(content="Hello"))
         assert comment.profile is not None
         assert comment.profile.nickname == "Alice"
         assert comment.profile.role == "member"
@@ -412,39 +412,39 @@ class TestBlogComments:
 
 
 class TestBlogFiles:
-    def should_read_file_from_git(self, db, blog_dir):
-        user_id = _user(db)
-        series = _series(db, user_id=user_id)
+    async def should_read_file_from_git(self, db, blog_dir):
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
         _seed_bare_repo(blog_dir, "my-blog", {"README.md": "# Hello World\n"})
 
-        result = get_file_content(db, series.id, "README.md")
+        result = await get_file_content(db, series.id, "README.md")
         assert result["filepath"] == "README.md"
         assert result["content"] == "# Hello World\n"
 
-    def should_reject_file_nonexistent_series(self, db):
+    async def should_reject_file_nonexistent_series(self, db):
         with pytest.raises(BizError) as exc:
-            get_file_content(db, 999, "README.md")
+            await get_file_content(db, 999, "README.md")
         assert exc.value.errcode == BlogErr.SERIES_NOT_FOUND
 
-    def should_reject_path_traversal(self, db, blog_dir):
-        user_id = _user(db)
-        series = _series(db, user_id=user_id)
+    async def should_reject_path_traversal(self, db, blog_dir):
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
         _seed_bare_repo(blog_dir, "my-blog", {"README.md": "# Hi"})
 
         with pytest.raises(BizError) as exc:
-            get_file_content(db, series.id, "../etc/passwd")
+            await get_file_content(db, series.id, "../etc/passwd")
         assert exc.value.errcode == CommonErr.INVALID_INPUT
 
-    def should_read_nested_file(self, db, blog_dir):
-        user_id = _user(db)
-        series = _series(db, user_id=user_id)
+    async def should_read_nested_file(self, db, blog_dir):
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
         _seed_bare_repo(
             blog_dir,
             "my-blog",
             {"posts/2026-07-23-hello.md": "# My Post\n"},
         )
 
-        result = get_file_content(db, series.id, "posts/2026-07-23-hello.md")
+        result = await get_file_content(db, series.id, "posts/2026-07-23-hello.md")
         assert "# My Post" in result["content"]
 
 
@@ -452,9 +452,9 @@ class TestBlogFiles:
 
 
 class TestBlogRoutes:
-    def _setup_user(self, db):
+    async def _setup_user(self, db):
         """Create a user and return (user_id, bearer_token)."""
-        user_id = _user(db, username="testuser", email="test@example.com")
+        user_id = await _user(db, username="testuser", email="test@example.com")
         token = create_access_token(user_id=user_id, account_level="normal", role="member")
         return user_id, token
 
@@ -462,7 +462,7 @@ class TestBlogRoutes:
         return {"Authorization": f"Bearer {token}"}
 
     async def should_create_series_via_api(self, client, db, blog_dir):
-        uid, token = self._setup_user(db)
+        uid, token = await self._setup_user(db)
         resp = await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -486,7 +486,7 @@ class TestBlogRoutes:
         assert resp.status_code == 403
 
     async def should_list_series_via_api(self, client, db, blog_dir):
-        uid, token = self._setup_user(db)
+        uid, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -500,7 +500,7 @@ class TestBlogRoutes:
         assert not resp.json()["data"]["items"][0]["is_starred"]
 
     async def should_list_series_with_star_as_authenticated(self, client, db, blog_dir):
-        uid, token = self._setup_user(db)
+        uid, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -514,7 +514,7 @@ class TestBlogRoutes:
         assert item["is_starred"]
 
     async def should_get_series_detail_via_api(self, client, db, blog_dir):
-        uid, token = self._setup_user(db)
+        uid, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -527,7 +527,7 @@ class TestBlogRoutes:
         assert resp.json()["data"]["file_tree"] is None
 
     async def should_update_series_via_api(self, client, db, blog_dir):
-        uid, token = self._setup_user(db)
+        uid, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -542,7 +542,7 @@ class TestBlogRoutes:
         assert resp.json()["data"]["title"] == "Updated"
 
     async def should_reject_update_by_other_via_api(self, client, db, blog_dir):
-        uid, token = self._setup_user(db)
+        uid, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -550,7 +550,7 @@ class TestBlogRoutes:
         )
 
         # create second user
-        _user(db, username="other", email="other@example.com")
+        await _user(db, username="other", email="other@example.com")
         token2 = create_access_token(user_id=2, account_level="normal", role="member")
 
         resp = await client.put(
@@ -561,7 +561,7 @@ class TestBlogRoutes:
         assert resp.status_code == 403
 
     async def should_delete_series_via_api(self, client, db, blog_dir):
-        uid, token = self._setup_user(db)
+        uid, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -575,7 +575,7 @@ class TestBlogRoutes:
         assert resp.json()["code"] == BlogErr.SERIES_NOT_FOUND
 
     async def should_star_via_api(self, client, db, blog_dir):
-        uid, token = self._setup_user(db)
+        uid, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -591,7 +591,7 @@ class TestBlogRoutes:
         assert resp.json()["data"]["star_count"] == 0
 
     async def should_comment_via_api(self, client, db, blog_dir):
-        uid, token = self._setup_user(db)
+        uid, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -607,7 +607,7 @@ class TestBlogRoutes:
         assert resp.json()["data"]["content"] == "Great!"
 
     async def should_list_comments_threaded_via_api(self, client, db, blog_dir):
-        uid, token = self._setup_user(db)
+        uid, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -633,7 +633,7 @@ class TestBlogRoutes:
         assert items[0]["replies"][0]["content"] == "Child"
 
     async def should_delete_comment_via_api(self, client, db, blog_dir):
-        uid, token = self._setup_user(db)
+        uid, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
