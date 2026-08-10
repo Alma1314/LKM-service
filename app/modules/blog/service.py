@@ -1,3 +1,5 @@
+import asyncio
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -98,7 +100,8 @@ async def create_series(db: AsyncSession, user_id: int, info: BlogSeriesCreate) 
     if existing:
         raise BizError(CommonErr.INVALID_INPUT, "Repository name already taken")
 
-    git_svc.init_bare_repo(info.repo_name)
+    # git 子进程同步调用放在线程池执行，避免阻塞事件循环
+    await asyncio.to_thread(git_svc.init_bare_repo, info.repo_name)
 
     series = BlogSeries(
         owner_id=user_id,
@@ -140,8 +143,9 @@ async def get_series(
     )
 
     file_tree: list[dict[str, Any]] | None = None
-    if git_svc.ensure_repo_has_commits(series.repo_name):
-        file_tree = git_svc.get_file_tree(series.repo_name)
+    # git 子进程同步调用放在线程池执行，避免阻塞事件循环
+    if await asyncio.to_thread(git_svc.ensure_repo_has_commits, series.repo_name):
+        file_tree = await asyncio.to_thread(git_svc.get_file_tree, series.repo_name)
 
     return BlogSeriesDetail.model_validate(series).model_copy(
         update={"star_count": sc, "is_starred": starred, "file_tree": file_tree}
@@ -178,7 +182,8 @@ async def delete_series(db: AsyncSession, series_id: int, user_id: int) -> None:
     if series.owner_id != user_id:
         raise BizError(CommonErr.FORBIDDEN)
 
-    git_svc.delete_repo(series.repo_name)
+    # git 子进程同步调用放在线程池执行，避免阻塞事件循环
+    await asyncio.to_thread(git_svc.delete_repo, series.repo_name)
     await db.delete(series)
     await db.flush()
 
@@ -296,5 +301,6 @@ async def get_file_content(db: AsyncSession, series_id: int, filepath: str) -> d
     series = await get_or_raise(
         db, BlogSeries, BlogErr.SERIES_NOT_FOUND, BlogSeries.id == series_id,
     )
-    content = git_svc.read_file(series.repo_name, filepath)
+    # git 子进程同步调用放在线程池执行，避免阻塞事件循环
+    content = await asyncio.to_thread(git_svc.read_file, series.repo_name, filepath)
     return {"filepath": filepath, "content": content}
