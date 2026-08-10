@@ -13,9 +13,11 @@ from app.modules.columns.router import router as columns_router
 from app.modules.forum.router import router as forum_router
 from app.modules.files.router import router as files_router
 from app.modules.health.router import router as health_router
+from app.modules.members.router import router as members_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
+api_router.include_router(members_router)
 api_router.include_router(auth_router)
 api_router.include_router(auth_2fa_router)
 api_router.include_router(auth_oauth_router)

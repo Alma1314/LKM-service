@@ -11,6 +11,8 @@ servers:
 tags:
   - name: health
     description: 健康检查
+  - name: members
+    description: 成员名单查询
   - name: auth
     description: 注册、登录、Token、用户资料
   - name: auth-2fa
@@ -39,6 +41,8 @@ tags:
 paths:
   /health:
     $ref: "paths/health.yaml#/health"
+  /members:
+    $ref: "paths/members.yaml#/list"
 
   /auth/me:
     $ref: "paths/auth.yaml#/me"

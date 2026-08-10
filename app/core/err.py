@@ -44,6 +44,7 @@ class ErrCode(IntEnum):
     FILE_NOT_FOUND = 5001
     FILE_STORE_ERROR = 5002
     FILE_TOO_LARGE = 5003
+    MEMBER_GROUP_NOT_FOUND = 6001
     INTERNAL_ERROR = 9999
 
 
@@ -86,6 +87,7 @@ ERRTABLE: dict[ErrCode, tuple[int, str]] = {
     ErrCode.FILE_NOT_FOUND:               (404, "File not found"),
     ErrCode.FILE_STORE_ERROR:             (500, "File storage operation failed"),
     ErrCode.FILE_TOO_LARGE:               (413, "File exceeds upload size limit"),
+    ErrCode.MEMBER_GROUP_NOT_FOUND:       (404, "Member group not found"),
     ErrCode.INTERNAL_ERROR:               (500, "Internal server error"),
 }
 
