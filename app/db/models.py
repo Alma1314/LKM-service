@@ -78,6 +78,7 @@ class Profile(Base):
     nickname: Mapped[str | None] = mapped_column(String(100), nullable=True)
     avatar: Mapped[str | None] = mapped_column(Text, nullable=True)
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="member")
+    bio: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="profile")
 
@@ -168,6 +169,7 @@ class ForumPost(Base):
     like_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     comment_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     bookmark_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    forward_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 

@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -81,6 +81,23 @@ def create_app() -> FastAPI:
     application.include_router(api_router, prefix=settings.api_prefix)
     application.add_exception_handler(BizError, _on_err)
     application.add_exception_handler(RequestValidationError, _on_err)
+
+    from strawberry.fastapi import GraphQLRouter
+
+    from app.modules.forum.graphql import schema as forum_graphql_schema
+    from app.db.session import get_session as get_graphql_session
+    from typing import Any
+
+    async def _graphql_context(db: Any = Depends(get_graphql_session)) -> dict[str, Any]:
+        # 会话生命周期由 FastAPI 的 Depends 管理，解析器只读不关闭
+        return {"db": db}
+
+    graphql_router = GraphQLRouter(
+        forum_graphql_schema,
+        path="/graphql",
+        context_getter=_graphql_context,
+    )
+    application.include_router(graphql_router)
 
     @application.get("/")
     async def root() -> dict[str, str]:

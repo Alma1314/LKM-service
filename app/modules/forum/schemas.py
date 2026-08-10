@@ -30,6 +30,7 @@ class PostInfo(BaseModel):
     like_count: int
     comment_count: int
     bookmark_count: int
+    forward_count: int = 0
     created_at: str
 
     @field_validator("tags", mode="before")

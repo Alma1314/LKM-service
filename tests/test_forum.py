@@ -6,7 +6,7 @@ from sqlalchemy.pool import StaticPool
 
 import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
 from app.core.err import BizError, ErrCode
-from app.db.models import Base, Profile, User
+from app.db.models import Base, ForumPost, Profile, User
 from app.db.session import get_session
 from app.main import app
 from app.modules.auth.security import create_access_token, hashpwd
@@ -283,3 +283,97 @@ class TestForumRoutes:
 
         assert resp.status_code == 200
         assert client.get(f"/api/v1/forum/posts/{post_id}").json()["code"] == 4001
+
+
+class TestForumGraphQL:
+    """论坛 GraphQL 查询契约测试（对齐前端 queries.ts）。"""
+
+    def _run(self, client, query, variables):
+        resp = client.post("/graphql", json={"query": query, "variables": variables})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "errors" not in body, body.get("errors")
+        return body["data"]
+
+    def should_query_posts_with_author(self, client, db):
+        user_id = _user(db, username="alice", nickname="爱丽丝")
+        post = _post(db, author_id=user_id, title="如何学习微积分", category_id="math")
+
+        data = self._run(
+            client,
+            """
+            query PostList($categoryId: ID, $page: Int!, $pageSize: Int!) {
+              posts(categoryId: $categoryId, page: $page, pageSize: $pageSize) {
+                total
+                items {
+                  id title excerpt categoryId tags isPinned isFeatured
+                  viewCount likeCount commentCount createdAt
+                  author { id displayName avatar username }
+                }
+              }
+            }
+            """,
+            {"categoryId": "math", "page": 1, "pageSize": 20},
+        )
+
+        conn = data["posts"]
+        assert conn["total"] == 1
+        item = conn["items"][0]
+        assert item["id"] == post.id  # int
+        assert item["title"] == "如何学习微积分"
+        assert item["categoryId"] == "math"
+        assert item["author"]["id"] == user_id  # int
+        assert item["author"]["displayName"] == "爱丽丝"
+        assert item["author"]["username"] == "alice"
+
+    def should_filter_posts_by_category(self, client, db):
+        user_id = _user(db)
+        _post(db, author_id=user_id, title="数学", category_id="math")
+        _post(db, author_id=user_id, title="物理", category_id="physics")
+
+        data = self._run(
+            client,
+            "query($categoryId: ID){ posts(categoryId: $categoryId, page: 1, pageSize: 20){ total items{ id } } }",
+            {"categoryId": "math"},
+        )
+
+        assert data["posts"]["total"] == 1
+
+    def should_query_post_detail_with_bio_and_forward_count(self, client, db):
+        user_id = _user(db, username="bob", nickname="鲍勃", email="bob@example.com")
+        # 给 Profile 设置 bio
+        prof = db.query(Profile).filter(Profile.user_id == user_id).first()
+        prof.bio = "热爱物理与数学"
+        db.flush()
+        post = _post(db, author_id=user_id, title="物理之美", category_id="physics")
+        post_orm = db.query(ForumPost).filter(ForumPost.id == post.id).first()
+        post_orm.forward_count = 7
+        db.flush()
+
+        data = self._run(
+            client,
+            """
+            query PostDetail($id: ID!) {
+              post(id: $id) {
+                id title content categoryId tags isPinned isFeatured
+                bookmarkCount forwardCount createdAt
+                author { id displayName avatar username bio }
+              }
+            }
+            """,
+            {"id": str(post.id)},
+        )
+
+        p = data["post"]
+        assert p["id"] == post.id
+        assert p["forwardCount"] == 7
+        assert p["author"]["bio"] == "热爱物理与数学"
+        assert p["author"]["displayName"] == "鲍勃"
+
+    def should_return_null_when_post_missing(self, client, db):
+        data = self._run(
+            client,
+            "query($id: ID!){ post(id: $id){ id } }",
+            {"id": "999"},
+        )
+        assert data["post"] is None
