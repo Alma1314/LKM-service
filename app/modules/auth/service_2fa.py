@@ -23,7 +23,7 @@ from app.modules.auth.security import (
     get_totp_uri,
     verify_totp,
 )
-from app.modules.auth.service_auth import _issue_session_tokens, log_audit
+from app.modules.auth.service_auth import issue_session_tokens, log_audit
 
 _TOTP_MAX_FAILED = 3
 
@@ -99,7 +99,7 @@ async def _check_and_consume_temp_token(db: AsyncSession, raw_token: str, user_i
 
 async def _create_auth_tokens(db: AsyncSession, user: User, trust_device: bool = False) -> dict[str, Any]:
     """为给定用户发放访问令牌和刷新令牌。"""
-    access_token, raw_refresh = await _issue_session_tokens(
+    access_token, raw_refresh = await issue_session_tokens(
         db, user, trust_device=trust_device, mfa_verified=True,
     )
     return {

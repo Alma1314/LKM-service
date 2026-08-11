@@ -34,8 +34,8 @@ from app.modules.auth.schemas import (
 )
 from app.modules.auth.service import get_profile, update_profile
 from app.modules.auth.service_auth import (
-    _consume_pending_normal_registration,
-    _store_pending_normal_registration,
+    consume_pending_normal_registration,
+    store_pending_normal_registration,
 )
 from app.modules.auth.service_verify import (
     check_code_rate_limit,
@@ -96,7 +96,7 @@ async def register_normal_with_password_route(
         )
 
     # 存储待处理的注册数据
-    txn_id = await _store_pending_normal_registration(
+    txn_id = await store_pending_normal_registration(
         db, info.username, info.password, info.email, info.phone
     )
 
@@ -131,7 +131,7 @@ async def register_normal_verify(
     db: AsyncSession = Depends(get_session),
 ):
     """使用用户名+密码+联系方式完成普通注册。"""
-    return await _consume_pending_normal_registration(
+    return await consume_pending_normal_registration(
         db, txn_id, email_code=email_code, phone_code=phone_code
     )
 

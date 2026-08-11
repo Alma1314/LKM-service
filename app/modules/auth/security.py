@@ -6,13 +6,12 @@ import os
 import secrets
 import struct
 import time
-from typing import Any, cast
+from typing import Any
 from urllib.parse import quote
 
 import jwt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from app.core.config import settings
-from app.core.err import BizError
 
 _ALGORITHM = "pbkdf2:sha256"
 _ITERATIONS = 600_000
@@ -72,10 +71,7 @@ def create_access_token(
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
-    payload = cast(
-        dict[str, Any],
-        jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm], audience=_AUD_WEB),
-    )
+    payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm], audience=_AUD_WEB)
     if payload.get("type") != _ACCESS_TYPE:
         raise ValueError("non-access token")
     return payload
@@ -99,10 +95,7 @@ def create_temp_token(user_id: int, purpose: str = "2fa", txn_id: str | None = N
 
 
 def decode_temp_token(token: str) -> dict[str, Any]:
-    payload = cast(
-        dict[str, Any],
-        jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm], audience=_AUD_TEMP),
-    )
+    payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm], audience=_AUD_TEMP)
     if payload.get("type") != _TEMP_TYPE:
         raise ValueError("non-temp token")
     return payload

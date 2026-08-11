@@ -37,7 +37,7 @@ def expires_at(days: float = 0, minutes: float = 0) -> datetime.datetime:
     )
 
 
-class UTCDateTime(TypeDecorator):
+class UTCDateTime(TypeDecorator[datetime.datetime]):
     """带时区的 UTC 时间列类型。
 
     底层使用 DateTime(timezone=True)；但 SQLite 不保存时区，读回时会是 naive，

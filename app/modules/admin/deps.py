@@ -31,10 +31,6 @@ _ADMIN_AUD = "lkm:admin"
 COOKIE_PATH = f"/{settings.api_prefix.strip('/')}/admin"
 
 
-def _exp_now(delta: datetime.timedelta) -> int:
-    return int((datetime.datetime.now(datetime.timezone.utc) + delta).timestamp())
-
-
 def create_admin_access_token(user: User) -> str:
     """签发后台 access token（15min）。独立 payload + type=admin + 专属 audience。
     token_version 编入 payload：改密/登出提升版本号后旧 cookie 立即失效（与前台上前台逻辑一致）。"""

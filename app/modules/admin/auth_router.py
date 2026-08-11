@@ -22,7 +22,7 @@ from app.db.session import get_session
 from app.modules.auth.deps import CurrentUser
 from app.modules.auth.models import RefreshToken
 from app.modules.auth.security import verifypwd
-from app.modules.auth.service_auth import _generate_refresh_token, _hash_refresh_token
+from app.modules.auth.service_auth import generate_refresh_token, _hash_refresh_token
 from app.modules.auth.service_verify import check_code_rate_limit
 
 from .deps import (
@@ -105,7 +105,7 @@ async def admin_login(
     payload = _admin_user_payload(user)              # 读 created_at 等（已加载）
 
     # 组织 refresh：本骨架复用现有 RefreshToken 表存哈希，暂不区分 kind（见下方注释）
-    raw_refresh = _generate_refresh_token()
+    raw_refresh = generate_refresh_token()
     db.add(
         RefreshToken(
             user_id=user.id,
@@ -174,7 +174,7 @@ async def admin_refresh(
     payload = _admin_user_payload(user)
 
     # 旋转：发放新 refresh
-    new_refresh = _generate_refresh_token()
+    new_refresh = generate_refresh_token()
     db.add(
         RefreshToken(
             user_id=user.id,

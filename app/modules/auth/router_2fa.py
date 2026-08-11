@@ -35,7 +35,7 @@ from app.modules.auth.schemas import (
     TOTPVerifyRequest,
     TOTPVerifyResponse,
 )
-from app.modules.auth.service_auth import _generate_refresh_token, _store_refresh_token
+from app.modules.auth.service_auth import generate_refresh_token, store_refresh_token
 from app.modules.auth.service_verify import check_code_rate_limit
 from app.modules.common import ApiResp
 
@@ -127,10 +127,7 @@ async def setup_2fa_complete_temp(
     if not txn or txn.user_id != user_id:
         raise BizError(AuthErr.TOKEN_INVALID)
 
-    result_dict = cast(
-        dict[str, Any],
-        await service_2fa.setup_2fa_complete(db, user_id, code),  # type: ignore[reportUnknownMemberType, arg-type]
-    )
+    result_dict = await service_2fa.setup_2fa_complete(db, user_id, code)
     user = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
     if user:
         result_dict["access_token"], result_dict["refresh_token"] = await _issue_admin_setup_tokens(db, user)
@@ -144,8 +141,8 @@ async def _issue_admin_setup_tokens(db: AsyncSession, user: User) -> tuple[str, 
         role="admin",
         token_version=user.token_version,
     )
-    raw_refresh = _generate_refresh_token()
-    await _store_refresh_token(db, user.id, raw_refresh, mfa_verified=True)
+    raw_refresh = generate_refresh_token()
+    await store_refresh_token(db, user.id, raw_refresh, mfa_verified=True)
     return access_token, raw_refresh
 
 

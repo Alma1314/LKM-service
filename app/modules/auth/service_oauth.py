@@ -81,7 +81,7 @@ async def _get_github_user(access_token: str) -> dict[str, Any]:
     async with httpx.AsyncClient() as client:
         # 获取用户资料
         user_resp = await client.get("https://api.github.com/user", headers=headers)
-        user_data = cast(dict[str, Any], user_resp.json())
+        user_data = user_resp.json()
         if "id" not in user_data:
             raise BizError(AuthErr.OAUTH_PROVIDER_ERROR, "Failed to fetch GitHub user")
 

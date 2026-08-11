@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,7 +65,7 @@ async def get_post_detail(post_id: int, db: AsyncSession = Depends(get_session))
     return await get_post(db, post_id, bump_view=True)
 
 
-@router.post("/posts/{post_id}/like", response_model=ApiResp[dict])
+@router.post("/posts/{post_id}/like", response_model=ApiResp[dict[str, Any]])
 @respond
 async def like_forum_post(
     post_id: int,
@@ -73,7 +75,7 @@ async def like_forum_post(
     return {"like_count": await like_post_service(db, post_id)}
 
 
-@router.delete("/posts/{post_id}", response_model=ApiResp[dict])
+@router.delete("/posts/{post_id}", response_model=ApiResp[dict[str, Any]])
 @respond
 async def delete_forum_post(
     post_id: int,

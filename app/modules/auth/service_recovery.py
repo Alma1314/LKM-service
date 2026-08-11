@@ -4,7 +4,7 @@ import hashlib
 import secrets
 from typing import Any, cast
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr

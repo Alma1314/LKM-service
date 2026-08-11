@@ -184,12 +184,12 @@ class OAuthRedirectResponse(BaseModel):
 
 class PasskeyRegistrationOptionsResponse(BaseModel):
     challenge_id: str
-    public_key: dict
+    public_key: dict[str, Any]
 
 
 class PasskeyLoginOptionsResponse(BaseModel):
     challenge_id: str
-    public_key: dict
+    public_key: dict[str, Any]
 
 
 class PasskeyRegisterCompleteRequest(BaseModel):

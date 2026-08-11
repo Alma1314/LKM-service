@@ -1,5 +1,5 @@
 import datetime
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -80,5 +80,5 @@ class ReviewResultData(BaseModel):
 
 class ColumnPlanData(BaseModel):
     status: str
-    tables: dict
+    tables: dict[str, Any]
     next_steps: list[str]

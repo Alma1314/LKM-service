@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 class RefreshToken(Base):
     __tablename__: str = "refresh_tokens"
-    __table_args__: tuple = (
+    __table_args__: tuple[Any, ...] = (
         Index("ix_refresh_tokens_user_revoked", "user_id", "revoked_at"),
     )
 
@@ -39,7 +39,7 @@ class RefreshToken(Base):
 
 class EmailVerification(Base):
     __tablename__: str = "email_verifications"
-    __table_args__: tuple = (
+    __table_args__: tuple[Any, ...] = (
         Index("ix_email_verifications_lookup", "email", "purpose", "used", "created_at"),
     )
 
@@ -60,7 +60,7 @@ class EmailVerification(Base):
 
 class PhoneVerification(Base):
     __tablename__: str = "phone_verifications"
-    __table_args__: tuple = (
+    __table_args__: tuple[Any, ...] = (
         Index("ix_phone_verifications_lookup", "phone", "purpose", "used", "created_at"),
     )
 
@@ -81,7 +81,7 @@ class PhoneVerification(Base):
 
 class MagicLink(Base):
     __tablename__: str = "magic_links"
-    __table_args__: tuple = (
+    __table_args__: tuple[Any, ...] = (
         Index("ix_magic_links_hash_purpose", "token_hash", "purpose"),
     )
 
@@ -100,7 +100,7 @@ class MagicLink(Base):
 
 class UserOAuth(Base):
     __tablename__: str = "user_oauths"
-    __table_args__: tuple = (
+    __table_args__: tuple[Any, ...] = (
         UniqueConstraint("provider", "provider_user_id", name="uq_oauth_provider_user"),
     )
 
@@ -134,7 +134,7 @@ class TOTP(Base):
 
 class RecoveryCode(Base):
     __tablename__: str = "recovery_codes"
-    __table_args__: tuple = (
+    __table_args__: tuple[Any, ...] = (
         Index("ix_recovery_codes_user_hash", "user_id", "code_hash"),
     )
 

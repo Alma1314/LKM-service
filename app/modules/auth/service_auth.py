@@ -6,7 +6,7 @@ import logging
 import secrets
 from typing import Any, Protocol, runtime_checkable
 
-from sqlalchemy import or_, select, update as sa_update
+from sqlalchemy import select, update as sa_update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -63,7 +63,7 @@ def _normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
-def _generate_refresh_token() -> str:
+def generate_refresh_token() -> str:
     """返回一个加密安全的随机十六进制字符串（64 个字符）。"""
     return secrets.token_hex(32)
 
@@ -73,7 +73,7 @@ def _hash_refresh_token(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-async def _store_refresh_token(db: AsyncSession, user_id: object, raw: str, mfa_verified: object = False) -> datetime.datetime:
+async def store_refresh_token(db: AsyncSession, user_id: object, raw: str, mfa_verified: object = False) -> datetime.datetime:
     """持久化哈希后的刷新令牌并返回其过期时间（timezone-aware datetime）。"""
     days = settings.refresh_token_expire_days
     expires_str = expires_at(days=days)
@@ -88,7 +88,7 @@ async def _store_refresh_token(db: AsyncSession, user_id: object, raw: str, mfa_
     return expires_str
 
 
-async def _issue_session_tokens(
+async def issue_session_tokens(
     db: AsyncSession, user: User, *, trust_device: bool = False, mfa_verified: bool = False
 ) -> tuple[str, str]:
     """发放访问令牌 + 刷新令牌，返回 (access_token, raw_refresh)。"""
@@ -104,8 +104,8 @@ async def _issue_session_tokens(
         trust_device=trust_device,
         token_version=user.token_version,
     )
-    raw_refresh = _generate_refresh_token()
-    await _store_refresh_token(db, user.id, raw_refresh, mfa_verified=mfa_verified)
+    raw_refresh = generate_refresh_token()
+    await store_refresh_token(db, user.id, raw_refresh, mfa_verified=mfa_verified)
     return access_token, raw_refresh
 
 
@@ -124,7 +124,7 @@ async def _create_auth_response(
             "temp_token": temp_token,
         }
 
-    access_token, raw_refresh = await _issue_session_tokens(db, user)
+    access_token, raw_refresh = await issue_session_tokens(db, user)
     return {
         "access_token": access_token,
         "refresh_token": raw_refresh,
@@ -320,7 +320,7 @@ async def register_by_verify(db: AsyncSession, field: str, value: str) -> dict[s
     return await _create_auth_response(db, user)
 
 
-async def _store_pending_normal_registration(
+async def store_pending_normal_registration(
     db: AsyncSession,
     username: str,
     password: str,
@@ -344,7 +344,7 @@ async def _store_pending_normal_registration(
     return txn_id
 
 
-async def _consume_pending_normal_registration(
+async def consume_pending_normal_registration(
     db: AsyncSession,
     txn_id: str,
     email_code: str | None = None,
@@ -698,7 +698,7 @@ async def refresh_access_token(db: AsyncSession, raw_refresh: str) -> dict[str, 
     if user.account_level == "admin" and not stored.mfa_verified:
         raise BizError(AuthErr.TOKEN_INVALID, "Admin refresh token requires MFA assurance")
 
-    access_token, raw_new = await _issue_session_tokens(db, user, mfa_verified=stored.mfa_verified)
+    access_token, raw_new = await issue_session_tokens(db, user, mfa_verified=stored.mfa_verified)
     return {"access_token": access_token, "refresh_token": raw_new}
 
 

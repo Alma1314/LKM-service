@@ -1,8 +1,6 @@
-import inspect
 import functools
 from enum import IntEnum
-from collections.abc import Awaitable
-from typing import Any, Callable, Coroutine, ParamSpec, TypeVar, cast, overload
+from typing import Any, Callable, Coroutine, ParamSpec, TypeVar, cast
 
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -111,45 +109,26 @@ def resp_json(
 _R = TypeVar("_R")
 
 
-@overload
 def respond(
     func: Callable[P, Coroutine[Any, Any, _R]],
-) -> Callable[P, Coroutine[Any, Any, JSONResponse]]: ...
-
-
-@overload
-def respond(
-    func: Callable[P, _R],
-) -> Callable[P, JSONResponse]: ...
-
-
-def respond(
-    func: Callable[P, Any],
-) -> Callable[P, Coroutine[Any, Any, JSONResponse]] | Callable[P, JSONResponse]:
+) -> Callable[P, Coroutine[Any, Any, JSONResponse]]:
     """装饰器：将返回值通过 ERRTABLE 包装。
 
-    overload 让类型检查器能区分 async（返回 awaitable）与同步（返回 JSONResponse）端点。
+    仅承担 FastAPI 端点（当前全部为 async def），返回类型保持 Coroutine 交给 FastAPI await。
     """
 
-    if inspect.iscoroutinefunction(func):
-        @functools.wraps(func)
-        async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> JSONResponse:
-            result = await func(*args, **kwargs)
-            return _wrap_result(result)
-
-        return async_wrapper
-
     @functools.wraps(func)
-    def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> JSONResponse:
-        result = func(*args, **kwargs)
+    async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> JSONResponse:
+        result = await func(*args, **kwargs)
         return _wrap_result(result)
 
-    return sync_wrapper
+    return async_wrapper
 
 
 def _wrap_result(result: Any) -> JSONResponse:
     if isinstance(result, tuple) and len(cast(Any, result)) >= 2 and isinstance(result[0], ErrCode):
-        errcode = cast(ErrCode, result[0])
+        # isinstance 已收窄 result[0] 为 ErrCode，无需再 cast
+        errcode = result[0]
         payload = cast(Any, result[1])
         if isinstance(payload, str):
             return resp_json(errcode, detail=payload)

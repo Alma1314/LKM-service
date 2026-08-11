@@ -11,7 +11,7 @@ router = APIRouter(prefix="/members", tags=["members"])
 
 @router.get("", response_model=ApiResp[ListData[Member]])
 @respond
-def get_member_list(
+async def get_member_list(
     type: str = Query(..., description=f"数据组标识，可选：{', '.join(ALL_TYPES)}"),
     group: str | None = Query(None, description="子组标识，仅 subGroupMaps 需要"),
 ):
@@ -20,7 +20,7 @@ def get_member_list(
 
 @router.get("/subgroups", response_model=ApiResp[ListData[SubGroupItem]])
 @respond
-def get_member_subgroups(
+async def get_member_subgroups(
     type: str = Query(..., description=f"子组集合标识，可选：{', '.join(sorted(SUB_GROUP_MAPS.keys()))}"),
 ):
     """返回某 subGroupMap 类型的完整分组结构（含 label/desc/members）。"""

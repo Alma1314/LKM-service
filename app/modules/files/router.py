@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -73,7 +74,7 @@ async def get_file_detail(file_id: int, db: AsyncSession = Depends(get_session))
     return await get_file(db, file_id, bump_view=True)
 
 
-@router.post("/{file_id}/download", response_model=ApiResp[dict])
+@router.post("/{file_id}/download", response_model=ApiResp[dict[str, Any]])
 @respond
 async def download_file(
     file_id: int,
