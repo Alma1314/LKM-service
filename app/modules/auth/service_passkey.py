@@ -26,7 +26,7 @@ from app.db.models import User, expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise
 from app.db.session import new_session
 from app.modules.auth.models import PasskeyChallenge, PasskeyCredential
-from app.modules.auth.service_auth import _finalize_auth_response
+from app.modules.auth.service_auth import finalize_auth_response
 
 _CHALLENGE_TTL_MINUTES = 5
 
@@ -446,7 +446,7 @@ async def complete_passkey_login(db: AsyncSession, credential: dict[str, Any]) -
     if user.account_level == "local":
         raise BizError(AuthErr.ACCOUNT_LEVEL_INSUFFICIENT)
 
-    return await _finalize_auth_response(db, user)
+    return await finalize_auth_response(db, user)
 
 
 async def list_credentials(db: AsyncSession, user_id: int) -> list[dict[str, Any]]:

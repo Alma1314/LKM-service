@@ -439,7 +439,7 @@ async def _check_admin_totp_required(db: AsyncSession, user: User) -> dict[str, 
     }
 
 
-async def _finalize_auth_response(db: AsyncSession, user: User) -> dict[str, Any]:
+async def finalize_auth_response(db: AsyncSession, user: User) -> dict[str, Any]:
     """检查管理员 TOTP 和 2FA 要求，返回认证响应。"""
     admin_setup = await _check_admin_totp_required(db, user)
     if admin_setup is not None:
@@ -508,7 +508,7 @@ async def login_password(db: AsyncSession, info: UserLoginPassword, ip_address: 
 
     await log_audit(db, user.id, "login_password", "success")
 
-    return await _finalize_auth_response(db, user)  # type: ignore[arg-type]
+    return await finalize_auth_response(db, user)  # type: ignore[arg-type]
 
 
 async def login_code(db: AsyncSession, contact: str, code: str) -> dict[str, Any]:
@@ -533,7 +533,7 @@ async def login_code(db: AsyncSession, contact: str, code: str) -> dict[str, Any
         await _check_account_locked(user)  # type: ignore[arg-type]
 
     # 没有 TOTP 的管理员 —— 与密码登录相同的设置流程
-    return await _finalize_auth_response(db, user)  # type: ignore[arg-type]
+    return await finalize_auth_response(db, user)  # type: ignore[arg-type]
 
 
 async def request_magic_link(

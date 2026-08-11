@@ -1,7 +1,7 @@
 import asyncio
 import os
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
@@ -13,7 +13,7 @@ from app.api.router import api_router
 from app.core.config import settings
 from app.core.err import BizError, map_err, resp_json
 from app.db.init_db import init_db
-from app.db.session import dispose_engine, get_session as get_graphql_session
+from app.db.session import AsyncSession, dispose_engine, get_session as get_graphql_session
 from app.modules.auth.service_passkey import cleanup_expired_challenges
 from app.modules.forum.graphql import GraphQLContext, schema as forum_graphql_schema
 
@@ -54,7 +54,7 @@ def _verify_production_secrets() -> None:
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     _verify_production_secrets()
     init_db()
 
@@ -81,7 +81,7 @@ def create_app() -> FastAPI:
     application.add_exception_handler(BizError, _on_err)
     application.add_exception_handler(RequestValidationError, _on_err)
 
-    async def _graphql_context(db=Depends(get_graphql_session)) -> GraphQLContext:
+    async def _graphql_context(db: AsyncSession = Depends(get_graphql_session)) -> GraphQLContext:
         # 会话生命周期由 FastAPI 的 Depends 管理，解析器只读不关闭
         return GraphQLContext(db=db)
 

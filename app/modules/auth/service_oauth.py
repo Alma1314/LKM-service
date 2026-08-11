@@ -14,7 +14,7 @@ from app.modules.auth.errors import AuthErr
 from app.db.models import Profile, User, expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise
 from app.modules.auth.models import OAuthState, UserOAuth
-from app.modules.auth.service_auth import _finalize_auth_response, log_audit, upgrade_to_normal
+from app.modules.auth.service_auth import finalize_auth_response, log_audit, upgrade_to_normal
 
 
 async def _generate_oauth_state(db: AsyncSession, purpose: str, user_id: int | None = None) -> str:
@@ -87,7 +87,7 @@ async def _get_github_user(access_token: str) -> dict[str, Any]:
 
         # 获取邮箱列表
         emails_resp = await client.get("https://api.github.com/user/emails", headers=headers)
-        emails_data = cast(Any, emails_resp.json())
+        emails_data = emails_resp.json()
         primary_email: str | None = None
         if isinstance(emails_data, list):
             entries = cast(list[Any], emails_data)
@@ -184,10 +184,7 @@ async def handle_github_callback(db: AsyncSession, code: str, state: str) -> dic
 
 async def _oauth_login_response(db: AsyncSession, user: User) -> dict[str, Any]:
     """检查 TOTP 要求并返回认证响应。"""
-    return cast(
-        dict[str, Any],
-        await _finalize_auth_response(db, user),
-    )
+    return await finalize_auth_response(db, user)
 
 
 async def bind_github(db: AsyncSession, code: str, state: str) -> dict[str, Any]:
