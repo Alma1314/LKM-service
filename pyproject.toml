@@ -18,6 +18,7 @@ dependencies = [
     "strawberry-graphql>=0.263.0",
     "aiosqlite>=0.22.1",
     "asyncpg>=0.31.0",
+    "webauthn>=2,<3",
 ]
 
 [tool.pytest.ini_options]

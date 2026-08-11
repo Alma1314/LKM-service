@@ -1,26 +1,43 @@
-"""Passkey（WebAuthn）服务 —— 注册、登录、凭证管理。"""
+"""Passkey（WebAuthn）服务 —— 注册、登录、凭证管理。
+
+WebAuthn 协议与密码学验证（COSE key、authenticatorData、ECDSA/RSA 签名、
+sign-count 回拨检测、origin/rpIdHash/signature 校验）统一交给官方库
+``webauthn``（Duwab）处理，本模块只负责：挑战码的持久化/一次性消费、
+options 的生成与前后端字段透传、以及凭证的数据库存取。
+"""
 
 import asyncio
 import base64
-import hashlib
 import json
 import logging
 import os
 import secrets
-import struct
-from typing import Any, cast
+from typing import Any
 
-import cbor2
-from cryptography import x509
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec
 from sqlalchemy import delete as sa_delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from webauthn import (
+    generate_authentication_options,
+    generate_registration_options,
+    options_to_json,
+    verify_authentication_response,
+    verify_registration_response,
+)
+from webauthn.helpers.cose import COSEAlgorithmIdentifier
+from webauthn.helpers.exceptions import WebAuthnException
+from webauthn.helpers.structs import (
+    AttestationConveyancePreference,
+    AuthenticatorAttachment,
+    AuthenticatorSelectionCriteria,
+    PublicKeyCredentialDescriptor,
+    PublicKeyCredentialType,
+    UserVerificationRequirement,
+)
+
 from app.core.config import settings
-from app.core.err import BizError, ErrCode
+from app.core.err import BizError
 from app.modules.auth.errors import AuthErr
 from app.db.models import User, expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise
@@ -29,6 +46,12 @@ from app.modules.auth.models import PasskeyChallenge, PasskeyCredential
 from app.modules.auth.service_auth import finalize_auth_response
 
 _CHALLENGE_TTL_MINUTES = 5
+
+# 注册/advertise 的签名算法：与 create 端 pubKeyCredParams 保持一致
+_SUPPORTED_PUB_KEY_ALGS = [
+    COSEAlgorithmIdentifier.ECDSA_SHA_256,
+    COSEAlgorithmIdentifier.RSASSA_PKCS1_v1_5_SHA_256,
+]
 
 _log = logging.getLogger("passkey.cleanup")
 
@@ -56,8 +79,8 @@ async def _store_challenge(db: AsyncSession) -> tuple[str, str]:
     return challenge_id, challenge
 
 
-async def _consume_challenge(db: AsyncSession, challenge_id: str) -> str:
-    """原子地消费挑战码 —— 使用条件 UPDATE 防止重放。"""
+async def _consume_challenge(db: AsyncSession, challenge_id: str) -> bytes:
+    """原子地消费挑战码 —— 使用条件 UPDATE 防止重放。返回挑战码字节（供官方库 expected_challenge）。"""
     now = now_iso()
     if not await consume_once(
         db,
@@ -67,11 +90,11 @@ async def _consume_challenge(db: AsyncSession, challenge_id: str) -> str:
         PasskeyChallenge.consumed.is_(False),
         PasskeyChallenge.expires_at > now,
     ):
-        return ""
+        return b""
     row = (
         await db.execute(select(PasskeyChallenge).where(PasskeyChallenge.challenge_id == challenge_id))
     ).scalars().first()
-    return str(row.challenge) if row else ""
+    return _b64decode(str(row.challenge)) if row else b""
 
 
 _CLEANUP_INTERVAL_SECONDS = 300  # 5 分钟
@@ -103,257 +126,84 @@ async def cleanup_expired_challenges() -> None:
             _log.exception("cleanup_expired_challenges: unexpected error outside DB session")
 
 
-def _parse_client_data(client_data_json_b64: str) -> dict[str, Any]:
-    """将 clientDataJSON 解码并解析为 UTF-8 JSON。出现任何错误时抛出 PASSKEY_VERIFICATION_FAILED。"""
-    try:
-        raw = _b64decode(client_data_json_b64)
-        return json.loads(raw.decode("utf-8"))
-    except Exception as exc:
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Invalid clientDataJSON") from exc
-
-
-def _parse_authenticator_data(auth_data: bytes) -> dict[str, Any]:
-    """按 WebAuthn 规范 §6.1 解析 authenticatorData。"""
-    if len(auth_data) < 37:
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Authenticator data too short")
-
-    rp_id_hash = auth_data[:32]
-    flags = auth_data[32]
-    sign_count = struct.unpack(">I", auth_data[33:37])[0]
-
-    pos = 37
-    attested_credential_data: dict[str, Any] | None = None
-    if flags & 0x40:  # AT 标志位
-        if len(auth_data) < pos + 18:
-            raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED)
-        aaguid = auth_data[pos : pos + 16]
-        pos += 16
-        cred_id_len = struct.unpack(">H", auth_data[pos : pos + 2])[0]
-        pos += 2
-        credential_id = auth_data[pos : pos + cred_id_len]
-        pos += cred_id_len
-        # 解析 COSE key（简化版：提取原始密钥材料）
-        cose_key, consumed = _parse_cose_key(auth_data[pos:])
-        pos += consumed
-        attested_credential_data = {
-            "aaguid": aaguid,
-            "credential_id": credential_id,
-            "cose_key": cose_key,
-        }  # type: ignore[assignment]
-
-    return {
-        "rp_id_hash": rp_id_hash,
-        "flags": flags,
-        "sign_count": sign_count,
-        "attested_credential_data": attested_credential_data,
-    }
-
-
-def _parse_cose_key(data: bytes) -> tuple[dict[str, Any], int]:
-    """解析 CBOR 编码的 COSE_Key 结构。"""
-    cose = cbor2.loads(data)
-    key_type: Any = cose.get(1)   # kty（密钥类型）
-    alg: Any = cose.get(3)         # alg（算法）
-    consumed = len(cbor2.dumps(cose))
-
-    if key_type != 2:  # EC2（椭圆曲线）
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, f"Unsupported COSE key type: {key_type}")
-
-    x_bytes: Any = cose.get(-2)  # x 坐标
-    y_bytes: Any = cose.get(-3)  # y 坐标
-    crv: Any = cose.get(-1)       # 曲线（必须为 1 = P-256）
-
-    if crv != 1:
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, f"Unsupported EC curve: {crv}")
-
-    if not x_bytes or not y_bytes:
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Missing COSE key coordinates")
-
-    return {"kty": key_type, "alg": alg, "crv": crv, "x": x_bytes, "y": y_bytes}, consumed
-
-
-def _verify_origin(expected_origin: str, client_data: dict[str, Any]) -> None:
-    origin: Any = client_data.get("origin", "")
-    if origin != expected_origin:
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Origin mismatch")
-
-
-def _verify_challenge(expected_challenge: str, client_data: dict[str, Any]) -> None:
-    challenge: Any = client_data.get("challenge", "")
-    if challenge != expected_challenge:
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Challenge mismatch")
-
-
-def _verify_rp_id_hash(auth_data: dict[str, Any]) -> None:
-    expected_hash = hashlib.sha256(settings.rp_id.encode()).digest()
-    if auth_data["rp_id_hash"] != expected_hash:
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "RP ID hash mismatch")
-
-
-def _verify_user_presence(auth_data: dict[str, Any]) -> None:
-    if not (auth_data["flags"] & 0x01):  # UP 标志位（用户在场）
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "User presence not verified")
-
-
-def _build_signed_data(auth_data_bytes: bytes, client_data_json_b64: str) -> bytes:
-    """构建待验证的二进制数据：authenticatorData || SHA-256(clientDataJSON)。"""
-    client_data_hash = hashlib.sha256(
-        _b64decode(client_data_json_b64)
-    ).digest()
-    return auth_data_bytes + client_data_hash
-
-
-def _verify_ecdsa_signature(
-    public_key_bytes: bytes,
-    signed_data: bytes,
-    signature: bytes,
-) -> None:
-    """使用原始公钥验证 ECDSA (P-256) 签名。"""
-    try:
-        pubkey = ec.EllipticCurvePublicKey.from_encoded_point(
-            ec.SECP256R1(), public_key_bytes
-        )
-    except Exception as exc:
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Invalid public key") from exc
-
-    try:
-        pubkey.verify(signature, signed_data, ec.ECDSA(hashes.SHA256()))
-    except InvalidSignature:
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Invalid signature")
-
-
-def _signature_to_der(raw_sig: bytes) -> bytes:
-    if len(raw_sig) != 64:
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Invalid signature length")
-    r = raw_sig[:32]
-    s = raw_sig[32:]
-
-    def _der_int(val: bytes) -> bytes:
-        # Strip leading zeros but keep sign bit
-        stripped = val.lstrip(b"\x00")
-        if not stripped:
-            stripped = b"\x00"
-        if stripped[0] & 0x80:
-            stripped = b"\x00" + stripped
-        return b"\x02" + bytes([len(stripped)]) + stripped
-
-    r_der = _der_int(r)
-    s_der = _der_int(s)
-    inner = r_der + s_der
-    return b"\x30" + bytes([len(inner)]) + inner
-
-
 async def begin_passkey_registration(db: AsyncSession, user_id: int) -> dict[str, Any]:
     user = await get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == user_id)
 
-    challenge_id, challenge = await _store_challenge(db)
+    challenge_id, challenge_b64 = await _store_challenge(db)
     user_handle = user_id.to_bytes(8, "big")
 
     existing = (
         await db.execute(select(PasskeyCredential).where(PasskeyCredential.user_id == user_id))
     ).scalars().all()
     exclude_credentials = [
-        {"type": "public-key", "id": _b64(c.credential_id.encode("utf-8"))}
+        PublicKeyCredentialDescriptor(id=_b64decode(c.credential_id))
         for c in existing
     ]
 
+    options = generate_registration_options(
+        rp_id=settings.rp_id,
+        rp_name=settings.rp_name,
+        user_id=user_handle,
+        user_name=user.username,
+        user_display_name=user.username,
+        challenge=_b64decode(challenge_b64),
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            authenticator_attachment=AuthenticatorAttachment.PLATFORM,
+            user_verification=UserVerificationRequirement.PREFERRED,
+        ),
+        attestation=AttestationConveyancePreference.NONE,
+        exclude_credentials=exclude_credentials,
+        supported_pub_key_algs=_SUPPORTED_PUB_KEY_ALGS,
+    )
     return {
         "challenge_id": challenge_id,
-        "public_key": {
-            "challenge": challenge,
-            "rp": {"id": settings.rp_id, "name": settings.rp_name},
-            "user": {
-                "id": _b64(user_handle),
-                "name": user.username,
-                "displayName": user.username,
-            },
-            "pubKeyCredParams": [
-                {"type": "public-key", "alg": -7},
-                {"type": "public-key", "alg": -257},
-            ],
-            "timeout": 60000,
-            "excludeCredentials": exclude_credentials,
-            "authenticatorSelection": {
-                "authenticatorAttachment": "platform",
-                "userVerification": "preferred",
-            },
-            "attestation": "direct",
-        },
+        "public_key": json.loads(options_to_json(options)),
     }
 
 
-async def _prep_passkey_credential(db: AsyncSession, credential: dict[str, Any], err: ErrCode) -> tuple[str, str, dict[str, Any], str, dict[str, Any]]:
-    """从 credential dict 提取并校验基础字段，消费 challenge。返回 (raw_id, challenge, response, client_data_json, client_data)。"""
-    raw_id: str = credential.get("rawId")  # type: ignore[assignment]
-    challenge_id: str | None = credential.get("challenge_id")
-    response: dict[str, Any] = credential.get("response", {})  # type: ignore[assignment]
+def _registration_credential(credential: dict[str, Any]) -> dict[str, Any]:
+    """把前端 payload 组装成官方库 verify_registration_response 需要的 credential 字典。
 
-    if not raw_id or not challenge_id:
-        raise BizError(err, "rawId and challenge_id required")
-
-    challenge = await _consume_challenge(db, challenge_id)  # type: ignore[union-attr]
-    if not challenge:
-        raise BizError(err, "Challenge expired or invalid")
-
-    client_data_json_b64: str = response.get("clientDataJSON")  # type: ignore[assignment]
-    client_data = _parse_client_data(client_data_json_b64)
-    _verify_origin(settings.origin, client_data)
-    _verify_challenge(challenge, client_data)
-
-    return raw_id, challenge, response, client_data_json_b64, client_data
+    前端只回传 rawId + response{clientDataJSON, attestationObject}；官方库还要求
+    ``id`` 与 ``type``，这里补上。rawId 本身即 base64url 的凭证 id。
+    """
+    raw_id: str | None = credential.get("rawId")
+    response: dict[str, Any] = credential.get("response", {})
+    if not raw_id or not response.get("clientDataJSON") or not response.get("attestationObject"):
+        raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "rawId and attestationObject required")
+    return {
+        "id": raw_id,
+        "rawId": raw_id,
+        "type": PublicKeyCredentialType.PUBLIC_KEY.value,
+        "response": response,
+    }
 
 
 async def complete_passkey_registration(
     db: AsyncSession, user_id: int, credential: dict[str, Any]
 ) -> dict[str, Any]:
-    raw_id, _challenge, response, client_data_json_b64, _client_data = await _prep_passkey_credential(
-        db, credential, AuthErr.PASSKEY_REGISTRATION_FAILED
-    )
+    challenge_id: str | None = credential.get("challenge_id")
+    if not challenge_id:
+        raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "challenge_id required")
 
-    attestation_object_b64: Any = response.get("attestationObject")
-
-    if not client_data_json_b64 or not attestation_object_b64:
-        raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "clientDataJSON and attestationObject required")
+    expected_challenge = await _consume_challenge(db, challenge_id)
+    if not expected_challenge:
+        raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "Challenge expired or invalid")
 
     try:
-        attestation_bytes = _b64decode(str(attestation_object_b64))
-        att_obj = cbor2.loads(attestation_bytes)
-    except Exception as exc:
-        raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "Invalid attestationObject") from exc
+        verified = verify_registration_response(
+            credential=_registration_credential(credential),
+            expected_challenge=expected_challenge,
+            expected_rp_id=settings.rp_id,
+            expected_origin=settings.origin,
+            supported_pub_key_algs=_SUPPORTED_PUB_KEY_ALGS,
+        )
+    except WebAuthnException as exc:
+        raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "Invalid attestation") from exc
 
-    fmt = att_obj.get("fmt", "")
-    auth_data_bytes = att_obj.get("authData", b"")
-    auth_data = _parse_authenticator_data(auth_data_bytes)
-
-    _verify_rp_id_hash(auth_data)
-    _verify_user_presence(auth_data)
-
-    ata: dict[str, Any] = auth_data.get("attested_credential_data")  # type: ignore[assignment]
-    if not ata:
-        raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "No attested credential data")
-
-    if fmt == "packed":
-        att_stmt = att_obj.get("attStmt", {})
-        sig = att_stmt.get("sig", b"")
-        x5c = att_stmt.get("x5c", [])
-
-        if x5c:
-            try:
-                x5c_0: bytes = x5c[0]  # pyright: ignore[reportAssignmentType]
-                cert = x509.load_der_x509_certificate(x5c_0)
-                signed_data_part = auth_data_bytes + hashlib.sha256(
-                    _b64decode(client_data_json_b64)
-                ).digest()
-                pubkey = cert.public_key()
-                if isinstance(pubkey, ec.EllipticCurvePublicKey):
-                    pubkey.verify(sig, signed_data_part, ec.ECDSA(hashes.SHA256()))  # pyright: ignore[reportArgumentType]
-            except Exception as exc:
-                raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "Attestation signature invalid") from exc
-
-    cose_key = ata["cose_key"]
-    x, y = cose_key["x"], cose_key["y"]
-    public_key_bytes = b"\x04" + x + y
-
+    raw_id: str | None = credential.get("rawId")
+    if not raw_id:
+        raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "rawId required")
     existing = (
         await db.execute(select(PasskeyCredential).where(PasskeyCredential.credential_id == raw_id))
     ).scalars().first()
@@ -364,9 +214,9 @@ async def complete_passkey_registration(
 
     cred = PasskeyCredential(
         user_id=user_id,
-        credential_id=raw_id,  # type: ignore[union-attr]
-        public_key=_b64(public_key_bytes),
-        sign_count=auth_data["sign_count"],
+        credential_id=raw_id,
+        public_key=_b64(verified.credential_public_key),
+        sign_count=verified.sign_count,
         device_name=device_name,
     )
     db.add(cred)
@@ -378,64 +228,87 @@ async def complete_passkey_registration(
 
 
 async def begin_passkey_login(db: AsyncSession) -> dict[str, Any]:
-    challenge_id, challenge = await _store_challenge(db)
+    challenge_id, challenge_b64 = await _store_challenge(db)
+
+    options = generate_authentication_options(
+        rp_id=settings.rp_id,
+        challenge=_b64decode(challenge_b64),
+        user_verification=UserVerificationRequirement.PREFERRED,
+    )
     return {
         "challenge_id": challenge_id,
-        "public_key": {
-            "challenge": challenge,
-            "rpId": settings.rp_id,
-            "timeout": 60000,
-            "userVerification": "preferred",
-        },
+        "public_key": json.loads(options_to_json(options)),
     }
 
 
+def _signature_raw_to_der(signature_bytes: bytes) -> bytes:
+    """把 WebAuthn 原始的 64 字节 ECDSA 签名 (r||s) 转成 DER。
+
+    浏览器返回的 ECDSA 签名是原始 r||s；而 DuWab 2.7 的 verify_signature 对 EC2
+    直接交给 cryptography 的 ``verify``（默认期望 DER）。这里转成 DER，保证与
+    真实浏览器签名的兼容。非 64 字节（如 RSA/Ed25519）原样返回。
+    """
+    if len(signature_bytes) == 64:
+        from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+        r = int.from_bytes(signature_bytes[:32], "big")
+        s_ints = int.from_bytes(signature_bytes[32:], "big")
+        return encode_dss_signature(r, s_ints)
+    return signature_bytes
+
+
+def _authentication_credential(credential: dict[str, Any]) -> dict[str, Any]:
+    """把前端 payload 组装成官方库 verify_authentication_response 需要的 credential 字典。"""
+    raw_id: str | None = credential.get("rawId")
+    response: dict[str, Any] = credential.get("response", {})
+    if not raw_id or not response.get("clientDataJSON") or not response.get("authenticatorData") or not response.get("signature"):
+        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "rawId, authenticatorData and signature required")
+    out: dict[str, Any] = {
+        "id": raw_id,
+        "rawId": raw_id,
+        "type": PublicKeyCredentialType.PUBLIC_KEY.value,
+        "response": dict(response),
+    }
+    if response.get("userHandle"):
+        out["response"]["userHandle"] = response["userHandle"]
+    # 浏览器原始签名是 r||s；库期望 DER，先转换
+    raw_sig = _b64decode(str(response["signature"]))
+    out["response"]["signature"] = _b64(_signature_raw_to_der(raw_sig))
+    return out
+
+
 async def complete_passkey_login(db: AsyncSession, credential: dict[str, Any]) -> dict[str, Any]:
-    raw_id, _challenge, response, client_data_json_b64, _client_data = await _prep_passkey_credential(
-        db, credential, AuthErr.PASSKEY_VERIFICATION_FAILED
-    )
+    challenge_id: str | None = credential.get("challenge_id")
+    if not challenge_id:
+        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "challenge_id required")
 
-    authenticator_data_b64: Any = response.get("authenticatorData")
-    signature_b64: Any = response.get("signature")
+    expected_challenge = await _consume_challenge(db, challenge_id)
+    if not expected_challenge:
+        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Challenge expired or invalid")
 
-    if not authenticator_data_b64 or not signature_b64:
-        raise BizError(
-            AuthErr.PASSKEY_VERIFICATION_FAILED,
-            "authenticatorData and signature required",
-        )
-
-    auth_data_bytes = _b64decode(str(authenticator_data_b64))
-    auth_data = _parse_authenticator_data(auth_data_bytes)
-    _verify_rp_id_hash(auth_data)
-    _verify_user_presence(auth_data)
-
+    raw_id: str | None = credential.get("rawId")
+    if not raw_id:
+        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "rawId required")
     passkey = await get_or_raise(
         db, PasskeyCredential, AuthErr.PASSKEY_VERIFICATION_FAILED,
         PasskeyCredential.credential_id == raw_id,
         detail="Credential not found",
     )
 
-    public_key_bytes = _b64decode(str(passkey.public_key))
-    signed_data = _build_signed_data(auth_data_bytes, client_data_json_b64)
-    signature_raw = _b64decode(str(signature_b64))
-    signature_der = _signature_to_der(signature_raw)
-
+    # official 库包 origin/challenge/rpIdHash/user_presence + signature，
+    # 内置 sign-count 回拨检测（响应计数 <= 当前计数会被拒绝）
     try:
-        pubkey = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), public_key_bytes)
-        pubkey.verify(signature_der, signed_data, ec.ECDSA(hashes.SHA256()))
-    except (InvalidSignature, ValueError, Exception):
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Invalid signature")
-
-    reported_count = auth_data["sign_count"]
-    # WebAuthn（W3C）建议：计数回拨表明认证器可能被克隆/凭据被复制，应视为认证失败。
-    # 若计数回拨则拒绝本次认证，低于 0 只会等于 0。< 分支仅在认证器乱序时触发，属防御性判断。
-    if reported_count < passkey.sign_count:
-        raise BizError(
-            AuthErr.PASSKEY_VERIFICATION_FAILED,
-            "Authenticator sign counter rolled back (potential clone)",
+        verified = verify_authentication_response(
+            credential=_authentication_credential(credential),
+            expected_challenge=expected_challenge,
+            expected_rp_id=settings.rp_id,
+            expected_origin=settings.origin,
+            credential_public_key=_b64decode(str(passkey.public_key)),
+            credential_current_sign_count=passkey.sign_count,
         )
-    if reported_count > passkey.sign_count:
-        passkey.sign_count = reported_count
+    except WebAuthnException as exc:
+        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Invalid signature") from exc
+
+    passkey.sign_count = verified.new_sign_count
     await db.flush()
 
     user = await get_or_raise(
