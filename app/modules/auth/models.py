@@ -21,6 +21,8 @@ class RefreshToken(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    # 会话用途："web"（前台 Bearer）/"admin"（后台 cookie）。用于隔离，避免跨会话互用。
+    kind: Mapped[str] = mapped_column(String(8), nullable=False, default="web")
     mfa_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     expires_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False
