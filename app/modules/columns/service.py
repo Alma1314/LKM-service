@@ -42,12 +42,14 @@ async def create_application(
     return ColumnApplicationInfo.model_validate(app)
 
 
-async def list_applications(db: AsyncSession) -> list[ColumnApplicationInfo]:
-    apps = (
-        await db.execute(
-            select(ColumnApplication).order_by(ColumnApplication.id.desc())
-        )
-    ).scalars().all()
+async def list_applications(
+    db: AsyncSession, page: int = 1, limit: int | None = None
+) -> list[ColumnApplicationInfo]:
+    """申请列表。不传 ``limit`` 时返回全部（保旧契约），传了则 SQL 层分页。"""
+    stmt = select(ColumnApplication).order_by(ColumnApplication.id.desc())
+    if limit is not None:
+        stmt = stmt.offset((page - 1) * limit).limit(limit)
+    apps = (await db.execute(stmt)).scalars().all()
     return [ColumnApplicationInfo.model_validate(a) for a in apps]
 
 
@@ -82,8 +84,11 @@ async def review_application(
     }
 
 
-async def list_columns(db: AsyncSession) -> list[ColumnInfo]:
-    cols = (await db.execute(select(Column).order_by(Column.id.desc()))).scalars().all()
+async def list_columns(db: AsyncSession, page: int = 1, limit: int | None = None) -> list[ColumnInfo]:
+    stmt = select(Column).order_by(Column.id.desc())
+    if limit is not None:
+        stmt = stmt.offset((page - 1) * limit).limit(limit)
+    cols = (await db.execute(stmt)).scalars().all()
     return [ColumnInfo.model_validate(c) for c in cols]
 
 
@@ -112,15 +117,18 @@ async def create_post(
     return ColumnPostInfo.model_validate(post)
 
 
-async def list_posts(db: AsyncSession, column_id: int) -> list[ColumnPostInfo]:
+async def list_posts(
+    db: AsyncSession, column_id: int, page: int = 1, limit: int | None = None
+) -> list[ColumnPostInfo]:
     await get_or_raise(db, Column, ColumnErr.NOT_FOUND, Column.id == column_id)
-    posts = (
-        await db.execute(
-            select(ColumnPost)
-            .where(ColumnPost.column_id == column_id)
-            .order_by(ColumnPost.id.desc())
-        )
-    ).scalars().all()
+    stmt = (
+        select(ColumnPost)
+        .where(ColumnPost.column_id == column_id)
+        .order_by(ColumnPost.id.desc())
+    )
+    if limit is not None:
+        stmt = stmt.offset((page - 1) * limit).limit(limit)
+    posts = (await db.execute(stmt)).scalars().all()
     return [ColumnPostInfo.model_validate(p) for p in posts]
 
 

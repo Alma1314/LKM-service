@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import CommonErr, respond, resp_json
+from app.core.config import settings
 from app.db.models import User, now_iso
 from app.db.session import get_session
 from app.modules.auth.models import RefreshToken
@@ -41,7 +42,7 @@ def _set_access_cookie(resp, token: str) -> None:
         key=COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=False,          # 开发用 http；生产 https 由部署侧决定
+        secure=settings.is_production,  # 生产 https 强制 Secure；开发 http 免加密
         samesite="lax",
         max_age=15 * 60,
         path=COOKIE_PATH,
@@ -53,7 +54,7 @@ def _set_refresh_cookie(resp, token: str) -> None:
         key=REFRESH_NAME,
         value=token,
         httponly=True,
-        secure=False,
+        secure=settings.is_production,
         samesite="lax",
         max_age=REFRESH_TOKEN_DAYS * 86400,
         path=COOKIE_PATH,

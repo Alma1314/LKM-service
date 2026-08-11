@@ -1,3 +1,4 @@
+import asyncio
 import json
 import uuid
 from pathlib import Path
@@ -47,12 +48,6 @@ async def _uploader_map(db: AsyncSession, user_ids: list[int]) -> dict[int, str]
     return {u.id: _uploader_name(u) for u in users}
 
 
-def _store_dir() -> Path:
-    path = Path(settings.files_store_dir)
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
 def _make_stored_name(original_name: str) -> str:
     suffix = Path(original_name).suffix[:32]
     return f"{uuid.uuid4().hex}{suffix}"
@@ -97,6 +92,37 @@ async def get_file(db: AsyncSession, file_id: int, bump_view: bool = False) -> F
 _CHUNK = 1024 * 1024  # 分块读写，避免整文件载入内存
 
 
+def _stream_to_disk(stream, dest_path: Path, limit: int) -> int:
+    """同步分块读取 ``stream`` 并写盘，返回总字节数。
+
+    在 async 端点内通过 asyncio.to_thread 调度，避免文件读写（含建目录）阻塞事件循环。
+    超过 ``limit`` 抛 ``FILE_TOO_LARGE``；OS 错误抛 ``FileErr.STORE_ERROR``。
+    """
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    total = 0
+    with dest_path.open("wb") as out:
+        while True:
+            chunk = stream.read(_CHUNK)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > limit:
+                raise BizError(
+                    FileErr.TOO_LARGE,
+                    detail=f"Upload exceeds {limit} byte limit",
+                )
+            out.write(chunk)
+    return total
+
+
+async def _write_upload(stream, dest: Path, limit: int) -> int:
+    try:
+        return await asyncio.to_thread(_stream_to_disk, stream, dest, limit)
+    except OSError as exc:
+        dest.unlink(missing_ok=True)
+        raise BizError(FileErr.STORE_ERROR, detail=f"Failed to store file: {exc}") from exc
+
+
 async def create_file(
     db: AsyncSession,
     uploader_id: int,
@@ -106,36 +132,18 @@ async def create_file(
 ) -> FileInfo:
     """把上传流分块落盘并登记元数据。
 
-    ``stream`` 需提供 ``read(n)``。累计超过 ``max_bytes``（默认取配置值）
-    立即中止并抛 ``FILE_TOO_LARGE``，不留下磁盘文件。
+    ``stream`` 需提供 ``read(n)``（可同步 File 对象）。累计超过 ``max_bytes``（默认取配置值）
+    立即中止并抛 ``FILE_TOO_LARGE``，不留下磁盘文件。落盘在后台线程执行，避免阻塞事件循环。
     """
     limit = max_bytes or settings.max_upload_bytes
     stored_name = _make_stored_name(info.original_name)
-    dest = None
+    dest = Path(settings.files_store_dir) / stored_name
 
-    total = 0
     try:
-        dest = _store_dir() / stored_name
-        with dest.open("wb") as out:
-            while True:
-                chunk = stream.read(_CHUNK)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > limit:
-                    raise BizError(
-                        FileErr.TOO_LARGE,
-                        detail=f"Upload exceeds {limit} byte limit",
-                    )
-                out.write(chunk)
+        total = await _write_upload(stream, dest, limit)
     except BizError:
-        if dest is not None:
-            dest.unlink(missing_ok=True)
+        dest.unlink(missing_ok=True)
         raise
-    except OSError as exc:
-        if dest is not None:
-            dest.unlink(missing_ok=True)
-        raise BizError(FileErr.STORE_ERROR, detail=f"Failed to store file: {exc}") from exc
 
     try:
         f = LibraryFile(

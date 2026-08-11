@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr, respond
@@ -65,8 +65,12 @@ async def apply_column(
 
 @router.get("/applications", response_model=ApiResp[ListData[ColumnApplicationInfo]])
 @respond
-async def get_applications(db: AsyncSession = Depends(get_session)):
-    return {"items": await list_applications(db)}
+async def get_applications(
+    db: AsyncSession = Depends(get_session),
+    page: int = Query(1, ge=1),
+    limit: int | None = Query(default=None, ge=1, le=200),
+):
+    return {"items": await list_applications(db, page=page, limit=limit)}
 
 
 @router.get("/applications/{application_id}", response_model=ApiResp[ColumnApplicationInfo])
@@ -90,8 +94,12 @@ async def review_column_application(
 
 @router.get("", response_model=ApiResp[ListData[ColumnInfo]])
 @respond
-async def get_columns(db: AsyncSession = Depends(get_session)):
-    return {"items": await list_columns(db)}
+async def get_columns(
+    db: AsyncSession = Depends(get_session),
+    page: int = Query(1, ge=1),
+    limit: int | None = Query(default=None, ge=1, le=200),
+):
+    return {"items": await list_columns(db, page=page, limit=limit)}
 
 
 @router.get("/{column_id}", response_model=ApiResp[ColumnInfo])
@@ -115,8 +123,13 @@ async def publish_column_post(
 
 @router.get("/{column_id}/posts", response_model=ApiResp[ListData[ColumnPostInfo]])
 @respond
-async def get_column_posts(column_id: int, db: AsyncSession = Depends(get_session)):
-    return {"items": await list_posts(db, column_id)}
+async def get_column_posts(
+    column_id: int,
+    db: AsyncSession = Depends(get_session),
+    page: int = Query(1, ge=1),
+    limit: int | None = Query(default=None, ge=1, le=200),
+):
+    return {"items": await list_posts(db, column_id, page=page, limit=limit)}
 
 
 @router.get("/{column_id}/posts/{post_id}", response_model=ApiResp[ColumnPostInfo])

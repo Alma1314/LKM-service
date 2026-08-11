@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
@@ -49,9 +49,11 @@ async def create_blog_series(
 async def list_blog_series(
     db: AsyncSession = Depends(get_session),
     cur: CurrentUser | None = Depends(get_optional_user),
+    page: int = Query(1, ge=1),
+    limit: int | None = Query(default=None, ge=1, le=200),
 ):
     user_id = cur.id if cur else None
-    return {"items": await list_series(db, current_user_id=user_id)}
+    return {"items": await list_series(db, current_user_id=user_id, page=page, limit=limit)}
 
 
 @router.get("/series/{series_id}", response_model=ApiResp[BlogSeriesDetail])

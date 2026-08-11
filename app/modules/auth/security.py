@@ -43,6 +43,11 @@ def verifypwd(raw: str, stored: str) -> bool:
 _ACCESS_TYPE = "access"
 _TEMP_TYPE = "temp"
 
+# JWT audience：区分三套互不混用的令牌，防止 token 被误喂给其他端点
+_AUD_WEB = "lkm:web"      # 前台 Bearer access
+_AUD_TEMP = "lkm:temp"    # 一次性 temp（2FA/recovery/setup）
+_AUD_ADMIN = "lkm:admin"  # 后台 access cookie
+
 
 def create_access_token(
     user_id: object,
@@ -59,6 +64,7 @@ def create_access_token(
         "trust_device": trust_device,
         "type": _ACCESS_TYPE,
         "token_version": int(token_version),  # type: ignore[arg-type]
+        "aud": _AUD_WEB,
         "iat": now,
         "exp": now + settings.access_token_expire_minutes * 60,
     }
@@ -66,7 +72,10 @@ def create_access_token(
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
-    payload = cast(dict[str, Any], jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]))
+    payload = cast(
+        dict[str, Any],
+        jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm], audience=_AUD_WEB),
+    )
     if payload.get("type") != _ACCESS_TYPE:
         raise ValueError("non-access token")
     return payload
@@ -80,6 +89,7 @@ def create_temp_token(user_id: int, purpose: str = "2fa", txn_id: str | None = N
         "user_id": user_id,
         "type": _TEMP_TYPE,
         "purpose": purpose,
+        "aud": _AUD_TEMP,
         "iat": now,
         "exp": now + _TEMP_EXPIRE_SECONDS,
     }
@@ -89,7 +99,10 @@ def create_temp_token(user_id: int, purpose: str = "2fa", txn_id: str | None = N
 
 
 def decode_temp_token(token: str) -> dict[str, Any]:
-    payload = cast(dict[str, Any], jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]))
+    payload = cast(
+        dict[str, Any],
+        jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm], audience=_AUD_TEMP),
+    )
     if payload.get("type") != _TEMP_TYPE:
         raise ValueError("non-temp token")
     return payload

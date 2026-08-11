@@ -116,9 +116,18 @@ async def create_series(db: AsyncSession, user_id: int, info: BlogSeriesCreate) 
 
 
 async def list_series(
-    db: AsyncSession, current_user_id: int | None = None
+    db: AsyncSession,
+    current_user_id: int | None = None,
+    page: int = 1,
+    limit: int | None = None,
 ) -> list[BlogSeriesInfo]:
-    items = (await db.execute(select(BlogSeries).order_by(BlogSeries.id.desc()))).scalars().all()
+    """系列列表。``page``/``limit`` 可选：不传 ``limit`` 时返回全部（保持旧契约），
+    传了则在 SQL 层分页，避免大数据量时整表拉取。
+    """
+    stmt = select(BlogSeries).order_by(BlogSeries.id.desc())
+    if limit is not None:
+        stmt = stmt.offset((page - 1) * limit).limit(limit)
+    items = (await db.execute(stmt)).scalars().all()
     ids = [s.id for s in items]
     counts = await _star_counts(db, ids)
     starred_ids = (

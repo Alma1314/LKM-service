@@ -1,9 +1,8 @@
 """双因素认证（TOTP）服务。"""
 
 import hashlib
-from typing import Any, cast
+from typing import Any
 
-import jwt
 from sqlalchemy import delete as sa_delete, or_, select, update as sa_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +16,7 @@ from app.db.repo import consume_once, get_or_raise, isolated_update
 from app.modules.auth.models import RecoveryCode, TempTokenUsage, TOTP
 from app.modules.auth.security import (
     decrypt_secret,
+    decode_temp_token,
     encrypt_secret,
     generate_recovery_codes,
     generate_totp_secret,
@@ -57,17 +57,10 @@ async def _reset_totp_failures(db: AsyncSession, totp_record: TOTP | None) -> No
 def _decode_temp_token(raw_token: str) -> dict[str, Any]:
     """解码并验证临时令牌 JWT，但不消费它。"""
     try:
-        payload = cast(dict[str, Any], jwt.decode(
-            raw_token,
-            settings.jwt_secret,
-            algorithms=[settings.jwt_algorithm],
-        ))
-        if payload.get("type") != "temp":
-            raise ValueError("not a temp token")
+        # 走 security.decode_temp_token：统一 audience 校验（lkm:temp）与 type 检查
+        return decode_temp_token(raw_token)
     except Exception as exc:
         raise BizError(AuthErr.TOKEN_INVALID) from exc
-
-    return payload
 
 
 async def _check_and_consume_temp_token(db: AsyncSession, raw_token: str, user_id: int, txn_id: str | None = None) -> dict[str, Any]:

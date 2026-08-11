@@ -53,7 +53,8 @@ class TestAccessToken:
 
     async def should_reject_non_access_type(self):
         token = create_temp_token(user_id=4)
-        with pytest.raises(ValueError, match="non-access token"):
+        # audience 锁定：temp token（lkm:temp）被喂给 access 解码器时将被拒绝
+        with pytest.raises(jwt.exceptions.InvalidAudienceError):
             decode_access_token(token)
 
 
@@ -70,7 +71,8 @@ class TestTempToken:
 
     async def should_reject_non_temp_type(self):
         token = create_access_token(user_id=6, account_level="normal", role="member")
-        with pytest.raises(ValueError, match="non-temp token"):
+        # audience 锁定：access token（lkm:web）被喂给 temp 解码器时将被拒绝
+        with pytest.raises(jwt.exceptions.InvalidAudienceError):
             decode_temp_token(token)
 
 

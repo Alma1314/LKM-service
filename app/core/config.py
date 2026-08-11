@@ -84,6 +84,15 @@ class Settings(BaseSettings):
         return self
 
     @property
+    def is_production(self) -> bool:
+        """生产（非宽松环境）才允许 HttpOnly cookie 走 Secure。
+
+        宽松环境（dev/local/test/未设）为 False，cookie 走 http 便于本地联调；
+        生产（如 LKM_ENV=production）为 True，要求 https 传输 cookie。
+        """
+        return (self.env or "").strip().lower() not in _PERMISSIVE_ENVS
+
+    @property
     def database_url(self) -> str:
         if self.db_driver == "postgresql":
             return (
