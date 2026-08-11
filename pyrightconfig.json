@@ -1,0 +1,17 @@
+{
+    "include": ["app", "tests"],
+    "pythonVersion": "3.13",
+    "venvPath": ".",
+    "venv": ".venv",
+    "typeCheckingMode": "standard",
+    "reportOverlappingOverload": false,
+    "reportUnknownArgumentType": false,
+    "reportUnknownParameterType": false,
+    "reportUnknownVariableType": false,
+    "reportUnknownMemberType": false,
+    "reportUnknownLambdaType": false,
+    "reportMissingParameterType": false,
+    "reportMissingTypeStubs": false,
+    "reportUnusedCallResult": false,
+    "reportUnusedImport": false
+}

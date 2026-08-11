@@ -32,6 +32,8 @@ filterwarnings = [
 [tool.basedpyright]
 include = ["app"]
 typeCheckingMode = "standard"
+# @respond 依赖 async/sync 联合分派的 overload，overlap 是设计预期
+reportOverlappingOverload = false
 reportUnknownArgumentType = false
 reportUnknownParameterType = false
 reportUnknownVariableType = false

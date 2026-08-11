@@ -15,8 +15,16 @@ from sqlalchemy import select
 
 from app.core.err import BizError, CommonErr
 from app.modules.auth.errors import AuthErr
+from app.modules.auth.deps import CurrentUser
+from app.modules.auth.router_settings import BindEmailVerify, BindPhoneVerify
+from app.modules.auth.schemas import UnbindRequest
 from app.db.models import Base
 import app.modules.auth.models  # noqa: F401 — ensure auth tables (refresh_tokens, etc.) are created
+
+
+def _FakeCurrentUser(id: int, account_level: str = "local", role: str = "member") -> CurrentUser:
+    """测试辅助：构造一个满足 ``CurrentUser`` 类型的用户上下文。"""
+    return CurrentUser(id=id, account_level=account_level, role=role)
 
 
 def _unwrap(response):
@@ -85,14 +93,9 @@ class TestBindEmail:
         # Now use the router function directly
         from app.modules.auth.router_settings import bind_email_verify
 
-        class FakeCurrentUser:
-            id = user_id
-            account_level = "local"
-            role = "member"
-
         result = await bind_email_verify(
-            body=type("Body", (), {"email": "alice@example.com", "code": code})(),
-            cur=FakeCurrentUser(),
+            body=BindEmailVerify(email="alice@example.com", code=code),
+            cur=_FakeCurrentUser(user_id),
             db=db,
         )
 
@@ -121,17 +124,12 @@ class TestBindEmail:
         # Try to bind the same email to bob
         code, record_id = await create_email_verification(db, "same@example.com", "bind")
 
-        class FakeCurrentUser:
-            id = reg2["user_id"]
-            account_level = "local"
-            role = "member"
-
         from app.modules.auth.router_settings import bind_email_verify
 
         with pytest.raises(BizError) as exc:
             await bind_email_verify(
-                body=type("Body", (), {"email": "same@example.com", "code": code})(),
-                cur=FakeCurrentUser(),
+                body=BindEmailVerify(email="same@example.com", code=code),
+                cur=_FakeCurrentUser(reg2["user_id"]),
                 db=db,
             )
         assert exc.value.errcode == AuthErr.ALREADY_REGISTERED
@@ -146,15 +144,10 @@ class TestBindEmail:
 
         from app.modules.auth.router_settings import bind_email_verify
 
-        class FakeCurrentUser:
-            id = reg["user_id"]
-            account_level = "local"
-            role = "member"
-
         with pytest.raises(BizError) as exc:
             await bind_email_verify(
-                body=type("Body", (), {"email": "alice@example.com", "code": "000000"})(),
-                cur=FakeCurrentUser(),
+                body=BindEmailVerify(email="alice@example.com", code="000000"),
+                cur=_FakeCurrentUser(reg["user_id"]),
                 db=db,
             )
         assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
@@ -175,14 +168,9 @@ class TestBindPhone:
 
         from app.modules.auth.router_settings import bind_phone_verify
 
-        class FakeCurrentUser:
-            id = user_id
-            account_level = "local"
-            role = "member"
-
         result = await bind_phone_verify(
-            body=type("Body", (), {"phone": "13800001111", "code": code})(),
-            cur=FakeCurrentUser(),
+            body=BindPhoneVerify(phone="13800001111", code=code),
+            cur=_FakeCurrentUser(user_id),
             db=db,
         )
 
@@ -209,15 +197,10 @@ class TestBindPhone:
 
         from app.modules.auth.router_settings import bind_phone_verify
 
-        class FakeCurrentUser:
-            id = reg2["user_id"]
-            account_level = "local"
-            role = "member"
-
         with pytest.raises(BizError) as exc:
             await bind_phone_verify(
-                body=type("Body", (), {"phone": "13800001111", "code": code})(),
-                cur=FakeCurrentUser(),
+                body=BindPhoneVerify(phone="13800001111", code=code),
+                cur=_FakeCurrentUser(reg2["user_id"]),
                 db=db,
             )
         assert exc.value.errcode == AuthErr.ALREADY_REGISTERED
@@ -232,15 +215,10 @@ class TestBindPhone:
 
         from app.modules.auth.router_settings import bind_phone_verify
 
-        class FakeCurrentUser:
-            id = reg["user_id"]
-            account_level = "local"
-            role = "member"
-
         with pytest.raises(BizError) as exc:
             await bind_phone_verify(
-                body=type("Body", (), {"phone": "13800001111", "code": "000000"})(),
-                cur=FakeCurrentUser(),
+                body=BindPhoneVerify(phone="13800001111", code="000000"),
+                cur=_FakeCurrentUser(reg["user_id"]),
                 db=db,
             )
         assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
@@ -263,14 +241,9 @@ class TestBindEmailUpgrade:
 
         from app.modules.auth.router_settings import bind_email_verify
 
-        class FakeCurrentUser:
-            id = user_id
-            account_level = "local"
-            role = "member"
-
         await bind_email_verify(
-            body=type("Body", (), {"email": "upgrade@example.com", "code": code})(),
-            cur=FakeCurrentUser(),
+            body=BindEmailVerify(email="upgrade@example.com", code=code),
+            cur=_FakeCurrentUser(user_id),
             db=db,
         )
 
@@ -302,14 +275,9 @@ class TestBindEmailUpgrade:
 
         from app.modules.auth.router_settings import bind_email_verify
 
-        class FakeCurrentUser:
-            id = user_id
-            account_level = "normal"
-            role = "member"
-
         await bind_email_verify(
-            body=type("Body", (), {"email": "another@example.com", "code": code})(),
-            cur=FakeCurrentUser(),
+            body=BindEmailVerify(email="another@example.com", code=code),
+            cur=_FakeCurrentUser(user_id, account_level="normal"),
             db=db,
         )
 
@@ -340,12 +308,7 @@ class TestGetSettings:
 
         from app.modules.auth.router_settings import get_settings
 
-        class FakeCurrentUser:
-            id = user.id
-            account_level = "normal"
-            role = "member"
-
-        data = self._unwrap(await get_settings(cur=FakeCurrentUser(), db=db))
+        data = self._unwrap(await get_settings(cur=_FakeCurrentUser(user.id, account_level="normal"), db=db))
         assert data["data"]["email"] == "a@b.com"
         assert data["data"]["phone"] == "13800001111"
         assert data["data"]["github"] is None
@@ -370,12 +333,7 @@ class TestUnbind:
         user = await self._reg_with_bindings(db)
         from app.modules.auth.router_settings import unbind
 
-        class FakeCurrentUser:
-            id = user.id
-            account_level = "normal"
-            role = "member"
-
-        data = json.loads((await unbind("email", type("Body", (), {"code": None})(), cur=FakeCurrentUser(), db=db)).body.decode())
+        data = _unwrap(await unbind("email", UnbindRequest(code=None), cur=_FakeCurrentUser(user.id, account_level="normal"), db=db))
         assert data["data"]["message"] == "email unbound"
         # 直接用标量列查询，避免命中身份映射中已过期的 User 对象触发惰性加载
         assert await db.scalar(select(User.email).where(User.id == user.id)) is None
@@ -396,16 +354,11 @@ class TestUnbind:
         from app.modules.auth.router_settings import unbind
         from app.core.err import BizError, ErrCode
 
-        class FakeCurrentUser:
-            id = user.id
-            account_level = "normal"
-            role = "member"
-
         # 先解绑 phone，使仅剩 email
-        json.loads((await unbind("phone", type("Body", (), {"code": None})(), cur=FakeCurrentUser(), db=db)).body.decode())
+        _unwrap(await unbind("phone", UnbindRequest(code=None), cur=_FakeCurrentUser(user.id, account_level="normal"), db=db))
         # 再解绑 email，将无任何登录方式 → 应拒绝
         with pytest.raises(BizError) as exc:
-            await unbind("email", type("Body", (), {"code": None})(), cur=FakeCurrentUser(), db=db)
+            await unbind("email", UnbindRequest(code=None), cur=_FakeCurrentUser(user.id, account_level="normal"), db=db)
         assert exc.value.errcode == CommonErr.INVALID_INPUT
 
     async def should_require_totp_when_2fa_enabled(self, db):
@@ -417,13 +370,8 @@ class TestUnbind:
         from app.core.err import BizError, ErrCode
         from app.modules.auth.router_settings import unbind
 
-        class FakeCurrentUser:
-            id = user.id
-            account_level = "normal"
-            role = "member"
-
         with pytest.raises(BizError) as exc:
-            await unbind("email", type("Body", (), {"code": None})(), cur=FakeCurrentUser(), db=db)
+            await unbind("email", UnbindRequest(code=None), cur=_FakeCurrentUser(user.id, account_level="normal"), db=db)
         assert exc.value.errcode == AuthErr.TOTP_CODE_INVALID
 
     async def should_unbind_github(self, db):
@@ -434,12 +382,7 @@ class TestUnbind:
         await db.flush()
         from app.modules.auth.router_settings import unbind
 
-        class FakeCurrentUser:
-            id = user.id
-            account_level = "normal"
-            role = "member"
-
-        data = json.loads((await unbind("github", type("Body", (), {"code": None})(), cur=FakeCurrentUser(), db=db)).body.decode())
+        data = _unwrap(await unbind("github", UnbindRequest(code=None), cur=_FakeCurrentUser(user.id, account_level="normal"), db=db))
         assert data["data"]["message"] == "github unbound"
         # 用标量列查询判定行已删除，绕过过期身份映射对象
         assert (await db.execute(select(UserOAuth.id).where(UserOAuth.user_id == user.id))).scalars().first() is None
@@ -449,11 +392,6 @@ class TestUnbind:
         from app.core.err import BizError, ErrCode
         from app.modules.auth.router_settings import unbind
 
-        class FakeCurrentUser:
-            id = user.id
-            account_level = "normal"
-            role = "member"
-
         with pytest.raises(BizError) as exc:
-            await unbind("wechat", type("Body", (), {"code": None})(), cur=FakeCurrentUser(), db=db)
+            await unbind("wechat", UnbindRequest(code=None), cur=_FakeCurrentUser(user.id, account_level="normal"), db=db)
         assert exc.value.errcode == CommonErr.INVALID_INPUT

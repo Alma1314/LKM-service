@@ -121,7 +121,9 @@ async def list_series(
     items = (await db.execute(select(BlogSeries).order_by(BlogSeries.id.desc()))).scalars().all()
     ids = [s.id for s in items]
     counts = await _star_counts(db, ids)
-    starred_ids = await _starred_ids(db, ids, current_user_id) if current_user_id else set()
+    starred_ids = (
+        await _starred_ids(db, ids, current_user_id) if current_user_id else set[int]()
+    )
     result: list[BlogSeriesInfo] = []
     for s in items:
         result.append(
@@ -143,7 +145,6 @@ async def get_series(
     )
 
     file_tree: list[dict[str, Any]] | None = None
-    # git 子进程同步调用放在线程池执行，避免阻塞事件循环
     if await asyncio.to_thread(git_svc.ensure_repo_has_commits, series.repo_name):
         file_tree = await asyncio.to_thread(git_svc.get_file_tree, series.repo_name)
 
@@ -182,7 +183,6 @@ async def delete_series(db: AsyncSession, series_id: int, user_id: int) -> None:
     if series.owner_id != user_id:
         raise BizError(CommonErr.FORBIDDEN)
 
-    # git 子进程同步调用放在线程池执行，避免阻塞事件循环
     await asyncio.to_thread(git_svc.delete_repo, series.repo_name)
     await db.delete(series)
     await db.flush()
@@ -301,6 +301,5 @@ async def get_file_content(db: AsyncSession, series_id: int, filepath: str) -> d
     series = await get_or_raise(
         db, BlogSeries, BlogErr.SERIES_NOT_FOUND, BlogSeries.id == series_id,
     )
-    # git 子进程同步调用放在线程池执行，避免阻塞事件循环
     content = await asyncio.to_thread(git_svc.read_file, series.repo_name, filepath)
     return {"filepath": filepath, "content": content}

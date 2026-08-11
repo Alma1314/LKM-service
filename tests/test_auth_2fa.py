@@ -16,6 +16,7 @@ from sqlalchemy import select
 
 from app.core.err import BizError
 from app.modules.auth.errors import AuthErr
+from app.modules.auth.deps import CurrentUser
 from app.db.models import Base, User
 from app.modules.auth.models import RecoveryCode, TOTP
 from app.modules.auth.security import (
@@ -40,11 +41,16 @@ def _svc():
     return service_2fa
 
 
+def _FakeCurrentUser(id: int, account_level: str = "local", role: str = "member") -> CurrentUser:
+    """测试辅助：构造一个满足 ``CurrentUser`` 类型的用户上下文。"""
+    return CurrentUser(id=id, account_level=account_level, role=role)
+
+
 async def _create_user(
     db,
-    username="testuser",
-    account_level="normal",
-    email="test@example.com",
+    username: str = "testuser",
+    account_level: str = "normal",
+    email: str | None = "test@example.com",
 ):
     """Create a minimal user (with profile) and return it."""
     from app.db.models import Profile
@@ -328,12 +334,9 @@ class TestGet2FAStatus:
         user = await _create_user(db, username="statusoff")
         from app.modules.auth.router_2fa import get_2fa_status
 
-        class FakeCurrentUser:
-            id = user.id
-            account_level = "normal"
-            role = "member"
-
-        data = await self._unwrap(await get_2fa_status(cur=FakeCurrentUser(), db=db))
+        data = await self._unwrap(
+            await get_2fa_status(cur=_FakeCurrentUser(user.id, account_level="normal"), db=db)
+        )
         assert data["data"] == {"enabled": False}
 
     async def should_return_true_when_enabled(self, db):
@@ -341,10 +344,7 @@ class TestGet2FAStatus:
         await _enable_totp_for_user(db, user.id)
         from app.modules.auth.router_2fa import get_2fa_status
 
-        class FakeCurrentUser:
-            id = user.id
-            account_level = "normal"
-            role = "member"
-
-        data = await self._unwrap(await get_2fa_status(cur=FakeCurrentUser(), db=db))
+        data = await self._unwrap(
+            await get_2fa_status(cur=_FakeCurrentUser(user.id, account_level="normal"), db=db)
+        )
         assert data["data"] == {"enabled": True}

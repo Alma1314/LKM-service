@@ -150,7 +150,7 @@ async def _consume(db: AsyncSession, record: Any, code: str) -> bool:
 
 
 def check_code_rate_limit(
-    key: str, max_count: int = 5, window: int = 3600
+    key: str, max_count: int = 5, window: float = 3600
 ) -> None:
     """
     如果 *key* 超过了限制，则抛出 ``BizError(VERIFICATION_CODE_RATE_LIMIT)``。

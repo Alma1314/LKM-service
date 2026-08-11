@@ -1,7 +1,8 @@
 import inspect
 import functools
 from enum import IntEnum
-from typing import Any, Callable, Coroutine, ParamSpec, cast
+from collections.abc import Awaitable
+from typing import Any, Callable, Coroutine, ParamSpec, TypeVar, cast, overload
 
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -101,10 +102,28 @@ def resp_json(
     )
 
 
+_R = TypeVar("_R")
+
+
+@overload
+def respond(
+    func: Callable[P, Coroutine[Any, Any, _R]],
+) -> Callable[P, Coroutine[Any, Any, JSONResponse]]: ...
+
+
+@overload
+def respond(
+    func: Callable[P, _R],
+) -> Callable[P, JSONResponse]: ...
+
+
 def respond(
     func: Callable[P, Any],
 ) -> Callable[P, Coroutine[Any, Any, JSONResponse]] | Callable[P, JSONResponse]:
-    """装饰器：将返回值通过 ERRTABLE 包装。 """
+    """装饰器：将返回值通过 ERRTABLE 包装。
+
+    overload 让类型检查器能区分 async（返回 awaitable）与同步（返回 JSONResponse）端点。
+    """
 
     if inspect.iscoroutinefunction(func):
         @functools.wraps(func)
