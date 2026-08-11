@@ -8,7 +8,7 @@
 
 from typing import Any, TypeVar
 
-from sqlalchemy import Select, Update, select, update as sa_update
+from sqlalchemy import Result, Select, Update, select, update as sa_update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,11 +26,11 @@ async def get_or_raise(
     options: tuple[Any, ...] = (),
 ) -> M:
     """按条件查一行，未命中则抛出 ``BizError(errcode)``。"""
-    stmt: Select = select(model).where(*conditions)
+    stmt: Select[Any] = select(model).where(*conditions)
     if options:
         stmt = stmt.options(*options)
-    result = await db.execute(stmt)
-    obj = result.scalars().first()
+    result: Result[Any] = await db.execute(stmt)
+    obj: M | None = result.scalars().first()
     if obj is None:
         raise BizError(errcode, detail)
     return obj

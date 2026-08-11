@@ -13,8 +13,8 @@ if TYPE_CHECKING:
 
 
 class RefreshToken(Base):
-    __tablename__ = "refresh_tokens"
-    __table_args__ = (
+    __tablename__: str = "refresh_tokens"
+    __table_args__: tuple = (
         Index("ix_refresh_tokens_user_revoked", "user_id", "revoked_at"),
     )
 
@@ -38,8 +38,8 @@ class RefreshToken(Base):
 
 
 class EmailVerification(Base):
-    __tablename__ = "email_verifications"
-    __table_args__ = (
+    __tablename__: str = "email_verifications"
+    __table_args__: tuple = (
         Index("ix_email_verifications_lookup", "email", "purpose", "used", "created_at"),
     )
 
@@ -59,8 +59,8 @@ class EmailVerification(Base):
 
 
 class PhoneVerification(Base):
-    __tablename__ = "phone_verifications"
-    __table_args__ = (
+    __tablename__: str = "phone_verifications"
+    __table_args__: tuple = (
         Index("ix_phone_verifications_lookup", "phone", "purpose", "used", "created_at"),
     )
 
@@ -80,8 +80,8 @@ class PhoneVerification(Base):
 
 
 class MagicLink(Base):
-    __tablename__ = "magic_links"
-    __table_args__ = (
+    __tablename__: str = "magic_links"
+    __table_args__: tuple = (
         Index("ix_magic_links_hash_purpose", "token_hash", "purpose"),
     )
 
@@ -99,8 +99,8 @@ class MagicLink(Base):
 
 
 class UserOAuth(Base):
-    __tablename__ = "user_oauths"
-    __table_args__ = (
+    __tablename__: str = "user_oauths"
+    __table_args__: tuple = (
         UniqueConstraint("provider", "provider_user_id", name="uq_oauth_provider_user"),
     )
 
@@ -117,7 +117,7 @@ class UserOAuth(Base):
 
 
 class TOTP(Base):
-    __tablename__ = "totp"
+    __tablename__: str = "totp"
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     secret: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -133,8 +133,8 @@ class TOTP(Base):
 
 
 class RecoveryCode(Base):
-    __tablename__ = "recovery_codes"
-    __table_args__ = (
+    __tablename__: str = "recovery_codes"
+    __table_args__: tuple = (
         Index("ix_recovery_codes_user_hash", "user_id", "code_hash"),
     )
 
@@ -152,7 +152,7 @@ class RecoveryCode(Base):
 class TempTokenUsage(Base):
     """跟踪用于 2FA 验证的一次性临时令牌。"""
 
-    __tablename__ = "temp_token_usages"
+    __tablename__: str = "temp_token_usages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     token_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
@@ -168,7 +168,7 @@ class TempTokenUsage(Base):
 class SetupTransaction(Base):
     """绑定到设置临时令牌的一次性 TOTP 设置事务。"""
 
-    __tablename__ = "setup_transactions"
+    __tablename__: str = "setup_transactions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     token_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
@@ -185,7 +185,7 @@ class SetupTransaction(Base):
 class PendingRegistration(Base):
     """存储待处理的普通注册数据，直到联系方式被验证。"""
 
-    __tablename__ = "pending_registrations"
+    __tablename__: str = "pending_registrations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     txn_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
@@ -205,7 +205,7 @@ class PendingRegistration(Base):
 class RecoveryTransaction(Base):
     """专用的管理员密码恢复事务，支持双重验证。"""
 
-    __tablename__ = "recovery_transactions"
+    __tablename__: str = "recovery_transactions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     txn_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
@@ -231,7 +231,7 @@ class RecoveryTransaction(Base):
 
 
 class PasskeyCredential(Base):
-    __tablename__ = "passkey_credentials"
+    __tablename__: str = "passkey_credentials"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
@@ -247,7 +247,7 @@ class PasskeyCredential(Base):
 
 
 class AuditLog(Base):
-    __tablename__ = "audit_logs"
+    __tablename__: str = "audit_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -262,7 +262,7 @@ class AuditLog(Base):
 class PasskeyChallenge(Base):
     """WebAuthn 挑战码，跨 worker 共享，过期自动失效。"""
 
-    __tablename__ = "passkey_challenges"
+    __tablename__: str = "passkey_challenges"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     challenge_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
@@ -279,7 +279,7 @@ class PasskeyChallenge(Base):
 class OAuthState(Base):
     """临时的 OAuth 状态令牌，用于 CSRF 保护。"""
 
-    __tablename__ = "oauth_states"
+    __tablename__: str = "oauth_states"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     state: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)

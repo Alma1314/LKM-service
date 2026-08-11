@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.err import respond
 from app.db.models import ForumPost, LibraryFile, User
 from app.db.session import get_session
+from app.modules.auth.deps import CurrentUser
 from app.modules.common import ApiResp, ListData
 
 from .deps import require_admin
@@ -27,9 +28,9 @@ async def admin_list_users(
     size: int = Query(20, ge=1, le=100),
     keyword: str | None = None,
     include_pii: bool = False,
-    _cur=require_admin,
+    _cur: CurrentUser = require_admin,
     db: AsyncSession = Depends(get_session),
-):
+) -> dict[str, Any]:
     """用户管理列表。默认隐藏 email/phone（PII），可按用户名/邮箱筛选。
 
     include_pii 目前仅由调用方自决；若后续要分级管控，请额外加敏感级依赖。
@@ -46,7 +47,7 @@ async def admin_list_users(
     rows = (
         await db.execute(query.order_by(User.id.desc()).offset((page - 1) * size).limit(size))
     ).scalars()
-    items = []
+    items: list[Any] = []  # 列表元素来自各字段类型混合的 model_dump，用 Any 收窄容器泛型
     for r in rows:
         item = AdminUserListItem(
             id=int(r.id),
@@ -73,7 +74,7 @@ async def _safe_count(db: AsyncSession, stmt: Any) -> int:
 @router.get("/stats", response_model=ApiResp[AdminStats])
 @respond
 async def admin_stats(
-    _cur=require_admin,
+    _cur: CurrentUser = require_admin,
     db: AsyncSession = Depends(get_session),
 ):
     """仪表盘聚合统计：注册用户数 / 帖子数 / 文件数 / 待审核文件数。"""

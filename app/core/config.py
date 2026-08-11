@@ -1,13 +1,20 @@
+from typing import ClassVar
+
 from pydantic import model_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 存在即安全的非生产占位桶：仅当 env 属于这二者时允许占位密钥，其余一律 fail-fast
-_PERMISSIVE_ENVS = {"", None, "dev", "local", "test"}
+_PERMISSIVE_ENVS: set[str | None] = {"", None, "dev", "local", "test"}
 
 
 class Settings(BaseSettings):
     # 支持项目根目录的 .env 加载（本地开发）；生产无 .env 时走环境变量/默认值
-    model_config = {"env_prefix": "LKM_", "env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+    model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
+        env_prefix="LKM_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # 运行环境：默认 dev（本地），生产显式设 LKM_ENV=production 等非宽松值
     env: str = "dev"

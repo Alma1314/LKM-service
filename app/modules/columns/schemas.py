@@ -1,4 +1,5 @@
 import datetime
+from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,7 +18,7 @@ class ColumnApplicationCreate(BaseModel):
 
 
 class ColumnApplicationInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     id: int
     user_id: int
@@ -38,7 +39,7 @@ class ColumnApplicationReview(BaseModel):
 
 
 class ColumnInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     id: int
     owner_id: int
@@ -59,7 +60,7 @@ class ColumnPostCreate(BaseModel):
 
 
 class ColumnPostInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     id: int
     column_id: int

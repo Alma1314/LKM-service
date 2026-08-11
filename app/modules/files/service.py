@@ -2,6 +2,7 @@ import asyncio
 import json
 import uuid
 from pathlib import Path
+from typing import Any, Protocol
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +17,13 @@ from app.modules.files.models import FILES_TABLE_PLAN
 from app.modules.files.schemas import FileCreate, FileInfo, PageData
 
 
-def get_files_plan() -> dict:
+class _Readable(Protocol):
+    """可同步分块读取的 file-like 对象最小协议。"""
+
+    def read(self, size: int = -1, /) -> bytes: ...
+
+
+def get_files_plan() -> dict[str, Any]:
     return {
         "status": "implemented_minimal",
         "tables": FILES_TABLE_PLAN,
@@ -92,7 +99,7 @@ async def get_file(db: AsyncSession, file_id: int, bump_view: bool = False) -> F
 _CHUNK = 1024 * 1024  # 分块读写，避免整文件载入内存
 
 
-def _stream_to_disk(stream, dest_path: Path, limit: int) -> int:
+def _stream_to_disk(stream: _Readable, dest_path: Path, limit: int) -> int:
     """同步分块读取 ``stream`` 并写盘，返回总字节数。
 
     在 async 端点内通过 asyncio.to_thread 调度，避免文件读写（含建目录）阻塞事件循环。
@@ -115,7 +122,7 @@ def _stream_to_disk(stream, dest_path: Path, limit: int) -> int:
     return total
 
 
-async def _write_upload(stream, dest: Path, limit: int) -> int:
+async def _write_upload(stream: _Readable, dest: Path, limit: int) -> int:
     try:
         return await asyncio.to_thread(_stream_to_disk, stream, dest, limit)
     except OSError as exc:
@@ -127,7 +134,7 @@ async def create_file(
     db: AsyncSession,
     uploader_id: int,
     info: FileCreate,
-    stream,
+    stream: _Readable,
     max_bytes: int | None = None,
 ) -> FileInfo:
     """把上传流分块落盘并登记元数据。

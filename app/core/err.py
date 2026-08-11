@@ -13,6 +13,9 @@ from app.modules.common import ApiResp
 class Namespace:
     """Error-code namespace: encodes ns_id<<16 | local so modules stay collision-free."""
 
+    ns_id: int
+    prefix: str
+
     def __init__(self, ns_id: int, prefix: str):
         self.ns_id = ns_id
         self.prefix = prefix
@@ -62,6 +65,9 @@ register(
 
 
 class BizError(Exception):
+    errcode: ErrCode
+    detail: str
+
     def __init__(self, errcode: ErrCode, detail: str | None = None):
         self.errcode = errcode
         self.detail = detail or ERRTABLE[errcode][1]

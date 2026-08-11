@@ -35,14 +35,14 @@ include = ["app"]
 typeCheckingMode = "standard"
 # @respond 依赖 async/sync 联合分派的 overload，overlap 是设计预期
 reportOverlappingOverload = false
-reportUnknownArgumentType = false
-reportUnknownParameterType = false
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownLambdaType = false
-reportMissingParameterType = false
+reportUnknownArgumentType = true
+reportUnknownParameterType = true
+reportUnknownVariableType = true
+reportUnknownMemberType = true
+reportUnknownLambdaType = true
+reportMissingParameterType = true
 reportMissingTypeStubs = false
-reportUnannotatedClassAttribute = false
+reportUnannotatedClassAttribute = true
 reportUnusedCallResult = false
 reportUnusedImport = false
 

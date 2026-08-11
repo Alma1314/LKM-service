@@ -1,6 +1,6 @@
 import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from typing import Any
+from typing import Any, ClassVar
 
 from app.modules.auth.schemas import ProfileInfo
 from app.modules.blog.models import BlogSeriesStatus
@@ -37,7 +37,7 @@ class BlogStarStatus(BaseModel):
 
 
 class BlogSeriesInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     id: int
     owner_id: int
@@ -53,7 +53,7 @@ class BlogSeriesInfo(BaseModel):
 
 
 class BlogSeriesDetail(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     id: int
     owner_id: int
@@ -70,7 +70,7 @@ class BlogSeriesDetail(BaseModel):
 
 
 class BlogCommentInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     id: int
     user_id: int

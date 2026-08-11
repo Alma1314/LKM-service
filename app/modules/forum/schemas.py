@@ -1,6 +1,6 @@
 import datetime
 import json
-from typing import Any, Generic, TypeVar, cast
+from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -15,7 +15,7 @@ class PostCreate(BaseModel):
 
 
 class PostInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     id: int
     title: str
@@ -51,7 +51,7 @@ class CommentCreate(BaseModel):
 
 
 class CommentInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     id: int
     post_id: int

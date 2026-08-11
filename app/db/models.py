@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, TypeDecorator
+from sqlalchemy.engine import Dialect
+from sqlalchemy.types import TypeEngine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from app.modules.blog.models import BlogSeriesStatus
 from app.modules.columns.models import ColumnApplicationStatus, ColumnPostStatus, ColumnStatus
@@ -43,11 +45,11 @@ class UTCDateTime(TypeDecorator):
     "offset-naive vs offset-aware" 问题影响（Postgres 本就返回 aware，直接透传）。
     """
 
-    impl = DateTime(timezone=True)
-    cache_ok = True
+    impl: TypeEngine[Any] | type[TypeEngine[Any]] = DateTime(timezone=True)
+    cache_ok: bool | None = True
 
     def process_result_value(
-        self, value: datetime.datetime | None, dialect
+        self, value: datetime.datetime | None, dialect: Dialect
     ) -> datetime.datetime | None:
         if value is not None and value.tzinfo is None:
             return value.replace(tzinfo=datetime.timezone.utc)
@@ -55,7 +57,7 @@ class UTCDateTime(TypeDecorator):
 
 
 class User(Base):
-    __tablename__ = "users"
+    __tablename__: str = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
@@ -96,7 +98,7 @@ class User(Base):
 
 
 class Profile(Base):
-    __tablename__ = "profiles"
+    __tablename__: str = "profiles"
 
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id"), primary_key=True
@@ -110,7 +112,7 @@ class Profile(Base):
 
 
 class ColumnApplication(Base):
-    __tablename__ = "column_applications"
+    __tablename__: str = "column_applications"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
@@ -140,7 +142,7 @@ class ColumnApplication(Base):
 
 
 class Column(Base):
-    __tablename__ = "columns"
+    __tablename__: str = "columns"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
@@ -168,7 +170,7 @@ class Column(Base):
 
 
 class ColumnPost(Base):
-    __tablename__ = "column_posts"
+    __tablename__: str = "column_posts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     column_id: Mapped[int] = mapped_column(ForeignKey("columns.id"), nullable=False)
@@ -194,7 +196,7 @@ class ColumnPost(Base):
 
 
 class ForumPost(Base):
-    __tablename__ = "forum_posts"
+    __tablename__: str = "forum_posts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
@@ -224,7 +226,7 @@ class ForumPost(Base):
 
 
 class ForumComment(Base):
-    __tablename__ = "forum_comments"
+    __tablename__: str = "forum_comments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     post_id: Mapped[int] = mapped_column(ForeignKey("forum_posts.id"), nullable=False)
@@ -250,7 +252,7 @@ class ForumComment(Base):
 
 
 class LibraryFile(Base):
-    __tablename__ = "library_files"
+    __tablename__: str = "library_files"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     uploader_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
@@ -273,7 +275,7 @@ class LibraryFile(Base):
 
 
 class BlogSeries(Base):
-    __tablename__ = "blog_series"
+    __tablename__: str = "blog_series"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
@@ -301,7 +303,7 @@ class BlogSeries(Base):
 
 
 class BlogStar(Base):
-    __tablename__ = "blog_stars"
+    __tablename__: str = "blog_stars"
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
     series_id: Mapped[int] = mapped_column(ForeignKey("blog_series.id"), primary_key=True)
@@ -314,7 +316,7 @@ class BlogStar(Base):
 
 
 class BlogComment(Base):
-    __tablename__ = "blog_comments"
+    __tablename__: str = "blog_comments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)

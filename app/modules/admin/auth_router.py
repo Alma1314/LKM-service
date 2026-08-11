@@ -8,8 +8,10 @@
     因此这些端点直接构造 resp_json(...) 返回的 JSONResponse 并在其上 set_cookie/delete_cookie。
 """
 import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +19,7 @@ from app.core.err import CommonErr, respond, resp_json
 from app.core.config import settings
 from app.db.models import User, now_iso
 from app.db.session import get_session
+from app.modules.auth.deps import CurrentUser
 from app.modules.auth.models import RefreshToken
 from app.modules.auth.security import verifypwd
 from app.modules.auth.service_auth import _generate_refresh_token, _hash_refresh_token
@@ -37,7 +40,7 @@ router = APIRouter(prefix="/admin", tags=["admin-auth"])
 REFRESH_TOKEN_DAYS = 7
 
 
-def _set_access_cookie(resp, token: str) -> None:
+def _set_access_cookie(resp: Response, token: str) -> None:
     resp.set_cookie(
         key=COOKIE_NAME,
         value=token,
@@ -49,7 +52,7 @@ def _set_access_cookie(resp, token: str) -> None:
     )
 
 
-def _set_refresh_cookie(resp, token: str) -> None:
+def _set_refresh_cookie(resp: Response, token: str) -> None:
     resp.set_cookie(
         key=REFRESH_NAME,
         value=token,
@@ -61,12 +64,12 @@ def _set_refresh_cookie(resp, token: str) -> None:
     )
 
 
-def _clear_cookies(resp) -> None:
+def _clear_cookies(resp: Response) -> None:
     resp.delete_cookie(COOKIE_NAME, path=COOKIE_PATH)
     resp.delete_cookie(REFRESH_NAME, path=COOKIE_PATH)
 
 
-def _admin_user_payload(user: User) -> dict:
+def _admin_user_payload(user: User) -> dict[str, Any]:
     return AdminUserOut.model_validate(user).model_dump(mode="json")
 
 
@@ -216,7 +219,7 @@ async def admin_logout(
 
 @router.get("/auth/me")
 @respond
-async def admin_me(cur=require_admin):
+async def admin_me(cur: CurrentUser = require_admin) -> dict[str, int | str]:
     """当前后台登录态（需有效 admin access cookie），供前端 bootAdminSession 使用。"""
     return {
         "id": cur.id,

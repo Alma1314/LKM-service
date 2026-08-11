@@ -1,4 +1,5 @@
 import datetime
+from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -15,7 +16,7 @@ class AdminLoginReq(BaseModel):
 class AdminUserOut(BaseModel):
     """后台返回的管理员自身信息。仅暴露登录所需的少量字段，不含敏感 PII。"""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     id: int
     username: str

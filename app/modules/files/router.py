@@ -53,7 +53,7 @@ async def upload_file(
     db: AsyncSession = Depends(get_session),
 ):
     try:
-        tags_list = json.loads(tags) if tags else []
+        tags_list: list[str] = json.loads(tags) if tags else []
     except json.JSONDecodeError:
         tags_list = []
 

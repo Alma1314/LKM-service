@@ -1,7 +1,7 @@
 import datetime
 import enum
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, ClassVar
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field
 
@@ -21,7 +21,7 @@ Password = Annotated[str, AfterValidator(_validate_password)]
 
 
 class ProfileInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     nickname: str | None = None
     avatar: str | None = None

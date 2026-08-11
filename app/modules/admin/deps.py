@@ -8,6 +8,7 @@
 权限单一事实源在此：能进后台 = 持有有效后台 access cookie 且 account_level == "admin"。
 """
 import datetime
+from typing import Any
 
 import jwt
 from fastapi import Depends, Request
@@ -38,7 +39,8 @@ def create_admin_access_token(user: User) -> str:
     """签发后台 access token（15min）。独立 payload + type=admin + 专属 audience。
     token_version 编入 payload：改密/登出提升版本号后旧 cookie 立即失效（与前台上前台逻辑一致）。"""
     now = datetime.datetime.now(datetime.timezone.utc)
-    payload = {
+    # payload 元素类型混杂（str/int/bool），用 object 收窄容器泛型，避免 Unknown
+    payload: dict[str, object] = {
         "sub": str(user.id),
         "account_level": str(user.account_level),
         "type": "admin",
@@ -50,7 +52,7 @@ def create_admin_access_token(user: User) -> str:
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def _decode_admin_access(token: str) -> dict:
+def _decode_admin_access(token: str) -> dict[str, Any]:
     try:
         payload = jwt.decode(
             token, settings.jwt_secret, algorithms=[settings.jwt_algorithm], audience=_ADMIN_AUD
