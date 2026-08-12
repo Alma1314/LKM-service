@@ -3,9 +3,11 @@
 import datetime as dt
 import hashlib
 import secrets
+from typing import cast
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
 from app.modules.auth.errors import AuthErr
@@ -20,8 +22,8 @@ def _service():
     return service_auth
 
 
-async def _create_user(db, username="alice", email="alice@example.com",
-                       password="secret123456", account_level="normal"):
+async def _create_user(db: AsyncSession, username: str = "alice", email: str = "alice@example.com",
+                       password: str = "secret123456", account_level: str = "normal") -> User:
     """Create a user with the given parameters and return it."""
     from app.modules.auth.security import hashpwd
     from app.db.models import Profile
@@ -39,7 +41,8 @@ async def _create_user(db, username="alice", email="alice@example.com",
     return user
 
 
-async def _make_magic_link(db, email, purpose="login", used=False, expired=False):
+async def _make_magic_link(db: AsyncSession, email: str, purpose: str = "login",
+                           used: bool = False, expired: bool = False) -> tuple[str, MagicLink]:
     """Create a MagicLink record and return (raw_token, record)."""
     raw_token = secrets.token_hex(32)
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
@@ -62,7 +65,7 @@ async def _make_magic_link(db, email, purpose="login", used=False, expired=False
 
 
 class TestRequestMagicLink:
-    async def should_persist_magic_link_record(self, db):
+    async def should_persist_magic_link_record(self, db: AsyncSession):
         await _create_user(db, username="testuser", email="test@example.com")
         svc = _service()
         await svc.request_magic_link(
@@ -77,7 +80,7 @@ class TestRequestMagicLink:
         assert record.used is False
         assert len(record.token_hash) == 64  # SHA-256 hex
 
-    async def should_store_different_tokens_for_repeated_requests(self, db):
+    async def should_store_different_tokens_for_repeated_requests(self, db: AsyncSession):
         await _create_user(db, username="user_a", email="a@b.com")
         svc = _service()
 
@@ -90,7 +93,7 @@ class TestRequestMagicLink:
 
 
 class TestVerifyMagicLink:
-    async def should_return_auth_tokens_on_valid_link(self, db):
+    async def should_return_auth_tokens_on_valid_link(self, db: AsyncSession):
         await _create_user(db, email="alice@example.com")
         raw_token, _ = await _make_magic_link(db, "alice@example.com")
 
@@ -103,7 +106,7 @@ class TestVerifyMagicLink:
         assert result["account_level"] == "normal"
         assert result["requires_2fa"] is False
 
-    async def should_mark_link_as_used_after_success(self, db):
+    async def should_mark_link_as_used_after_success(self, db: AsyncSession):
         await _create_user(db, email="alice@example.com")
         raw_token, record = await _make_magic_link(db, "alice@example.com")
 
@@ -112,10 +115,10 @@ class TestVerifyMagicLink:
 
         record_id = record.id  # snapshot before expiring the session
         db.expire_all()
-        updated = (await db.execute(select(MagicLink).where(MagicLink.id == record_id))).scalars().first()
+        updated = cast(MagicLink, (await db.execute(select(MagicLink).where(MagicLink.id == record_id))).scalars().first())
         assert updated.used is True
 
-    async def should_reject_expired_magic_link(self, db):
+    async def should_reject_expired_magic_link(self, db: AsyncSession):
         await _create_user(db, email="alice@example.com")
         raw_token, _ = await _make_magic_link(db, "alice@example.com", expired=True)
 
@@ -124,7 +127,7 @@ class TestVerifyMagicLink:
             await svc.verify_magic_link(db, raw_token, purpose="login")
         assert exc.value.errcode == AuthErr.TOKEN_EXPIRED
 
-    async def should_reject_already_used_magic_link(self, db):
+    async def should_reject_already_used_magic_link(self, db: AsyncSession):
         await _create_user(db, email="alice@example.com")
         raw_token, _ = await _make_magic_link(db, "alice@example.com", used=True)
 
@@ -133,7 +136,7 @@ class TestVerifyMagicLink:
             await svc.verify_magic_link(db, raw_token, purpose="login")
         assert exc.value.errcode == AuthErr.TOKEN_INVALID
 
-    async def should_reject_local_user(self, db):
+    async def should_reject_local_user(self, db: AsyncSession):
         await _create_user(db, email="bob@local.com", account_level="local")
         raw_token, _ = await _make_magic_link(db, "bob@local.com")
 
@@ -142,7 +145,7 @@ class TestVerifyMagicLink:
             await svc.verify_magic_link(db, raw_token, purpose="login")
         assert exc.value.errcode == AuthErr.ACCOUNT_LEVEL_INSUFFICIENT
 
-    async def should_reject_purpose_mismatch(self, db):
+    async def should_reject_purpose_mismatch(self, db: AsyncSession):
         await _create_user(db, email="alice@example.com")
         raw_token, _ = await _make_magic_link(db, "alice@example.com", purpose="login")
 
@@ -151,13 +154,13 @@ class TestVerifyMagicLink:
             await svc.verify_magic_link(db, raw_token, purpose="reset")
         assert exc.value.errcode == AuthErr.TOKEN_INVALID
 
-    async def should_reject_unknown_token(self, db):
+    async def should_reject_unknown_token(self, db: AsyncSession):
         svc = _service()
         with pytest.raises(BizError) as exc:
             await svc.verify_magic_link(db, "nonexistent-token", purpose="login")
         assert exc.value.errcode == AuthErr.TOKEN_INVALID
 
-    async def should_reject_missing_user(self, db):
+    async def should_reject_missing_user(self, db: AsyncSession):
         # No user created for this email
         raw_token, _ = await _make_magic_link(db, "no-user@example.com")
 
@@ -166,7 +169,7 @@ class TestVerifyMagicLink:
             await svc.verify_magic_link(db, raw_token, purpose="login")
         assert exc.value.errcode == AuthErr.USER_NOT_FOUND
 
-    async def should_reject_admin_without_totp(self, db):
+    async def should_reject_admin_without_totp(self, db: AsyncSession):
         await _create_user(db, email="admin@example.com", account_level="admin")
         raw_token, _ = await _make_magic_link(db, "admin@example.com")
 
@@ -175,7 +178,7 @@ class TestVerifyMagicLink:
             await svc.verify_magic_link(db, raw_token, purpose="login")
         assert exc.value.errcode == AuthErr.TOTP_SETUP_REQUIRED
 
-    async def should_return_temp_token_when_2fa_required(self, db):
+    async def should_return_temp_token_when_2fa_required(self, db: AsyncSession):
         user = await _create_user(db, email="secure@example.com", account_level="normal")
         # enable TOTP
         totp = TOTP(user_id=user.id, secret="MZXW6YTBOJQXI33F", enabled=True)

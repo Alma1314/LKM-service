@@ -1,4 +1,8 @@
+from typing import Any
+
 import pytest
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr
 from app.modules.columns.errors import ColumnErr
@@ -6,8 +10,10 @@ from app.db.models import Base, User
 from app.modules.columns.models import ColumnApplicationStatus
 from app.modules.columns.schemas import (
     ColumnApplicationCreate,
+    ColumnApplicationInfo,
     ColumnApplicationReview,
     ColumnPostCreate,
+    ColumnPostInfo,
 )
 from app.modules.columns.service import (
     create_application,
@@ -27,7 +33,9 @@ from app.modules.auth.security import create_access_token, hashpwd
 # db 与 client fixture 均由 tests/conftest.py 提供（内存 sqlite 会话 + httpx.AsyncClient）
 
 
-async def _user(db, username="alice", email="alice@example.com"):
+async def _user(
+    db: AsyncSession, username: str = "alice", email: str = "alice@example.com"
+) -> int:
     from app.db.models import User, Profile
     user = User(
         username=username, email=email,
@@ -40,7 +48,7 @@ async def _user(db, username="alice", email="alice@example.com"):
     return user.id
 
 
-async def _application(db, user_id=1):
+async def _application(db: AsyncSession, user_id: int = 1) -> ColumnApplicationInfo:
     return await create_application(
         db,
         ColumnApplicationCreate(
@@ -52,9 +60,9 @@ async def _application(db, user_id=1):
     )
 
 
-async def _approved_column(db, user_id=1):
+async def _approved_column(db: AsyncSession, user_id: int = 1) -> dict[str, Any]:
     application = await _application(db, user_id=user_id)
-    result = await review_application(
+    result: dict[str, Any] = await review_application(
         db,
         application.id,
         ColumnApplicationReview(
@@ -66,7 +74,9 @@ async def _approved_column(db, user_id=1):
     return result["column"]
 
 
-async def _post(db, column_id=1, author_id=1):
+async def _post(
+    db: AsyncSession, column_id: int = 1, author_id: int = 1
+) -> ColumnPostInfo:
     return await create_post(
         db,
         column_id,
@@ -80,7 +90,7 @@ async def _post(db, column_id=1, author_id=1):
 
 
 class TestColumnApplications:
-    async def should_create_application(self, db):
+    async def should_create_application(self, db: AsyncSession):
         user_id = await _user(db)
 
         application = await _application(db, user_id=user_id)
@@ -89,7 +99,7 @@ class TestColumnApplications:
         assert application.user_id == user_id
         assert application.status == ColumnApplicationStatus.PENDING
 
-    async def should_list_applications(self, db):
+    async def should_list_applications(self, db: AsyncSession):
         user_id = await _user(db)
         await _application(db, user_id=user_id)
 
@@ -98,7 +108,7 @@ class TestColumnApplications:
         assert len(applications) == 1
         assert applications[0].title == "数学思维训练"
 
-    async def should_get_application(self, db):
+    async def should_get_application(self, db: AsyncSession):
         user_id = await _user(db)
         application = await _application(db, user_id=user_id)
 
@@ -106,7 +116,7 @@ class TestColumnApplications:
 
         assert found.id == application.id
 
-    async def should_reject_nonexistent_application(self, db):
+    async def should_reject_nonexistent_application(self, db: AsyncSession):
         with pytest.raises(BizError) as exc:
             await get_application(db, 999)
 
@@ -114,11 +124,11 @@ class TestColumnApplications:
 
 
 class TestColumnReview:
-    async def should_create_column_when_application_is_approved(self, db):
+    async def should_create_column_when_application_is_approved(self, db: AsyncSession):
         user_id = await _user(db)
         application = await _application(db, user_id=user_id)
 
-        result = await review_application(
+        result: dict[str, Any] = await review_application(
             db,
             application.id,
             ColumnApplicationReview(
@@ -132,11 +142,11 @@ class TestColumnReview:
         assert result["column"]["owner_id"] == user_id
         assert result["column"]["application_id"] == application.id
 
-    async def should_not_create_column_when_application_is_rejected(self, db):
+    async def should_not_create_column_when_application_is_rejected(self, db: AsyncSession):
         user_id = await _user(db)
         application = await _application(db, user_id=user_id)
 
-        result = await review_application(
+        result: dict[str, Any] = await review_application(
             db,
             application.id,
             ColumnApplicationReview(
@@ -150,7 +160,7 @@ class TestColumnReview:
         assert result["column"] is None
         assert await list_columns(db) == []
 
-    async def should_not_duplicate_column_when_approving_twice(self, db):
+    async def should_not_duplicate_column_when_approving_twice(self, db: AsyncSession):
         user_id = await _user(db)
         application = await _application(db, user_id=user_id)
         review = ColumnApplicationReview(
@@ -158,15 +168,15 @@ class TestColumnReview:
             status=ColumnApplicationStatus.APPROVED,
         )
 
-        first = await review_application(db, application.id, review)
-        second = await review_application(db, application.id, review)
+        first: dict[str, Any] = await review_application(db, application.id, review)
+        second: dict[str, Any] = await review_application(db, application.id, review)
 
         assert first["column"]["id"] == second["column"]["id"]
         assert len(await list_columns(db)) == 1
 
 
 class TestColumns:
-    async def should_list_columns(self, db):
+    async def should_list_columns(self, db: AsyncSession):
         user_id = await _user(db)
         await _approved_column(db, user_id=user_id)
 
@@ -175,7 +185,7 @@ class TestColumns:
         assert len(columns) == 1
         assert columns[0].title == "数学思维训练"
 
-    async def should_get_column(self, db):
+    async def should_get_column(self, db: AsyncSession):
         user_id = await _user(db)
         column = await _approved_column(db, user_id=user_id)
 
@@ -183,7 +193,7 @@ class TestColumns:
 
         assert found.id == column["id"]
 
-    async def should_reject_nonexistent_column(self, db):
+    async def should_reject_nonexistent_column(self, db: AsyncSession):
         with pytest.raises(BizError) as exc:
             await get_column(db, 999)
 
@@ -191,7 +201,7 @@ class TestColumns:
 
 
 class TestColumnPosts:
-    async def should_create_post(self, db):
+    async def should_create_post(self, db: AsyncSession):
         user_id = await _user(db)
         column = await _approved_column(db, user_id=user_id)
 
@@ -202,7 +212,7 @@ class TestColumnPosts:
         assert post.author_id == user_id
         assert post.status == "published"
 
-    async def should_list_posts_under_column(self, db):
+    async def should_list_posts_under_column(self, db: AsyncSession):
         user_id = await _user(db)
         column = await _approved_column(db, user_id=user_id)
         await _post(db, column_id=column["id"], author_id=user_id)
@@ -212,7 +222,7 @@ class TestColumnPosts:
         assert len(posts) == 1
         assert posts[0].title == "如何建立函数思想"
 
-    async def should_get_post_with_column_scope(self, db):
+    async def should_get_post_with_column_scope(self, db: AsyncSession):
         user_id = await _user(db)
         column = await _approved_column(db, user_id=user_id)
         post = await _post(db, column_id=column["id"], author_id=user_id)
@@ -221,7 +231,7 @@ class TestColumnPosts:
 
         assert found.id == post.id
 
-    async def should_reject_post_from_wrong_column_scope(self, db):
+    async def should_reject_post_from_wrong_column_scope(self, db: AsyncSession):
         user_id = await _user(db)
         column = await _approved_column(db, user_id=user_id)
         post = await _post(db, column_id=column["id"], author_id=user_id)
@@ -231,7 +241,7 @@ class TestColumnPosts:
 
         assert exc.value.errcode == ColumnErr.POST_NOT_FOUND
 
-    async def should_reject_post_for_nonexistent_column(self, db):
+    async def should_reject_post_for_nonexistent_column(self, db: AsyncSession):
         user_id = await _user(db)
 
         with pytest.raises(BizError) as exc:
@@ -239,15 +249,19 @@ class TestColumnPosts:
 
         assert exc.value.errcode == ColumnErr.NOT_FOUND
 class TestColumnRoutes:
-    async def _setup_user(self, db):
+    async def _setup_user(
+        self, db: AsyncSession
+    ) -> tuple[int, str]:
         """Create a user in DB and return (user_id, bearer_token)."""
         user_id = await _user(db, username="testuser", email="test@example.com")
         token = create_access_token(user_id=user_id, account_level="normal", role="member")
         return user_id, token
 
-    async def should_reject_application_without_auth_header(self, client, db):
+    async def should_reject_application_without_auth_header(
+        self, client: AsyncClient, db: AsyncSession
+    ) -> None:
         await self._setup_user(db)
-        application_data = {
+        application_data: dict[str, Any] = {
             "user_id": 1,
             "title": "数学思维训练",
             "description": "面向高中生的数学思维和解题方法专栏。",
@@ -261,7 +275,9 @@ class TestColumnRoutes:
         assert response.status_code == 403
         assert response.json()["code"] == CommonErr.FORBIDDEN
 
-    async def should_reject_application_when_token_user_mismatches_body_user(self, client, db):
+    async def should_reject_application_when_token_user_mismatches_body_user(
+        self, client: AsyncClient, db: AsyncSession
+    ) -> None:
         user_id_1, token = await self._setup_user(db)
         # Create a second user so token for user_id=2 is valid
         await _user(db, username="other", email="other@example.com")
@@ -280,7 +296,9 @@ class TestColumnRoutes:
         assert resp.status_code == 403
         assert resp.json()["code"] == CommonErr.FORBIDDEN
 
-    async def should_accept_application_when_token_user_matches_body_user(self, client, db):
+    async def should_accept_application_when_token_user_matches_body_user(
+        self, client: AsyncClient, db: AsyncSession
+    ) -> None:
         user_id, token = await self._setup_user(db)
         resp = await client.post(
             "/api/v1/columns/applications",

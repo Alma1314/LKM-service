@@ -15,6 +15,7 @@ from app.modules.auth.security import (
     decrypt_secret,
 )
 from app.core.config import settings
+from typing import Any
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +40,7 @@ class TestAccessToken:
     async def should_reject_expired_token(self):
         # Build an already-expired JWT manually
         now = int(time.time())
-        payload = {
+        payload: dict[str, Any] = {
             "user_id": 3,
             "account_level": "normal",
             "role": "member",

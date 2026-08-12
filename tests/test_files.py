@@ -1,9 +1,16 @@
+from collections.abc import AsyncGenerator
 import io
+import pathlib
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.pool import StaticPool
 
 import app.modules.auth.models  # noqa: F401 ensure auth tables registered
@@ -13,7 +20,7 @@ from app.db.models import Base, LibraryFile, Profile, User
 from app.db.session import get_session
 from app.main import app
 from app.modules.auth.security import create_access_token, hashpwd
-from app.modules.files.schemas import FileCreate
+from app.modules.files.schemas import FileCreate, FileInfo
 from app.modules.files.service import (
     bump_download,
     create_file,
@@ -23,8 +30,8 @@ from app.modules.files.service import (
 
 
 @pytest.fixture
-async def db():
-    engine = create_async_engine(
+async def db() -> AsyncGenerator[AsyncSession, None]:
+    engine: AsyncEngine = create_async_engine(
         "sqlite+aiosqlite://",
         poolclass=StaticPool,
     )
@@ -32,7 +39,7 @@ async def db():
         await conn.run_sync(Base.metadata.create_all)
 
     SessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
+    session: AsyncSession = SessionLocal()
     try:
         yield session
     finally:
@@ -41,12 +48,14 @@ async def db():
 
 
 @pytest.fixture
-async def client(db, tmp_path, monkeypatch):
+async def client(
+    db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> AsyncGenerator[AsyncClient, None]:
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
 
-    async def override_get_session():
+    async def override_get_session() -> AsyncGenerator[AsyncSession, None]:
         yield db
 
     app.dependency_overrides[get_session] = override_get_session
@@ -60,7 +69,12 @@ async def client(db, tmp_path, monkeypatch):
         app.dependency_overrides.pop(get_session, None)
 
 
-async def _user(db, username="alice", email="alice@example.com", nickname=None):
+async def _user(
+    db: AsyncSession,
+    username: str = "alice",
+    email: str = "alice@example.com",
+    nickname: str | None = None,
+) -> int:
     user = User(
         username=username,
         email=email,
@@ -74,7 +88,13 @@ async def _user(db, username="alice", email="alice@example.com", nickname=None):
     return user.id
 
 
-async def _file(db, uploader_id=1, original_name="讲义.pdf", category_id="math", tags=("数学",)):
+async def _file(
+    db: AsyncSession,
+    uploader_id: int = 1,
+    original_name: str = "讲义.pdf",
+    category_id: str = "math",
+    tags: tuple[str, ...] = ("数学",),
+) -> FileInfo:
     return await create_file(
         db,
         uploader_id,
@@ -90,7 +110,9 @@ async def _file(db, uploader_id=1, original_name="讲义.pdf", category_id="math
 
 
 class TestFilesService:
-    async def should_create_file_with_nickname(self, db, tmp_path, monkeypatch):
+    async def should_create_file_with_nickname(
+        self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
         from app.core.config import settings
 
         monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
@@ -108,7 +130,9 @@ class TestFilesService:
         stored = (await db.execute(select(LibraryFile).where(LibraryFile.id == f.id))).scalars().one()
         assert (tmp_path / stored.stored_name).read_bytes() == b"%PDF-1.4 fake content"
 
-    async def should_use_username_when_no_nickname(self, db, tmp_path, monkeypatch):
+    async def should_use_username_when_no_nickname(
+        self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
         from app.core.config import settings
 
         monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
@@ -118,7 +142,9 @@ class TestFilesService:
 
         assert f.uploader_name == "bob"
 
-    async def should_list_files_paginated(self, db, tmp_path, monkeypatch):
+    async def should_list_files_paginated(
+        self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
         from app.core.config import settings
 
         monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
@@ -133,7 +159,9 @@ class TestFilesService:
         assert len(page.items) == 1
         assert page.items[0].original_name == "文件二.pdf"
 
-    async def should_filter_files_by_category(self, db, tmp_path, monkeypatch):
+    async def should_filter_files_by_category(
+        self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
         from app.core.config import settings
 
         monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
@@ -146,7 +174,9 @@ class TestFilesService:
         assert page.total == 1
         assert page.items[0].category_id == "math"
 
-    async def should_sort_by_downloads(self, db, tmp_path, monkeypatch):
+    async def should_sort_by_downloads(
+        self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
         from app.core.config import settings
 
         monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
@@ -160,7 +190,9 @@ class TestFilesService:
 
         assert [f.original_name for f in page.items] == ["热门.zip", "冷门.pdf"]
 
-    async def should_get_file_and_bump_view(self, db, tmp_path, monkeypatch):
+    async def should_get_file_and_bump_view(
+        self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
         from app.core.config import settings
 
         monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
@@ -173,13 +205,15 @@ class TestFilesService:
         assert first.view_count == 1
         assert second.view_count == 2
 
-    async def should_reject_nonexistent_file(self, db):
+    async def should_reject_nonexistent_file(self, db: AsyncSession):
         with pytest.raises(BizError) as exc:
             await get_file(db, 999)
 
         assert exc.value.errcode == FileErr.NOT_FOUND
 
-    async def should_increment_download(self, db, tmp_path, monkeypatch):
+    async def should_increment_download(
+        self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
         from app.core.config import settings
 
         monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
@@ -189,7 +223,9 @@ class TestFilesService:
         assert await bump_download(db, f.id) == 1
         assert await bump_download(db, f.id) == 2
 
-    async def should_reject_upload_over_limit(self, db, tmp_path, monkeypatch):
+    async def should_reject_upload_over_limit(
+        self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
         from app.core.config import settings
 
         monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
@@ -208,7 +244,9 @@ class TestFilesService:
         assert len((await db.execute(select(LibraryFile))).scalars().all()) == 0
         assert list(tmp_path.iterdir()) == []
 
-    async def should_accept_upload_at_exact_limit(self, db, tmp_path, monkeypatch):
+    async def should_accept_upload_at_exact_limit(
+        self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
         from app.core.config import settings
 
         monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
@@ -226,12 +264,20 @@ class TestFilesService:
 
 
 class TestFilesRoutes:
-    async def _setup_user(self, db, username="tester", email="tester@example.com"):
+    async def _setup_user(
+        self, db: AsyncSession, username: str = "tester", email: str = "tester@example.com"
+    ) -> tuple[int, str]:
         user_id = await _user(db, username=username, email=email)
         token = create_access_token(user_id=user_id, account_level="normal", role="member")
         return user_id, token
 
-    async def _upload(self, client, token, original_name="讲义.pdf", category_id="math"):
+    async def _upload(
+        self,
+        client: AsyncClient,
+        token: str,
+        original_name: str = "讲义.pdf",
+        category_id: str = "math",
+    ):
         return await client.post(
             "/api/v1/files",
             headers={"Authorization": f"Bearer {token}"},
@@ -239,7 +285,7 @@ class TestFilesRoutes:
             data={"category_id": category_id, "description": "测试上传", "tags": '["数学"]'},
         )
 
-    async def should_reject_upload_without_auth(self, client, db):
+    async def should_reject_upload_without_auth(self, client: AsyncClient, db: AsyncSession):
         await self._setup_user(db)
         resp = await client.post(
             "/api/v1/files",
@@ -249,7 +295,7 @@ class TestFilesRoutes:
         assert resp.status_code == 403
         assert resp.json()["code"] == CommonErr.FORBIDDEN
 
-    async def should_upload_file_with_token(self, client, db):
+    async def should_upload_file_with_token(self, client: AsyncClient, db: AsyncSession):
         user_id, token = await self._setup_user(db)
         resp = await self._upload(client, token)
 
@@ -263,7 +309,7 @@ class TestFilesRoutes:
         assert data["status"] == "pending"
         assert data["tags"] == ["数学"]
 
-    async def should_list_files_publicly(self, client, db):
+    async def should_list_files_publicly(self, client: AsyncClient, db: AsyncSession):
         _, token = await self._setup_user(db)
         await self._upload(client, token, original_name="公开资料.zip")
 
@@ -274,7 +320,7 @@ class TestFilesRoutes:
         assert data["total"] == 1
         assert data["items"][0]["original_name"] == "公开资料.zip"
 
-    async def should_get_file_detail(self, client, db):
+    async def should_get_file_detail(self, client: AsyncClient, db: AsyncSession):
         _, token = await self._setup_user(db)
         created = (await self._upload(client, token)).json()["data"]
         file_id = created["id"]
@@ -284,7 +330,7 @@ class TestFilesRoutes:
         assert resp.status_code == 200
         assert resp.json()["data"]["view_count"] == 1
 
-    async def should_increment_download_through_api(self, client, db):
+    async def should_increment_download_through_api(self, client: AsyncClient, db: AsyncSession):
         _, token = await self._setup_user(db)
         created = (await self._upload(client, token)).json()["data"]
         file_id = created["id"]
@@ -297,13 +343,15 @@ class TestFilesRoutes:
         assert resp.status_code == 200
         assert resp.json()["data"]["download_count"] == 1
 
-    async def should_reject_nonexistent_file_detail(self, client, db):
+    async def should_reject_nonexistent_file_detail(self, client: AsyncClient, db: AsyncSession):
         resp = await client.get("/api/v1/files/999")
 
         assert resp.status_code == 404
         assert resp.json()["code"] == FileErr.NOT_FOUND
 
-    async def should_reject_oversized_upload_through_api(self, client, db, tmp_path, monkeypatch):
+    async def should_reject_oversized_upload_through_api(
+        self, client: AsyncClient, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
         from app.core.config import settings
 
         monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
@@ -320,7 +368,9 @@ class TestFilesRoutes:
         assert resp.json()["code"] == FileErr.TOO_LARGE
         assert list(tmp_path.iterdir()) == []
 
-    async def should_not_persist_record_when_storage_fails(self, db, tmp_path, monkeypatch):
+    async def should_not_persist_record_when_storage_fails(
+        self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
         from app.core.config import settings
 
         store = tmp_path / "store"

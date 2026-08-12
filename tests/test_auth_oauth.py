@@ -1,6 +1,9 @@
 """Tests for Github OAuth — service_oauth auth URL generation and callback logic."""
+from typing import Any
+
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
 from app.core.config import settings
@@ -8,32 +11,32 @@ from app.modules.auth.models import OAuthState
 
 
 class TestGithubAuthUrl:
-    async def should_contain_github_authorize_url(self, db):
+    async def should_contain_github_authorize_url(self, db: AsyncSession):
         from app.modules.auth.service_oauth import get_github_auth_url
 
         url = await get_github_auth_url(db)
         assert "github.com/login/oauth/authorize" in url
 
-    async def should_contain_client_id(self, db):
+    async def should_contain_client_id(self, db: AsyncSession):
         from app.modules.auth.service_oauth import get_github_auth_url
 
         url = await get_github_auth_url(db)
         assert f"client_id={settings.github_client_id}" in url
 
-    async def should_contain_user_email_scope(self, db):
+    async def should_contain_user_email_scope(self, db: AsyncSession):
         from app.modules.auth.service_oauth import get_github_auth_url
 
         url = await get_github_auth_url(db)
         assert "scope=user" in url
         assert "email" in url
 
-    async def should_contain_redirect_uri(self, db):
+    async def should_contain_redirect_uri(self, db: AsyncSession):
         from app.modules.auth.service_oauth import get_github_auth_url
 
         url = await get_github_auth_url(db)
         assert "redirect_uri=" in url
 
-    async def should_generate_server_state_token(self, db):
+    async def should_generate_server_state_token(self, db: AsyncSession):
         from app.modules.auth.service_oauth import get_github_auth_url
 
         url = await get_github_auth_url(db)
@@ -48,7 +51,7 @@ class TestGithubAuthUrl:
 
 
 class TestOAuthState:
-    async def should_store_and_consume_state(self, db):
+    async def should_store_and_consume_state(self, db: AsyncSession):
         from app.modules.auth.service_oauth import _generate_oauth_state, _consume_oauth_state
 
         state = await _generate_oauth_state(db, "login")
@@ -62,7 +65,7 @@ class TestOAuthState:
         await db.refresh(records[0])
         assert records[0].consumed
 
-    async def should_reject_already_consumed_state(self, db):
+    async def should_reject_already_consumed_state(self, db: AsyncSession):
         from app.modules.auth.service_oauth import _generate_oauth_state, _consume_oauth_state
         from app.core.err import BizError
 
@@ -72,7 +75,7 @@ class TestOAuthState:
         with pytest.raises(BizError):
             await _consume_oauth_state(db, state, "login")
 
-    async def should_reject_wrong_purpose(self, db):
+    async def should_reject_wrong_purpose(self, db: AsyncSession):
         from app.modules.auth.service_oauth import _generate_oauth_state, _consume_oauth_state
         from app.core.err import BizError
 
@@ -84,14 +87,14 @@ class TestOAuthState:
 class TestOauthRouterRedirect:
     """Github callback 重定向到前端（302）—— 携带令牌 / temp_token / 绑定结果。"""
 
-    async def should_redirect_login_callback_with_tokens(self, db):
+    async def should_redirect_login_callback_with_tokens(self, db: AsyncSession):
         from unittest.mock import AsyncMock, patch
         from fastapi.responses import RedirectResponse
         from urllib.parse import parse_qs, urlparse
 
         from app.modules.auth import router_oauth
 
-        payload = {
+        payload: dict[str, Any] = {
             "access_token": "acc123",
             "refresh_token": "ref123",
             "temp_token": None,
@@ -116,14 +119,14 @@ class TestOauthRouterRedirect:
         assert qs["refresh_token"] == ["ref123"]
         assert "temp_token" not in qs
 
-    async def should_redirect_login_callback_with_temp_token_when_2fa(self, db):
+    async def should_redirect_login_callback_with_temp_token_when_2fa(self, db: AsyncSession):
         from unittest.mock import AsyncMock, patch
         from fastapi.responses import RedirectResponse
         from urllib.parse import parse_qs, urlparse
 
         from app.modules.auth import router_oauth
 
-        payload = {
+        payload: dict[str, Any] = {
             "access_token": None,
             "refresh_token": None,
             "temp_token": "tmp999",
@@ -145,7 +148,7 @@ class TestOauthRouterRedirect:
         assert qs["requires_2fa"] == ["true"]
         assert "access_token" not in qs
 
-    async def should_redirect_bind_callback_on_success(self, db):
+    async def should_redirect_bind_callback_on_success(self, db: AsyncSession):
         from unittest.mock import AsyncMock, patch
         from fastapi.responses import RedirectResponse
         from urllib.parse import parse_qs, urlparse
@@ -164,7 +167,7 @@ class TestOauthRouterRedirect:
         qs = parse_qs(urlparse(resp.headers["location"]).fragment)
         assert qs["success"] == ["1"]
 
-    async def should_redirect_bind_callback_on_biz_error(self, db):
+    async def should_redirect_bind_callback_on_biz_error(self, db: AsyncSession):
         from unittest.mock import AsyncMock, patch
         from fastapi.responses import RedirectResponse
         from urllib.parse import parse_qs, urlparse
@@ -173,7 +176,7 @@ class TestOauthRouterRedirect:
         from app.modules.auth import router_oauth
         from app.modules.auth.errors import AuthErr
 
-        async def _boom(db, code, state):
+        async def _boom(db: AsyncSession, code: str, state: str) -> None:
             raise BizError(AuthErr.OAUTH_EMAIL_TAKEN)
 
         with patch.object(router_oauth.service_oauth, "bind_github", new=_boom):

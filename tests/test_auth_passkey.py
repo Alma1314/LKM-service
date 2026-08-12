@@ -5,12 +5,15 @@ import json
 import base64
 import struct
 import os
+from typing import Any, TypeVar, cast
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
 from app.core.err import BizError
 from app.modules.auth.errors import AuthErr
@@ -31,11 +34,11 @@ def _b64decode(s: str) -> bytes:
 # ---- crypto helpers for creating valid WebAuthn assertions ---------
 
 
-def _generate_ec_key():
+def _generate_ec_key() -> EllipticCurvePrivateKey:
     return ec.generate_private_key(ec.SECP256R1())
 
 
-def _public_key_bytes(key) -> bytes:
+def _public_key_bytes(key: EllipticCurvePrivateKey) -> bytes:
     """Uncompressed point: 0x04 || x || y."""
     nums = key.private_numbers().public_numbers
     return b"\x04" + nums.x.to_bytes(32, "big") + nums.y.to_bytes(32, "big")
@@ -47,7 +50,7 @@ def _make_authenticator_data(rp_id: str, sign_count: int, flags: int = 0x01) -> 
     return rp_id_hash + bytes([flags]) + struct.pack(">I", sign_count)
 
 
-def _sign_assertion(key, auth_data: bytes, client_data_json_b64: str) -> bytes:
+def _sign_assertion(key: EllipticCurvePrivateKey, auth_data: bytes, client_data_json_b64: str) -> bytes:
     """Sign assertion payload: authData || SHA-256(clientDataJSON).
 
     Returns a raw 64-byte (r||s) signature in WebAuthn format.
@@ -71,26 +74,28 @@ def _service():
     return service_passkey
 
 
-async def _reg_local(db, username="alice", password="secret123456"):
+async def _reg_local(db: AsyncSession, username: str = "alice", password: str = "secret123456") -> dict[str, Any]:
     from app.modules.auth.schemas import UserRegLocal
     from app.modules.auth.service_auth import register_local
     return await register_local(db, UserRegLocal(username=username, password=password))
 
 
-async def _reg_normal(db, username="bob", email="bob@test.com", password="secret123456"):
+async def _reg_normal(db: AsyncSession, username: str = "bob", email: str = "bob@test.com",
+                      password: str = "secret123456"):
     """Register a normal user and make sure account_level is normal."""
     from app.db.models import User
     from app.modules.auth.schemas import UserRegLocal
     from app.modules.auth.service_auth import register_local
-    result = await register_local(db, UserRegLocal(username=username, password=password))
-    user = (await db.execute(select(User).where(User.id == result["user_id"]))).scalars().first()
+    result: dict[str, Any] = await register_local(db, UserRegLocal(username=username, password=password))
+    user = cast(User, (await db.execute(select(User).where(User.id == result["user_id"]))).scalars().first())
     user.account_level = "normal"
     user.email = email
     await db.flush()
     return user
 
 
-async def _register_passkey(db, user_id, credential_id, device_name="TestKey", key=None):
+async def _register_passkey(db: AsyncSession, user_id: int, credential_id: str,
+                            device_name: str = "TestKey", key: EllipticCurvePrivateKey | None = None):
     """Helper: directly insert a PasskeyCredential with a valid EC key."""
     if key is None:
         key = _generate_ec_key()
@@ -112,7 +117,7 @@ async def _register_passkey(db, user_id, credential_id, device_name="TestKey", k
 
 
 class TestBeginPasskeyRegistration:
-    async def should_produce_challenge(self, db):
+    async def should_produce_challenge(self, db: AsyncSession):
         await _reg_normal(db)
         result = await _service().begin_passkey_registration(db, user_id=1)
         assert "challenge_id" in result
@@ -120,19 +125,19 @@ class TestBeginPasskeyRegistration:
         assert pk["rp"]["name"] == "LKM Service"
         assert pk["pubKeyCredParams"]
 
-    async def should_allow_local_user_to_begin_registration(self, db):
+    async def should_allow_local_user_to_begin_registration(self, db: AsyncSession):
         await _reg_local(db, username="alice")
         svc = _service()
         result = await svc.begin_passkey_registration(db, user_id=1)
         assert "challenge_id" in result
 
-    async def should_reject_nonexistent_user(self, db):
+    async def should_reject_nonexistent_user(self, db: AsyncSession):
         svc = _service()
         with pytest.raises(BizError) as exc:
             await svc.begin_passkey_registration(db, user_id=999)
         assert exc.value.errcode == AuthErr.USER_NOT_FOUND
 
-    async def should_include_exclude_credentials(self, db):
+    async def should_include_exclude_credentials(self, db: AsyncSession):
         user = await _reg_normal(db)
         await _register_passkey(db, user.id, _b64(b"cred-1"))
         result = await _service().begin_passkey_registration(db, user.id)
@@ -147,7 +152,7 @@ class TestBeginPasskeyRegistration:
 
 
 class TestCompletePasskeyRegistration:
-    async def should_register_valid_key(self, db):
+    async def should_register_valid_key(self, db: AsyncSession):
         user = await _reg_normal(db)
         svc = _service()
         begin = await svc.begin_passkey_registration(db, user.id)
@@ -190,7 +195,7 @@ class TestCompletePasskeyRegistration:
         })
         assert result["message"] == "Passkey registered successfully"
 
-    async def should_reject_wrong_challenge(self, db):
+    async def should_reject_wrong_challenge(self, db: AsyncSession):
         user = await _reg_normal(db)
         svc = _service()
         begin = await svc.begin_passkey_registration(db, user.id)
@@ -234,7 +239,7 @@ class TestCompletePasskeyRegistration:
 
 
 class TestBeginPasskeyLogin:
-    async def should_produce_challenge(self, db):
+    async def should_produce_challenge(self, db: AsyncSession):
         result = await _service().begin_passkey_login(db)
         assert "challenge_id" in result
         pk = result["public_key"]
@@ -248,7 +253,7 @@ class TestBeginPasskeyLogin:
 
 
 class TestCompletePasskeyLogin:
-    async def should_succeed_passkey_login_for_normal_user(self, db):
+    async def should_succeed_passkey_login_for_normal_user(self, db: AsyncSession):
         user = await _reg_normal(db)
         key = _generate_ec_key()
         cred_id = _b64(b"my-credential-id")
@@ -282,7 +287,7 @@ class TestCompletePasskeyLogin:
         assert result["user_id"] == user.id
         assert result["access_token"] is not None
 
-    async def should_increment_sign_count_on_login(self, db):
+    async def should_increment_sign_count_on_login(self, db: AsyncSession):
         user = await _reg_normal(db)
         key = _generate_ec_key()
         cred_id = _b64(b"counter-cred")
@@ -315,11 +320,11 @@ class TestCompletePasskeyLogin:
             })
             assert result["user_id"] == user.id
 
-        pk = (await db.execute(select(PasskeyCredential).where(PasskeyCredential.credential_id == cred_id))).scalars().first()
+        pk = cast(PasskeyCredential, (await db.execute(select(PasskeyCredential).where(PasskeyCredential.credential_id == cred_id))).scalars().first())
         assert pk.sign_count == 2
 
 
-    async def should_reject_missing_signature(self, db):
+    async def should_reject_missing_signature(self, db: AsyncSession):
         user = await _reg_normal(db)
         cred_id = _b64(b"some-cred")
         await _register_passkey(db, user.id, cred_id)
@@ -335,7 +340,7 @@ class TestCompletePasskeyLogin:
         assert exc.value.errcode == AuthErr.PASSKEY_VERIFICATION_FAILED
 
 
-    async def should_reject_wrong_signature(self, db):
+    async def should_reject_wrong_signature(self, db: AsyncSession):
         user = await _reg_normal(db)
         key = _generate_ec_key()
         wrong_key = _generate_ec_key()
@@ -368,11 +373,11 @@ class TestCompletePasskeyLogin:
         assert exc.value.errcode == AuthErr.PASSKEY_VERIFICATION_FAILED
 
 
-    async def should_reject_local_user_passkey_login(self, db):
+    async def should_reject_local_user_passkey_login(self, db: AsyncSession):
         """A local user with a passkey should be rejected at login (completed manually)."""
         from app.db.models import User
         await _reg_local(db, username="localuser")
-        user = (await db.execute(select(User).where(User.username == "localuser"))).scalars().first()
+        user = cast(User, (await db.execute(select(User).where(User.username == "localuser"))).scalars().first())
         key = _generate_ec_key()
         cred_id = _b64(b"local-cred")
         await _register_passkey(db, user.id, cred_id, key=key)
@@ -403,7 +408,7 @@ class TestCompletePasskeyLogin:
         assert exc.value.errcode == AuthErr.ACCOUNT_LEVEL_INSUFFICIENT
 
 
-    async def should_reject_wrong_rp_id(self, db):
+    async def should_reject_wrong_rp_id(self, db: AsyncSession):
         user = await _reg_normal(db)
         key = _generate_ec_key()
         cred_id = _b64(b"rp-mismatch")
@@ -440,14 +445,14 @@ class TestCompletePasskeyLogin:
 
 
 class TestCredentialManagement:
-    async def should_list_credentials(self, db):
+    async def should_list_credentials(self, db: AsyncSession):
         user = await _reg_normal(db)
         await _register_passkey(db, user.id, "cred-1", "Phone")
         await _register_passkey(db, user.id, "cred-2", "Laptop")
         result = await _service().list_credentials(db, user.id)
         assert len(result) == 2
 
-    async def should_delete_credential(self, db):
+    async def should_delete_credential(self, db: AsyncSession):
         user = await _reg_normal(db)
         await _register_passkey(db, user.id, "cred-del")
         creds = await _service().list_credentials(db, user.id)
@@ -455,7 +460,7 @@ class TestCredentialManagement:
         await _service().delete_credential(db, user.id, creds[0]["id"])
         assert len(await _service().list_credentials(db, user.id)) == 0
 
-    async def should_not_delete_other_user_credential(self, db):
+    async def should_not_delete_other_user_credential(self, db: AsyncSession):
         u1 = await _reg_normal(db, username="alice", email="alice@t.com")
         await _reg_normal(db, username="bob", email="bob@t.com")
         await _register_passkey(db, u1.id, "alice-key")

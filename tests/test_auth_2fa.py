@@ -10,9 +10,11 @@ Covers:
 
 import hashlib
 import time
+from typing import Any, TypeVar, cast
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
 from app.modules.auth.errors import AuthErr
@@ -47,11 +49,11 @@ def _FakeCurrentUser(id: int, account_level: str = "local", role: str = "member"
 
 
 async def _create_user(
-    db,
+    db: AsyncSession,
     username: str = "testuser",
     account_level: str = "normal",
     email: str | None = "test@example.com",
-):
+) -> User:
     """Create a minimal user (with profile) and return it."""
     from app.db.models import Profile
 
@@ -68,7 +70,7 @@ async def _create_user(
     return user
 
 
-async def _enable_totp_for_user(db, user_id):
+async def _enable_totp_for_user(db: AsyncSession, user_id: int) -> str:
     """Create a TOTP record with a known secret and mark enabled=True."""
     secret = generate_totp_secret()
     encrypted = encrypt_secret(secret)
@@ -77,7 +79,7 @@ async def _enable_totp_for_user(db, user_id):
     return secret
 
 
-def _generate_totp_code(secret, offset=0):
+def _generate_totp_code(secret: str, offset: int = 0) -> str:
     """Generate a valid TOTP code for *secret* at the current time step + offset."""
     import base64
     import hmac
@@ -92,8 +94,12 @@ def _generate_totp_code(secret, offset=0):
     return f"{code:06d}"
 
 
-async def _get(db, model, *where):
-    return (await db.execute(select(model).where(*where))).scalars().first()
+_T = TypeVar("_T")
+
+
+async def _get(db: AsyncSession, model: type[_T], *where: Any) -> _T:
+    # 测试均为“先建后查”，必然命中，返回类型直接按 _T 处理
+    return cast(_T, (await db.execute(select(model).where(*where))).scalars().first())
 
 
 # ===================================================================
@@ -102,13 +108,13 @@ async def _get(db, model, *where):
 
 
 class TestSetup2FABegin:
-    async def should_reject_local_user(self, db):
+    async def should_reject_local_user(self, db: AsyncSession):
         user = await _create_user(db, username="localuser", account_level="local", email=None)
         with pytest.raises(BizError) as exc:
             await _svc().setup_2fa_begin(db, user.id)
         assert exc.value.errcode == AuthErr.ACCOUNT_LEVEL_INSUFFICIENT
 
-    async def should_return_secret_and_uri_for_normal_user(self, db):
+    async def should_return_secret_and_uri_for_normal_user(self, db: AsyncSession):
         user = await _create_user(db, username="normaluser")
         result = await _svc().setup_2fa_begin(db, user.id)
         assert "secret" in result
@@ -117,14 +123,14 @@ class TestSetup2FABegin:
         assert result["qr_code_uri"].startswith("otpauth://totp/")
         assert "normaluser" in result["qr_code_uri"]
 
-    async def should_reject_already_enabled(self, db):
+    async def should_reject_already_enabled(self, db: AsyncSession):
         user = await _create_user(db, username="enableduser")
         await _enable_totp_for_user(db, user.id)
         with pytest.raises(BizError) as exc:
             await _svc().setup_2fa_begin(db, user.id)
         assert exc.value.errcode == AuthErr.TOTP_ALREADY_ENABLED
 
-    async def should_store_encrypted_secret(self, db):
+    async def should_store_encrypted_secret(self, db: AsyncSession):
         user = await _create_user(db, username="encryptcheck")
         result = await _svc().setup_2fa_begin(db, user.id)
         totp_record = await _get(db, TOTP, TOTP.user_id == user.id)
@@ -132,7 +138,7 @@ class TestSetup2FABegin:
         assert totp_record.secret != result["secret"]  # encrypted != plain
         assert totp_record.enabled is False
 
-    async def should_accept_admin_user(self, db):
+    async def should_accept_admin_user(self, db: AsyncSession):
         user = await _create_user(db, username="adminuser", account_level="admin")
         result = await _svc().setup_2fa_begin(db, user.id)
         assert "secret" in result
@@ -145,7 +151,7 @@ class TestSetup2FABegin:
 
 
 class TestSetup2FAComplete:
-    async def should_enable_totp_and_return_recovery_codes(self, db):
+    async def should_enable_totp_and_return_recovery_codes(self, db: AsyncSession):
         user = await _create_user(db, username="completeuser")
         # Begin setup to create the TOTP record
         begin_result = await _svc().setup_2fa_begin(db, user.id)
@@ -167,20 +173,20 @@ class TestSetup2FAComplete:
         for rc in stored_codes:
             assert rc.used is False
 
-    async def should_reject_when_no_totp_record_exists(self, db):
+    async def should_reject_when_no_totp_record_exists(self, db: AsyncSession):
         user = await _create_user(db, username="nototp")
         with pytest.raises(BizError) as exc:
             await _svc().setup_2fa_complete(db, user.id, "123456")
         assert exc.value.errcode == AuthErr.TOTP_NOT_ENABLED
 
-    async def should_reject_invalid_code(self, db):
+    async def should_reject_invalid_code(self, db: AsyncSession):
         user = await _create_user(db, username="badcode")
         await _svc().setup_2fa_begin(db, user.id)
         with pytest.raises(BizError) as exc:
             await _svc().setup_2fa_complete(db, user.id, "000000")
         assert exc.value.errcode == AuthErr.TOTP_CODE_INVALID
 
-    async def should_reject_already_enabled(self, db):
+    async def should_reject_already_enabled(self, db: AsyncSession):
         user = await _create_user(db, username="alreadyenabled")
         begin_result = await _svc().setup_2fa_begin(db, user.id)
         code = _generate_totp_code(begin_result["secret"])
@@ -198,7 +204,7 @@ class TestSetup2FAComplete:
 
 
 class TestVerify2FA:
-    async def should_verify_with_valid_code(self, db):
+    async def should_verify_with_valid_code(self, db: AsyncSession):
         user = await _create_user(db, username="verifyuser")
         secret = await _enable_totp_for_user(db, user.id)
 
@@ -209,7 +215,7 @@ class TestVerify2FA:
         assert "refresh_token" in result
         assert result["user_id"] == user.id
 
-    async def should_reject_invalid_code(self, db):
+    async def should_reject_invalid_code(self, db: AsyncSession):
         user = await _create_user(db, username="badverify")
         await _enable_totp_for_user(db, user.id)
 
@@ -218,7 +224,7 @@ class TestVerify2FA:
             await _svc().verify_2fa(db, temp_token, code="000000")
         assert exc.value.errcode == AuthErr.TOTP_CODE_INVALID
 
-    async def should_verify_with_recovery_code(self, db):
+    async def should_verify_with_recovery_code(self, db: AsyncSession):
         user = await _create_user(db, username="recoveruser")
         secret = await _enable_totp_for_user(db, user.id)
 
@@ -239,7 +245,7 @@ class TestVerify2FA:
         rc = await _get(db, RecoveryCode, RecoveryCode.user_id == user.id, RecoveryCode.code_hash == code_hash)
         assert rc.used is True
 
-    async def should_reject_invalid_recovery_code(self, db):
+    async def should_reject_invalid_recovery_code(self, db: AsyncSession):
         user = await _create_user(db, username="badrecover")
         await _enable_totp_for_user(db, user.id)
 
@@ -248,12 +254,12 @@ class TestVerify2FA:
             await _svc().verify_2fa(db, temp_token, recovery_code="nonexistent")
         assert exc.value.errcode == AuthErr.RECOVERY_CODE_INVALID
 
-    async def should_reject_invalid_temp_token(self, db):
+    async def should_reject_invalid_temp_token(self, db: AsyncSession):
         with pytest.raises(BizError) as exc:
             await _svc().verify_2fa(db, "invalid-token", code="123456")
         assert exc.value.errcode == AuthErr.TOKEN_INVALID
 
-    async def should_override_trust_device_for_admin(self, db):
+    async def should_override_trust_device_for_admin(self, db: AsyncSession):
         """Admin users should always have trust_device=False."""
         user = await _create_user(db, username="admintrust", account_level="admin")
         secret = await _enable_totp_for_user(db, user.id)
@@ -273,7 +279,7 @@ class TestVerify2FA:
 
 
 class TestDisable2FA:
-    async def should_disable_totp_and_clear_data(self, db):
+    async def should_disable_totp_and_clear_data(self, db: AsyncSession):
         user = await _create_user(db, username="disableuser")
         secret = await _enable_totp_for_user(db, user.id)
 
@@ -294,13 +300,13 @@ class TestDisable2FA:
         rcs = (await db.execute(select(RecoveryCode).where(RecoveryCode.user_id == user.id))).scalars().all()
         assert len(rcs) == 0
 
-    async def should_reject_when_not_enabled(self, db):
+    async def should_reject_when_not_enabled(self, db: AsyncSession):
         user = await _create_user(db, username="notenabled")
         with pytest.raises(BizError) as exc:
             await _svc().disable_2fa(db, user.id, "123456")
         assert exc.value.errcode == AuthErr.TOTP_NOT_ENABLED
 
-    async def should_downgrade_admin_to_normal(self, db):
+    async def should_downgrade_admin_to_normal(self, db: AsyncSession):
         user = await _create_user(db, username="admin2fa", account_level="admin")
         secret = await _enable_totp_for_user(db, user.id)
 
@@ -314,7 +320,7 @@ class TestDisable2FA:
         user = await _get(db, User, User.id == user_id)
         assert user.account_level == "normal"
 
-    async def should_reject_invalid_code(self, db):
+    async def should_reject_invalid_code(self, db: AsyncSession):
         user = await _create_user(db, username="wrongcodedisable")
         await _enable_totp_for_user(db, user.id)
 
@@ -326,11 +332,11 @@ class TestDisable2FA:
 class TestGet2FAStatus:
     """GET /auth/2fa/status — 查询 2FA 是否已开启。"""
 
-    async def _unwrap(self, response):
+    async def _unwrap(self, response: Any) -> dict[str, Any]:
         import json
         return json.loads(response.body.decode())
 
-    async def should_return_false_when_not_enabled(self, db):
+    async def should_return_false_when_not_enabled(self, db: AsyncSession):
         user = await _create_user(db, username="statusoff")
         from app.modules.auth.router_2fa import get_2fa_status
 
@@ -339,7 +345,7 @@ class TestGet2FAStatus:
         )
         assert data["data"] == {"enabled": False}
 
-    async def should_return_true_when_enabled(self, db):
+    async def should_return_true_when_enabled(self, db: AsyncSession):
         user = await _create_user(db, username="statuson")
         await _enable_totp_for_user(db, user.id)
         from app.modules.auth.router_2fa import get_2fa_status

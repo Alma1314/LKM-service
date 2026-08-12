@@ -6,24 +6,30 @@
     init_db()，彻底避免测试污染运行环境；会话通过依赖覆盖注入内存库。
 """
 import os
+from collections.abc import AsyncGenerator
+from typing import Annotated
 
 # 确保测试始终以 test 标志运行，允许弱 JWT 密钥
 os.environ["PYTEST_RUNNING"] = "1"
 
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from app.db.models import Base  # noqa: E402
 from app.db.session import get_session  # noqa: E402
 from app.main import app  # noqa: E402
 
+# 复用类型的别名，供各测试文件 import 使用
+DB = Annotated[AsyncSession, pytest.fixture]
+Client = Annotated[AsyncClient, pytest.fixture]
+
 
 @pytest.fixture
-async def db():
+async def db() -> AsyncGenerator[AsyncSession, None]:
     """提供隔离的内存 aiosqlite 异步会话（StaticPool 保证同一连接池）。"""
-    engine = create_async_engine(
+    engine: AsyncEngine = create_async_engine(
         "sqlite+aiosqlite://",
         poolclass=StaticPool,
     )
@@ -31,7 +37,7 @@ async def db():
         await conn.run_sync(Base.metadata.create_all)
 
     SessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
+    session: AsyncSession = SessionLocal()
     try:
         yield session
     finally:
@@ -40,14 +46,14 @@ async def db():
 
 
 @pytest.fixture
-async def client(db):
+async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     """官方异步 HTTP 客户端：httpx.AsyncClient + ASGITransport。
 
     不触发 lifespan（避免 init_db 触碰真实 lkm.db），并把 get_session 依赖
     覆盖为内存会话，最后只撤销本测试注入的覆盖键。
     """
 
-    async def override_get_session():
+    async def override_get_session() -> AsyncGenerator[AsyncSession, None]:
         yield db
 
     app.dependency_overrides[get_session] = override_get_session

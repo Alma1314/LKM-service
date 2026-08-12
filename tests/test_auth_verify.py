@@ -1,10 +1,12 @@
 import datetime as dt
 import re
 import time
+from typing import Any, TypeVar, cast
 from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
 from app.modules.auth.errors import AuthErr
@@ -21,9 +23,12 @@ from app.modules.auth.service_verify import (
     hash_code,
 )
 
+_T = TypeVar("_T")
 
-async def _get(db, model, *where):
-    return (await db.execute(select(model).where(*where))).scalars().first()
+
+async def _get(db: AsyncSession, model: type[_T], *where: Any) -> _T:
+    # 测试均为“先建后查”，必然命中，返回类型直接按 _T 处理
+    return cast(_T, (await db.execute(select(model).where(*where))).scalars().first())
 
 
 class TestGenerateCode:
@@ -68,7 +73,7 @@ class TestHashCode:
 
 
 class TestCreateEmailVerification:
-    async def should_create_verification_and_return_code_and_id(self, db):
+    async def should_create_verification_and_return_code_and_id(self, db: AsyncSession):
         code, record_id = await create_email_verification(db, "alice@example.com", "register")
 
         assert re.fullmatch(r"\d{6}", code)
@@ -78,13 +83,13 @@ class TestCreateEmailVerification:
         assert record is not None
         assert record.email == "alice@example.com"
         assert record.purpose == "register"
-        assert record.code_hash == hash_code(code, record.purpose, contact=record.email if hasattr(record, "email") else record.phone, nonce=record.nonce)
+        assert record.code_hash == hash_code(code, record.purpose, contact=cast(Any, record).email if hasattr(record, "email") else cast(Any, record).phone, nonce=record.nonce)
         assert record.used is False
         assert record.failed_attempts == 0
 
 
 class TestCreatePhoneVerification:
-    async def should_create_verification_and_return_code_and_id(self, db):
+    async def should_create_verification_and_return_code_and_id(self, db: AsyncSession):
         code, record_id = await create_phone_verification(db, "13800138000", "login")
 
         assert re.fullmatch(r"\d{6}", code)
@@ -94,13 +99,13 @@ class TestCreatePhoneVerification:
         assert record is not None
         assert record.phone == "13800138000"
         assert record.purpose == "login"
-        assert record.code_hash == hash_code(code, record.purpose, contact=record.email if hasattr(record, "email") else record.phone, nonce=record.nonce)
+        assert record.code_hash == hash_code(code, record.purpose, contact=cast(Any, record).email if hasattr(record, "email") else cast(Any, record).phone, nonce=record.nonce)
         assert record.used is False
         assert record.failed_attempts == 0
 
 
 class TestConsumeEmailCode:
-    async def should_consume_correct_code(self, db):
+    async def should_consume_correct_code(self, db: AsyncSession):
         code, record_id = await create_email_verification(db, "alice@example.com", "register")
         result = await consume_email_code(db, "alice@example.com", code, "register")
         assert result is True
@@ -108,21 +113,21 @@ class TestConsumeEmailCode:
         record = await _get(db, EmailVerification, EmailVerification.id == record_id)
         assert record.used is True
 
-    async def should_reject_wrong_purpose(self, db):
+    async def should_reject_wrong_purpose(self, db: AsyncSession):
         code, _ = await create_email_verification(db, "alice@example.com", "register")
 
         with pytest.raises(BizError) as exc:
             await consume_email_code(db, "alice@example.com", code, "login")
         assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
-    async def should_reject_wrong_code(self, db):
+    async def should_reject_wrong_code(self, db: AsyncSession):
         await create_email_verification(db, "alice@example.com", "register")
 
         with pytest.raises(BizError) as exc:
             await consume_email_code(db, "alice@example.com", "000000", "register")
         assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
-    async def should_invalidate_after_three_failed_attempts(self, db):
+    async def should_invalidate_after_three_failed_attempts(self, db: AsyncSession):
         code, _ = await create_email_verification(db, "alice@example.com", "register")
 
         for _ in range(3):
@@ -135,7 +140,7 @@ class TestConsumeEmailCode:
             await consume_email_code(db, "alice@example.com", code, "register")
         assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
-    async def should_not_consume_expired_code(self, db):
+    async def should_not_consume_expired_code(self, db: AsyncSession):
         with patch("app.modules.auth.service_verify.now_iso") as mock_now:
             mock_now.return_value = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
             code, _ = await create_email_verification(db, "alice@example.com", "register")
@@ -148,7 +153,7 @@ class TestConsumeEmailCode:
 
 
 class TestConsumePhoneCode:
-    async def should_consume_correct_code(self, db):
+    async def should_consume_correct_code(self, db: AsyncSession):
         code, record_id = await create_phone_verification(db, "13800138000", "login")
         result = await consume_phone_code(db, "13800138000", code, "login")
         assert result is True
@@ -156,21 +161,21 @@ class TestConsumePhoneCode:
         record = await _get(db, PhoneVerification, PhoneVerification.id == record_id)
         assert record.used is True
 
-    async def should_reject_wrong_purpose(self, db):
+    async def should_reject_wrong_purpose(self, db: AsyncSession):
         code, _ = await create_phone_verification(db, "13800138000", "login")
 
         with pytest.raises(BizError) as exc:
             await consume_phone_code(db, "13800138000", code, "register")
         assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
-    async def should_reject_wrong_code(self, db):
+    async def should_reject_wrong_code(self, db: AsyncSession):
         await create_phone_verification(db, "13800138000", "login")
 
         with pytest.raises(BizError) as exc:
             await consume_phone_code(db, "13800138000", "000000", "login")
         assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
-    async def should_invalidate_after_three_failed_attempts(self, db):
+    async def should_invalidate_after_three_failed_attempts(self, db: AsyncSession):
         code, _ = await create_phone_verification(db, "13800138000", "login")
 
         for _ in range(3):
@@ -182,7 +187,7 @@ class TestConsumePhoneCode:
             await consume_phone_code(db, "13800138000", code, "login")
         assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
-    async def should_not_consume_expired_code(self, db):
+    async def should_not_consume_expired_code(self, db: AsyncSession):
         with patch("app.modules.auth.service_verify.now_iso") as mock_now:
             mock_now.return_value = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
             code, _ = await create_phone_verification(db, "13800138000", "login")

@@ -8,17 +8,19 @@ Covers:
 
 import asyncio
 import json
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.deps import CurrentUser
 from app.modules.auth.router_settings import BindEmailVerify, BindPhoneVerify
 from app.modules.auth.schemas import UnbindRequest
-from app.db.models import Base
+from app.db.models import Base, User
 import app.modules.auth.models  # noqa: F401 — ensure auth tables (refresh_tokens, etc.) are created
 
 
@@ -27,7 +29,7 @@ def _FakeCurrentUser(id: int, account_level: str = "local", role: str = "member"
     return CurrentUser(id=id, account_level=account_level, role=role)
 
 
-def _unwrap(response):
+def _unwrap(response: Any) -> dict[str, Any]:
     """Extract the data dict from a JSONResponse returned by @respond."""
     return json.loads(response.body.decode())
 
@@ -42,17 +44,18 @@ def _unwrap(response):
 # ---------------------------------------------------------------------------
 
 
-async def _reg_local(db, username="alice", password="secret123456"):
+async def _reg_local(db: AsyncSession, username: str = "alice", password: str = "secret123456") -> dict[str, Any]:
     from app.modules.auth.schemas import UserRegLocal
 
     svc = _service()
     return await svc.register_local(db, UserRegLocal(username=username, password=password))
 
 
-async def _get_user(db, user_id: int):
+async def _get_user(db: AsyncSession, user_id: int) -> User:
     from app.db.models import User
 
-    return (await db.execute(select(User).where(User.id == user_id))).scalars().first()
+    # 测试均为“先建后查”，必然命中，返回类型直接按 User 处理
+    return cast(User, (await db.execute(select(User).where(User.id == user_id))).scalars().first())
 
 
 def _service():
@@ -69,7 +72,7 @@ def _service():
 class TestBindEmail:
     """Bind email request + verify, covering auto-upgrade local->normal."""
 
-    async def should_bind_email_and_upgrade_local_to_normal(self, db):
+    async def should_bind_email_and_upgrade_local_to_normal(self, db: AsyncSession):
         """Full happy path: request code, verify, email bound, account upgraded."""
         # Arrange: create a local user
         from app.db.models import User
@@ -81,7 +84,7 @@ class TestBindEmail:
         # Stub providers so we can capture the code
         captured = {}
 
-        async def fake_send_code(email, code):
+        async def fake_send_code(email: str, code: str) -> None:
             captured["code"] = code
 
         # Act: request email binding
@@ -108,7 +111,7 @@ class TestBindEmail:
         # account should be upgraded from local to normal
         assert user.account_level == "normal"
 
-    async def should_reject_duplicate_email(self, db):
+    async def should_reject_duplicate_email(self, db: AsyncSession):
         """Should fail if email is already taken by another user."""
         # Create two local users
         reg1 = await _reg_local(db, username="alice")
@@ -134,7 +137,7 @@ class TestBindEmail:
             )
         assert exc.value.errcode == AuthErr.ALREADY_REGISTERED
 
-    async def should_reject_wrong_code(self, db):
+    async def should_reject_wrong_code(self, db: AsyncSession):
         """Should fail with wrong verification code."""
         reg = await _reg_local(db, username="alice")
 
@@ -156,7 +159,7 @@ class TestBindEmail:
 class TestBindPhone:
     """Bind phone request + verify."""
 
-    async def should_bind_phone_and_upgrade_local_to_normal(self, db):
+    async def should_bind_phone_and_upgrade_local_to_normal(self, db: AsyncSession):
         """Full happy path: request code, verify, phone bound, account upgraded."""
         reg = await _reg_local(db, username="alice")
         user_id = reg["user_id"]
@@ -181,7 +184,7 @@ class TestBindPhone:
         assert user.phone == "13800001111"
         assert user.account_level == "normal"
 
-    async def should_reject_duplicate_phone(self, db):
+    async def should_reject_duplicate_phone(self, db: AsyncSession):
         """Should fail if phone already taken."""
         reg1 = await _reg_local(db, username="alice")
         reg2 = await _reg_local(db, username="bob")
@@ -205,7 +208,7 @@ class TestBindPhone:
             )
         assert exc.value.errcode == AuthErr.ALREADY_REGISTERED
 
-    async def should_reject_wrong_code(self, db):
+    async def should_reject_wrong_code(self, db: AsyncSession):
         """Should fail with wrong verification code."""
         reg = await _reg_local(db, username="alice")
 
@@ -227,7 +230,7 @@ class TestBindPhone:
 class TestBindEmailUpgrade:
     """Specifically test that bind email upgrades local->normal."""
 
-    async def should_upgrade_when_binding_email(self, db):
+    async def should_upgrade_when_binding_email(self, db: AsyncSession):
         """Bind email to a local user: account_level must become normal."""
         reg = await _reg_local(db, username="upgrademe")
         user_id = reg["user_id"]
@@ -251,7 +254,7 @@ class TestBindEmailUpgrade:
         assert user.email == "upgrade@example.com"
         assert user.account_level == "normal"
 
-    async def should_not_downgrade_normal_user(self, db):
+    async def should_not_downgrade_normal_user(self, db: AsyncSession):
         """Binding email to an already-normal user: should stay normal."""
         from app.db.models import User, Profile
 
@@ -289,10 +292,10 @@ class TestBindEmailUpgrade:
 class TestGetSettings:
     """GET /auth/settings — 查询绑定状态。"""
 
-    def _unwrap(self, response):
+    def _unwrap(self, response: Any) -> dict[str, Any]:
         return json.loads(response.body.decode())
 
-    async def should_return_binding_state(self, db):
+    async def should_return_binding_state(self, db: AsyncSession):
         from app.db.models import User, Profile
 
         user = User(username="bindstate", email="a@b.com", phone="13800001111",
@@ -318,7 +321,7 @@ class TestGetSettings:
 class TestUnbind:
     """DELETE /auth/settings/{type} — 解绑 + 2FA 门槛 + 保留一种登录方式。"""
 
-    async def _reg_with_bindings(self, db, email="a@b.com", phone="13800001111"):
+    async def _reg_with_bindings(self, db: AsyncSession, email: str = "a@b.com", phone: str = "13800001111") -> User:
         from app.db.models import User, Profile
         user = User(username="unbind", email=email, phone=phone,
                     hashed_password="x", account_level="normal")
@@ -328,7 +331,7 @@ class TestUnbind:
         await db.flush()
         return user
 
-    async def should_unbind_email_without_2fa(self, db):
+    async def should_unbind_email_without_2fa(self, db: AsyncSession):
         from app.db.models import User
         user = await self._reg_with_bindings(db)
         from app.modules.auth.router_settings import unbind
@@ -338,7 +341,7 @@ class TestUnbind:
         # 直接用标量列查询，避免命中身份映射中已过期的 User 对象触发惰性加载
         assert await db.scalar(select(User.email).where(User.id == user.id)) is None
 
-    async def should_reject_unbind_when_only_one_way_left(self, db):
+    async def should_reject_unbind_when_only_one_way_left(self, db: AsyncSession):
         # 只有 phone，没有 email/github → 解绑 email 会触发“保留一种”守卫（虽然 email 本来就空，走 phone 侧测试更贴）
         from app.db.models import User, Profile
         user = User(username="onlyphone", phone="13800009999",
@@ -361,7 +364,7 @@ class TestUnbind:
             await unbind("email", UnbindRequest(code=None), cur=_FakeCurrentUser(user.id, account_level="normal"), db=db)
         assert exc.value.errcode == CommonErr.INVALID_INPUT
 
-    async def should_require_totp_when_2fa_enabled(self, db):
+    async def should_require_totp_when_2fa_enabled(self, db: AsyncSession):
         user = await self._reg_with_bindings(db)
         from app.modules.auth.models import TOTP
         db.add(TOTP(user_id=user.id, secret="s", enabled=True))
@@ -374,7 +377,7 @@ class TestUnbind:
             await unbind("email", UnbindRequest(code=None), cur=_FakeCurrentUser(user.id, account_level="normal"), db=db)
         assert exc.value.errcode == AuthErr.TOTP_CODE_INVALID
 
-    async def should_unbind_github(self, db):
+    async def should_unbind_github(self, db: AsyncSession):
         user = await self._reg_with_bindings(db)
         from app.modules.auth.models import UserOAuth
         db.add(UserOAuth(user_id=user.id, provider="github",
@@ -387,7 +390,7 @@ class TestUnbind:
         # 用标量列查询判定行已删除，绕过过期身份映射对象
         assert (await db.execute(select(UserOAuth.id).where(UserOAuth.user_id == user.id))).scalars().first() is None
 
-    async def should_reject_invalid_type(self, db):
+    async def should_reject_invalid_type(self, db: AsyncSession):
         user = await self._reg_with_bindings(db)
         from app.core.err import BizError, ErrCode
         from app.modules.auth.router_settings import unbind
