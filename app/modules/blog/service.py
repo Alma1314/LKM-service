@@ -121,7 +121,8 @@ async def list_series(
     page: int = 1,
     limit: int | None = None,
 ) -> list[BlogSeriesInfo]:
-    """系列列表。``page``/``limit`` 可选：不传 ``limit`` 时返回全部（保持旧契约），
+    """
+    系列列表。``page``/``limit`` 可选：不传 ``limit`` 时返回全部（保持旧契约），
     传了则在 SQL 层分页，避免大数据量时整表拉取。
     """
     stmt = select(BlogSeries).order_by(BlogSeries.id.desc())

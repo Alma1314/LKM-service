@@ -68,7 +68,7 @@ def generate_refresh_token() -> str:
     return secrets.token_hex(32)
 
 
-def _hash_refresh_token(raw: str) -> str:
+def hash_refresh_token(raw: str) -> str:
     """对原始刷新令牌进行 SHA-256 哈希。"""
     return hashlib.sha256(raw.encode()).hexdigest()
 
@@ -79,7 +79,7 @@ async def store_refresh_token(db: AsyncSession, user_id: object, raw: str, mfa_v
     expires_str = expires_at(days=days)
     tok = RefreshToken(
         user_id=int(user_id),  # type: ignore[arg-type]
-        token_hash=_hash_refresh_token(raw),
+        token_hash=hash_refresh_token(raw),
         mfa_verified=bool(mfa_verified),
         expires_at=expires_str,
     )
@@ -664,7 +664,7 @@ async def upgrade_to_normal(db: AsyncSession, user: User) -> None:
 
 
 async def refresh_access_token(db: AsyncSession, raw_refresh: str) -> dict[str, Any]:
-    tok_hash = _hash_refresh_token(raw_refresh)
+    tok_hash = hash_refresh_token(raw_refresh)
     now = now_iso()
 
     # 原子撤销：仅在令牌存在且尚未被撤销时才撤销

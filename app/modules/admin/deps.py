@@ -1,10 +1,5 @@
-"""后台 cookie 会话鉴权依赖。
-
-后台 access token 与前台 Bearer token 是两套独立体系：
-  - 前台（auth）：payload {user_id, account_level, role, type=access, token_version}，走 Authorization 头
-  - 后台（此处）：payload {sub, account_level, type=admin}，走 httpOnly cookie
-
-两者共用 settings.jwt_secret + pyjwt，但 type 标记不同、互不混用。
+"""
+后台 cookie 会话鉴权依赖。
 权限单一事实源在此：能进后台 = 持有有效后台 access cookie 且 account_level == "admin"。
 """
 import datetime
@@ -27,7 +22,7 @@ REFRESH_NAME = "admin_refresh"
 ACCESS_TOKEN_MINUTES = 15
 # 与前台/后台分离的 audience：后台 access cookie 只认本 audience，防被前台或 temp token 冒用
 _ADMIN_AUD = "lkm:admin"
-# cookie Path 须与浏览器发出的真实域路径一致（开发/默认 /api/v1/admin），见方案 §8.6
+# cookie Path 须与浏览器发出的真实域路径一致（开发/默认 /api/v1/admin）
 COOKIE_PATH = f"/{settings.api_prefix.strip('/')}/admin"
 
 
@@ -119,12 +114,5 @@ require_admin = Depends(get_current_admin)
 
 
 def get_real_client_ip(request: Request) -> str:
-    """取客户端 IP，供后台登录 IP 级频控使用。
-
-    **不做** X-Forwarded-For 的手动信任：客户端可伪造 XFF，若在应用层信任会绕过限流。
-    正确的做法是依赖 **uvicorn 的 --proxy-headers + forwarded_allow_ips**：
-    当直连是受信代理时，uvicorn 会把真实客户端 IP 写入 request.client.host；
-    否则（裸直连/未配置）request.client.host 就是真实来源 IP。生产部署应给 uvicorn
-    传 `--proxy-headers --forwarded-allow-ips=<代理IP或列表>` 并置于 nginx 之后。
-    """
+    """取客户端 IP，供后台登录 IP 级频控使用。"""
     return request.client.host if request.client else "unknown"

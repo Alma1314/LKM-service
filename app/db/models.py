@@ -38,12 +38,7 @@ def expires_at(days: float = 0, minutes: float = 0) -> datetime.datetime:
 
 
 class UTCDateTime(TypeDecorator[datetime.datetime]):
-    """带时区的 UTC 时间列类型。
-
-    底层使用 DateTime(timezone=True)；但 SQLite 不保存时区，读回时会是 naive，
-    这里统一在读取时补上 UTC 时区，保证与 now_iso()（aware）比较不受
-    "offset-naive vs offset-aware" 问题影响（Postgres 本就返回 aware，直接透传）。
-    """
+    """带时区的 UTC 时间列类型。底层使用 DateTime(timezone=True)"""
 
     impl: TypeEngine[Any] | type[TypeEngine[Any]] = DateTime(timezone=True)
     cache_ok: bool | None = True

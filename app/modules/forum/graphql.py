@@ -1,21 +1,4 @@
 """论坛模块的 GraphQL schema 与解析器。
-
-前端（urql）按以下契约请求（见 LKM-official-website/src/features/forum/graphql/queries.ts）：
-
-    query PostList($categoryId: ID, $page: Int!, $pageSize: Int!) {
-      posts(categoryId: $categoryId, page: $page, pageSize: $pageSize) {
-        total
-        items { id title excerpt categoryId tags isPinned isFeatured
-                viewCount likeCount commentCount createdAt author { id displayName avatar username } }
-      }
-    }
-
-    query PostDetail($id: ID!) {
-      post(id: $id) { id title content excerpt categoryId tags isPinned isFeatured
-                      viewCount likeCount commentCount bookmarkCount forwardCount
-                      createdAt author { id displayName avatar username bio } }
-    }
-
 说明：
 - post.id / author.id 在后端为 int，GraphQL ID 直接使用 int，前端同步为 number。
 - categoryId 前后端均为字符串（板块 slug）。
@@ -104,7 +87,6 @@ async def _load_authors(db: AsyncSession, user_ids: list[int]) -> dict[int, Auth
 @dataclass
 class GraphQLContext(BaseContext):
     """GraphQL 请求上下文：持有当前请求的数据库会话。
-
     会话由 main.py 中 GraphQLRouter 的 context_getter 经 FastAPI 依赖注入
     （Depends(get_session)），与 REST 端点共用同一会话依赖，便于测试 override。
     """

@@ -100,8 +100,8 @@ _CHUNK = 1024 * 1024  # 分块读写，避免整文件载入内存
 
 
 def _stream_to_disk(stream: _Readable, dest_path: Path, limit: int) -> int:
-    """同步分块读取 ``stream`` 并写盘，返回总字节数。
-
+    """
+    同步分块读取 ``stream`` 并写盘，返回总字节数。
     在 async 端点内通过 asyncio.to_thread 调度，避免文件读写（含建目录）阻塞事件循环。
     超过 ``limit`` 抛 ``FILE_TOO_LARGE``；OS 错误抛 ``FileErr.STORE_ERROR``。
     """

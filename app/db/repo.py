@@ -42,8 +42,7 @@ async def consume_once(
     values: dict[str, object],
     *conditions: Any,
 ) -> bool:
-    """仅当全部条件满足时更新恰好一行；否则返回 False。
-
+    """
     用于一次性 token / 恢复事务 / 挑战码的原子消费，防止并发重放。
     """
     result = await db.execute(sa_update(model).where(*conditions).values(**values))
@@ -52,8 +51,7 @@ async def consume_once(
 
 
 async def isolated_update(db: AsyncSession, stmt: Update) -> None:
-    """在 savepoint 中执行一条 UPDATE，失败时静默回滚。
-
+    """
     失败计数器等"即使调用方事务回滚也要保留"的修改用它。
     """
     sp = await db.begin_nested()

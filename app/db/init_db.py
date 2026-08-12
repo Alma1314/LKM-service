@@ -1,8 +1,4 @@
-"""数据库初始化 —— Alembic 为 schema 唯一权威。
-
-官方推荐：由 Alembic 迁移统一管理 schema（含全新建库、增列、索引等），
-本地 `Base.metadata.create_all` 不参与运行时建表，避免双份 schema 真相源漂移。
-"""
+"""数据库初始化 —— Alembic 为 schema 唯一权威。"""
 
 
 def init_db() -> None:

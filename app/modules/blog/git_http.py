@@ -16,8 +16,8 @@ git_router = APIRouter(prefix="/blog/git", tags=["blog-git"])
 
 
 def _run_git_http_backend(env: dict[str, str], body: bytes) -> Response:
-    """同步运行 git http-backend 并解析其输出。
-
+    """
+    同步运行 git http-backend 并解析其输出。
     在 async 端点内通过 asyncio.to_thread 调度，避免长 git 传输（clone/push）阻塞事件循环。
     """
     try:

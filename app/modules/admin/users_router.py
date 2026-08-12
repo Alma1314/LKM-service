@@ -1,7 +1,5 @@
-"""后台只读数据端点：/admin/users（用户列表）、/admin/stats（仪表盘统计）。
-
-权限：require_admin（单一事实源在后端）。端点返回 ApiResp 信封。
-PII 默认隐藏：email/phone 仅在 include_pii=True 时返回（后续可接敏感级依赖做更细管控）。
+"""
+后台只读数据端点：/admin/users（用户列表）、/admin/stats（仪表盘统计）。
 """
 from typing import Any
 
@@ -31,8 +29,8 @@ async def admin_list_users(
     _cur: CurrentUser = require_admin,
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    """用户管理列表。默认隐藏 email/phone（PII），可按用户名/邮箱筛选。
-
+    """
+    用户管理列表。默认隐藏 email/phone（PII），可按用户名/邮箱筛选。
     include_pii 目前仅由调用方自决；若后续要分级管控，请额外加敏感级依赖。
     """
     query = select(User)

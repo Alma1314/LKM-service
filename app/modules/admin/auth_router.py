@@ -1,11 +1,5 @@
-"""后台 cookie 会话端点：/admin/auth/login|refresh|logout|me。
-
-实现要点（与前台 Bearer 是两套体系）：
-  - 凭证只放 httpOnly cookie（admin_session / admin_refresh），前端 JS 不可读。
-  - 登录：verifypwd（PBKDF2 恒定时间）+ 用户级/IP 级频控 + account_level=admin。
-  - 需要 set/delete cookie 的端点不走 @respond：FastAPI 注入的 response 参数在被调用方
-    直接返回 Response/JSONResponse 时其改动不会生效（会丢弃注入对象、用返回对象本身），
-    因此这些端点直接构造 resp_json(...) 返回的 JSONResponse 并在其上 set_cookie/delete_cookie。
+"""
+后台 cookie 会话端点：/admin/auth/login|refresh|logout|me。
 """
 import datetime
 from typing import Any
@@ -22,7 +16,7 @@ from app.db.session import get_session
 from app.modules.auth.deps import CurrentUser
 from app.modules.auth.models import RefreshToken
 from app.modules.auth.security import verifypwd
-from app.modules.auth.service_auth import generate_refresh_token, _hash_refresh_token
+from app.modules.auth.service_auth import generate_refresh_token, hash_refresh_token
 from app.modules.auth.service_verify import check_code_rate_limit
 
 from .deps import (
@@ -109,7 +103,7 @@ async def admin_login(
     db.add(
         RefreshToken(
             user_id=user.id,
-            token_hash=_hash_refresh_token(raw_refresh),
+            token_hash=hash_refresh_token(raw_refresh),
             kind="admin",
             mfa_verified=False,
             expires_at=now_iso() + datetime.timedelta(days=REFRESH_TOKEN_DAYS),
@@ -142,7 +136,7 @@ async def admin_refresh(
     if not raw_refresh:
         return resp_json(CommonErr.FORBIDDEN, detail="缺少刷新令牌")
 
-    tok_hash = _hash_refresh_token(raw_refresh)
+    tok_hash = hash_refresh_token(raw_refresh)
     now = now_iso()
     # 原子撤销：仅当记录存在且未撤销时置 revoked_at（此步即"复用检测"）
     result = await db.execute(
@@ -178,7 +172,7 @@ async def admin_refresh(
     db.add(
         RefreshToken(
             user_id=user.id,
-            token_hash=_hash_refresh_token(new_refresh),
+            token_hash=hash_refresh_token(new_refresh),
             kind="admin",
             mfa_verified=False,
             expires_at=now_iso() + datetime.timedelta(days=REFRESH_TOKEN_DAYS),
@@ -201,7 +195,7 @@ async def admin_logout(
     """登出：撤销对应 refresh 令牌并清空 cookie。"""
     raw_refresh = request.cookies.get(REFRESH_NAME)
     if raw_refresh:
-        tok_hash = _hash_refresh_token(raw_refresh)
+        tok_hash = hash_refresh_token(raw_refresh)
         result = await db.execute(
             select(RefreshToken).where(
                 RefreshToken.token_hash == tok_hash,
