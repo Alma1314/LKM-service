@@ -18,7 +18,12 @@ from strawberry.fastapi import BaseContext
 from strawberry.types.info import Info
 
 from app.db.models import User
-from app.modules.forum.service import get_post as service_get_post, list_posts as service_list_posts
+from app.modules.forum.service import (
+    get_post as service_get_post,
+)
+from app.modules.forum.service import (
+    list_posts as service_list_posts,
+)
 
 
 @strawberry.type
@@ -78,7 +83,9 @@ async def _load_authors(db: AsyncSession, user_ids: list[int]) -> dict[int, Auth
     if not user_ids:
         return {}
     result = await db.execute(
-        select(User).where(User.id.in_(set(user_ids))).options(selectinload(User.profile))
+        select(User)
+        .where(User.id.in_(set(user_ids)))
+        .options(selectinload(User.profile))
     )
     users = result.scalars().all()
     return {u.id: _to_author(u) for u in users}
@@ -112,7 +119,9 @@ class Query:
         db = _get_db(info)
         cat: str | None = str(category_id) if category_id is not None else None
 
-        page_data = await service_list_posts(db, page=page, limit=page_size, category_id=cat)
+        page_data = await service_list_posts(
+            db, page=page, limit=page_size, category_id=cat
+        )
 
         author_ids = list({p.author_id for p in page_data.items})
         authors = await _load_authors(db, author_ids)

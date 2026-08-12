@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,7 +42,7 @@ async def create_blog_series(
     info: BlogSeriesCreate,
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
-):
+) -> BlogSeriesInfo:
     return await create_series(db, cur.id, info)
 
 
@@ -51,9 +53,11 @@ async def list_blog_series(
     cur: CurrentUser | None = Depends(get_optional_user),
     page: int = Query(1, ge=1),
     limit: int | None = Query(default=None, ge=1, le=200),
-):
+) -> dict[str, Any]:
     user_id = cur.id if cur else None
-    return {"items": await list_series(db, current_user_id=user_id, page=page, limit=limit)}
+    return {
+        "items": await list_series(db, current_user_id=user_id, page=page, limit=limit)
+    }
 
 
 @router.get("/series/{series_id}", response_model=ApiResp[BlogSeriesDetail])
@@ -62,7 +66,7 @@ async def get_blog_series(
     series_id: int,
     db: AsyncSession = Depends(get_session),
     cur: CurrentUser | None = Depends(get_optional_user),
-):
+) -> BlogSeriesDetail:
     user_id = cur.id if cur else None
     return await get_series(db, series_id, current_user_id=user_id)
 
@@ -74,7 +78,7 @@ async def update_blog_series(
     info: BlogSeriesUpdate,
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
-):
+) -> BlogSeriesInfo:
     return await update_series(db, series_id, cur.id, info)
 
 
@@ -84,7 +88,7 @@ async def delete_blog_series(
     series_id: int,
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
-):
+) -> None:
     await delete_series(db, series_id, cur.id)
     return None
 
@@ -101,7 +105,7 @@ async def get_blog_file(
     series_id: int,
     filepath: str,
     db: AsyncSession = Depends(get_session),
-):
+) -> dict[str, Any]:
     return await get_file_content(db, series_id, filepath)
 
 
@@ -114,7 +118,7 @@ async def star_blog_series(
     series_id: int,
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
-):
+) -> BlogStarStatus:
     return await toggle_star(db, series_id, cur.id)
 
 
@@ -131,7 +135,7 @@ async def create_blog_comment(
     info: BlogCommentCreate,
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
-):
+) -> BlogCommentInfo:
     return await create_comment(db, series_id, cur.id, info)
 
 
@@ -143,7 +147,7 @@ async def create_blog_comment(
 async def list_blog_comments(
     series_id: int,
     db: AsyncSession = Depends(get_session),
-):
+) -> dict[str, Any]:
     return {"items": await list_comments(db, series_id)}
 
 
@@ -154,6 +158,6 @@ async def delete_blog_comment(
     comment_id: int,
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
-):
+) -> None:
     await delete_comment(db, series_id, comment_id, cur.id)
     return None

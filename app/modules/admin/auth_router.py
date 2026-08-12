@@ -1,16 +1,17 @@
 """
 后台 cookie 会话端点：/admin/auth/login|refresh|logout|me。
 """
+
 import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.err import CommonErr, respond, resp_json
 from app.core.config import settings
+from app.core.err import CommonErr, resp_json, respond
 from app.db.models import User, now_iso
 from app.db.session import get_session
 from app.modules.auth.deps import CurrentUser
@@ -72,7 +73,7 @@ async def admin_login(
     body: AdminLoginReq,
     request: Request,
     db: AsyncSession = Depends(get_session),
-):
+) -> JSONResponse:
     """管理员密码登录（httpOnly cookie 会话）。
 
     频控两把锁（方案 §8.4）：用户名级 5/5min + 真实 IP 级 20/5min。
@@ -95,8 +96,8 @@ async def admin_login(
         return resp_json(CommonErr.FORBIDDEN, detail="账号已锁定")
 
     # 会话体在 commit 前快照（避免 commit 后 expire 引发的异步重载）
-    access_token = create_admin_access_token(user)   # 读 user.id/account_level（已加载）
-    payload = _admin_user_payload(user)              # 读 created_at 等（已加载）
+    access_token = create_admin_access_token(user)  # 读 user.id/account_level（已加载）
+    payload = _admin_user_payload(user)  # 读 created_at 等（已加载）
 
     # 组织 refresh：本骨架复用现有 RefreshToken 表存哈希，暂不区分 kind（见下方注释）
     raw_refresh = generate_refresh_token()
@@ -123,7 +124,7 @@ async def admin_login(
 async def admin_refresh(
     request: Request,
     db: AsyncSession = Depends(get_session),
-):
+) -> JSONResponse:
     """用 refresh cookie 换新 access + 旋转新 refresh（复用检测：旧值被用 → 作废会话）。
 
     与前台 refresh_access_token 共用 RefreshToken 表的原子撤销语义。
@@ -140,8 +141,7 @@ async def admin_refresh(
     now = now_iso()
     # 原子撤销：仅当记录存在且未撤销时置 revoked_at（此步即"复用检测"）
     result = await db.execute(
-        select(RefreshToken)
-        .where(
+        select(RefreshToken).where(
             RefreshToken.token_hash == tok_hash,
             RefreshToken.kind == "admin",
             RefreshToken.revoked_at.is_(None),
@@ -191,7 +191,7 @@ async def admin_refresh(
 async def admin_logout(
     request: Request,
     db: AsyncSession = Depends(get_session),
-):
+) -> JSONResponse:
     """登出：撤销对应 refresh 令牌并清空 cookie。"""
     raw_refresh = request.cookies.get(REFRESH_NAME)
     if raw_refresh:

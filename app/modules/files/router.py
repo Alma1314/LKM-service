@@ -11,10 +11,12 @@ from app.modules.common import ApiResp, ModuleStatus
 from app.modules.files.schemas import FileCreate, FileInfo, PageData
 from app.modules.files.service import (
     bump_download,
-    create_file as create_file_service,
     get_file,
     get_files_plan,
     list_files,
+)
+from app.modules.files.service import (
+    create_file as create_file_service,
 )
 
 router = APIRouter(prefix="/files", tags=["files"])
@@ -39,8 +41,10 @@ async def get_files(
     status: str | None = Query(default=None, max_length=20),
     sort: str = Query(default="newest"),
     db: AsyncSession = Depends(get_session),
-):
-    return await list_files(db, page=page, limit=limit, category_id=category_id, status=status, sort=sort)
+) -> PageData[FileInfo]:
+    return await list_files(
+        db, page=page, limit=limit, category_id=category_id, status=status, sort=sort
+    )
 
 
 @router.post("", response_model=ApiResp[FileInfo])
@@ -52,7 +56,7 @@ async def upload_file(
     tags: str = Form(default="[]"),
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
-):
+) -> FileInfo:
     try:
         tags_list: list[str] = json.loads(tags) if tags else []
     except json.JSONDecodeError:
@@ -70,7 +74,9 @@ async def upload_file(
 
 @router.get("/{file_id}", response_model=ApiResp[FileInfo])
 @respond
-async def get_file_detail(file_id: int, db: AsyncSession = Depends(get_session)):
+async def get_file_detail(
+    file_id: int, db: AsyncSession = Depends(get_session)
+) -> FileInfo:
     return await get_file(db, file_id, bump_view=True)
 
 
@@ -80,5 +86,5 @@ async def download_file(
     file_id: int,
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
-):
+) -> dict[str, Any]:
     return {"download_count": await bump_download(db, file_id)}

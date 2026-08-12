@@ -8,6 +8,8 @@ GET    /auth/passkey/credentials        get_current_user        列出 Passkey �
 DELETE /auth/passkey/{cred_id}          get_current_user        删除 Passkey 凭据
 """
 
+from typing import Any
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,32 +32,38 @@ from app.modules.common import ApiResp
 router = APIRouter(prefix="/auth/passkey", tags=["auth-passkey"])
 
 
-@router.post("/register/begin", response_model=ApiResp[PasskeyRegistrationOptionsResponse])
+@router.post(
+    "/register/begin", response_model=ApiResp[PasskeyRegistrationOptionsResponse]
+)
 @respond
 async def begin_passkey_registration(
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
-):
+) -> dict[str, Any]:
     """开始 Passkey 注册。返回 PublicKeyCredentialCreationOptions。"""
     return await service_passkey.begin_passkey_registration(db, cur.id)
 
 
-@router.post("/register/complete", response_model=ApiResp[PasskeyRegisterCompleteResponse])
+@router.post(
+    "/register/complete", response_model=ApiResp[PasskeyRegisterCompleteResponse]
+)
 @respond
 async def complete_passkey_registration(
     body: PasskeyRegisterCompleteRequest,
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
-):
+) -> dict[str, Any]:
     """使用客户端传来的凭据完成 Passkey 注册。"""
-    return await service_passkey.complete_passkey_registration(db, cur.id, body.model_dump())
+    return await service_passkey.complete_passkey_registration(
+        db, cur.id, body.model_dump()
+    )
 
 
 @router.post("/login/begin", response_model=ApiResp[PasskeyLoginOptionsResponse])
 @respond
 async def begin_passkey_login(
     db: AsyncSession = Depends(get_session),
-):
+) -> dict[str, Any]:
     """开始 Passkey 登录。返回 PublicKeyCredentialRequestOptions。"""
     return await service_passkey.begin_passkey_login(db)
 
@@ -65,7 +73,7 @@ async def begin_passkey_login(
 async def complete_passkey_login(
     body: PasskeyLoginCompleteRequest,
     db: AsyncSession = Depends(get_session),
-):
+) -> dict[str, Any]:
     """使用客户端传来的凭据完成 Passkey 登录。"""
     return await service_passkey.complete_passkey_login(db, body.model_dump())
 
@@ -75,7 +83,7 @@ async def complete_passkey_login(
 async def list_credentials(
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
-):
+) -> list[dict[str, Any]]:
     """列出当前用户的所有 Passkey 凭据。"""
     return await service_passkey.list_credentials(db, cur.id)
 
@@ -86,6 +94,6 @@ async def delete_credential(
     cred_id: int,
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
-):
+) -> dict[str, Any]:
     """通过数据库 ID 删除一个 Passkey 凭据。"""
     return await service_passkey.delete_credential(db, cur.id, cred_id)

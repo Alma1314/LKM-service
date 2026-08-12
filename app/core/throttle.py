@@ -37,14 +37,18 @@ class RateLimiter:
 # 密码登录全局限流器
 _login_ip_limiter = RateLimiter()
 _login_global_limiter = RateLimiter()
-_LOGIN_IP_MAX = 20          # 每 IP 每分钟最大尝试次数
-_LOGIN_GLOBAL_MAX = 200     # 每分钟全局最大尝试次数
+_LOGIN_IP_MAX = 20  # 每 IP 每分钟最大尝试次数
+_LOGIN_GLOBAL_MAX = 200  # 每分钟全局最大尝试次数
 _LOGIN_WINDOW = 60
 
 
 def check_password_login_rate_limit(ip_address: str) -> None:
     """对密码登录尝试应用 IP 和全局限流。"""
     if not _login_global_limiter.check("__global__", _LOGIN_GLOBAL_MAX, _LOGIN_WINDOW):
-        raise BizError(AuthErr.ACCOUNT_LOCKED, "Too many login attempts, please try again later")
-    if ip_address and not _login_ip_limiter.check(f"ip:{ip_address}", _LOGIN_IP_MAX, _LOGIN_WINDOW):
+        raise BizError(
+            AuthErr.ACCOUNT_LOCKED, "Too many login attempts, please try again later"
+        )
+    if ip_address and not _login_ip_limiter.check(
+        f"ip:{ip_address}", _LOGIN_IP_MAX, _LOGIN_WINDOW
+    ):
         raise BizError(AuthErr.ACCOUNT_LOCKED, "Too many login attempts from this IP")

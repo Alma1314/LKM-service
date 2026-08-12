@@ -8,7 +8,8 @@
 
 from typing import Any, TypeVar
 
-from sqlalchemy import Result, Select, Update, select, update as sa_update
+from sqlalchemy import Result, Select, Update, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 

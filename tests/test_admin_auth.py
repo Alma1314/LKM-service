@@ -3,6 +3,7 @@
 覆盖：登录(成功/非 admin 拒绝/凭证错)、带 cookie 访问 /me、无 cookie 拒绝、
       refresh 换新 access、logout 清会话。遵循 conftest 的 db+client 内存库模式。
 """
+
 import datetime
 from typing import Any
 
@@ -49,7 +50,9 @@ def _login(
 
 
 class TestAdminLogin:
-    async def should_login_admin_and_set_cookies(self, db: AsyncSession, client: AsyncClient):
+    async def should_login_admin_and_set_cookies(
+        self, db: AsyncSession, client: AsyncClient
+    ):
         await _create_user(db, username="root", account_level="admin")
         resp = await _login(client, "root")
         assert resp.status_code == 200
@@ -68,7 +71,9 @@ class TestAdminLogin:
         )
         assert resp.status_code == 403
 
-    async def should_reject_non_admin_account(self, db: AsyncSession, client: AsyncClient):
+    async def should_reject_non_admin_account(
+        self, db: AsyncSession, client: AsyncClient
+    ):
         await _create_user(db, username="member1", account_level="normal")
         resp = await client.post(
             "/api/v1/admin/auth/login",
@@ -79,14 +84,18 @@ class TestAdminLogin:
         body: dict[str, Any] = resp.json()
         assert body["msg"] == "无后台访问权限"
 
-    async def should_reject_unknown_username(self, db: AsyncSession, client: AsyncClient):
+    async def should_reject_unknown_username(
+        self, db: AsyncSession, client: AsyncClient
+    ):
         resp = await client.post(
             "/api/v1/admin/auth/login",
             json={"username": "ghost", "password": "secret123456"},
         )
         assert resp.status_code == 403
 
-    async def should_store_admin_refresh_with_kind(self, db: AsyncSession, client: AsyncClient):
+    async def should_store_admin_refresh_with_kind(
+        self, db: AsyncSession, client: AsyncClient
+    ):
         """后台登录生成的 refresh 令牌必须落库为 kind='admin'（与前台 web 隔离）。"""
         await _create_user(db, username="kind1", account_level="admin")
         login = await _login(client, "kind1")
@@ -95,11 +104,17 @@ class TestAdminLogin:
         assert stored is not None
         assert stored.kind == "admin"
 
-    async def should_reject_web_refresh_in_admin_endpoint(self, db: AsyncSession, client: AsyncClient):
+    async def should_reject_web_refresh_in_admin_endpoint(
+        self, db: AsyncSession, client: AsyncClient
+    ):
         """前台(web) refresh 令牌不得在后台刷新端点被消费（隔离后方，防跨会话互用）。"""
         await _create_user(db, username="kind2", account_level="admin")
         # 直接插入一条 kind='web' 的 refresh，验证后台端点拒绝
-        kind2: User | None = (await db.execute(select(User).where(User.username == "kind2"))).scalars().first()
+        kind2: User | None = (
+            (await db.execute(select(User).where(User.username == "kind2")))
+            .scalars()
+            .first()
+        )
         assert kind2 is not None
         db.add(
             RefreshToken(
@@ -107,7 +122,8 @@ class TestAdminLogin:
                 token_hash=hashpwd("not-a-real-token")[0:64],
                 kind="web",
                 mfa_verified=False,
-                expires_at=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1),
+                expires_at=datetime.datetime.now(datetime.UTC)
+                + datetime.timedelta(days=1),
                 revoked_at=None,
             )
         )
@@ -127,7 +143,9 @@ class TestAdminMe:
         resp = await client.get("/api/v1/admin/auth/me")
         assert resp.status_code == 403
 
-    async def should_allow_admin_with_access_cookie(self, db: AsyncSession, client: AsyncClient):
+    async def should_allow_admin_with_access_cookie(
+        self, db: AsyncSession, client: AsyncClient
+    ):
         await _create_user(db, username="root", account_level="admin")
         login = await _login(client, "root")
         assert login.status_code == 200
@@ -182,7 +200,9 @@ class TestAdminData:
         assert (await client.get("/api/v1/admin/users")).status_code == 403
         assert (await client.get("/api/v1/admin/stats")).status_code == 403
 
-    async def should_list_users_hiding_pii_by_default(self, db: AsyncSession, client: AsyncClient):
+    async def should_list_users_hiding_pii_by_default(
+        self, db: AsyncSession, client: AsyncClient
+    ):
         # 用不重复用户名，避开共享内存 rate limiter 对本进程"admin 用户名登录次数"的计数
         await _create_user(db, username="data_root1", account_level="admin")
         await _create_user(db, username="member_1", account_level="normal")
@@ -199,7 +219,9 @@ class TestAdminData:
         # 默认不返回邮箱（PII 隐藏）
         assert all(it["email"] is None for it in items)
 
-    async def should_include_pii_when_requested(self, db: AsyncSession, client: AsyncClient):
+    async def should_include_pii_when_requested(
+        self, db: AsyncSession, client: AsyncClient
+    ):
         await _create_user(db, username="data_root2", account_level="admin")
         await _login(client, "data_root2")
         resp = await client.get("/api/v1/admin/users", params={"include_pii": "true"})
@@ -207,10 +229,14 @@ class TestAdminData:
         body: dict[str, Any] = resp.json()
         data: dict[str, Any] = body["data"]
         items: list[Any] = data["items"]
-        email = next((it["email"] for it in items if it["username"] == "data_root2"), None)
+        email = next(
+            (it["email"] for it in items if it["username"] == "data_root2"), None
+        )
         assert email == "data_root2@example.com"
 
-    async def should_filter_users_by_keyword(self, db: AsyncSession, client: AsyncClient):
+    async def should_filter_users_by_keyword(
+        self, db: AsyncSession, client: AsyncClient
+    ):
         await _create_user(db, username="data_root3", account_level="admin")
         await _create_user(db, username="other", account_level="normal")
         await _login(client, "data_root3")

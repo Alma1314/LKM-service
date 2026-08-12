@@ -44,11 +44,15 @@ def get_async_engine() -> AsyncEngine | None:
         )
         # 启用 SQLite 外键支持（必须按连接设置，作用于底层 sync 连接）
         if settings.db_driver == "sqlite":
+
             @event.listens_for(_async_engine.sync_engine, "connect")
-            def _set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
+            def _set_sqlite_pragma(
+                dbapi_connection: Any, connection_record: Any
+            ) -> None:
                 cursor = dbapi_connection.cursor()
                 cursor.execute("PRAGMA foreign_keys = ON")
                 cursor.close()
+
     return _async_engine
 
 
@@ -74,7 +78,7 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        raise BizError(AuthErr.ALREADY_REGISTERED, "Resource already exists")
+        raise BizError(AuthErr.ALREADY_REGISTERED, "Resource already exists") from None
     except Exception:
         await db.rollback()
         raise
@@ -116,11 +120,15 @@ def get_engine() -> Engine | None:
             connect_args=connect_args,
         )
         if settings.db_driver == "sqlite":
+
             @event.listens_for(_engine, "connect")
-            def _set_sync_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
+            def _set_sync_sqlite_pragma(
+                dbapi_connection: Any, connection_record: Any
+            ) -> None:
                 cursor = dbapi_connection.cursor()
                 cursor.execute("PRAGMA foreign_keys = ON")
                 cursor.close()
+
     return _engine
 
 
@@ -135,7 +143,7 @@ def _get_session_local() -> sessionmaker[Session] | None:
     return _SessionLocal
 
 
-def get_session_sync() -> Generator[Session, None, None]:
+def get_session_sync() -> Generator[Session]:
     """同步依赖（若未来仍有同步端点使用）。"""
     factory = _get_session_local()
     assert factory is not None

@@ -42,7 +42,9 @@ class Settings(BaseSettings):
     totp_encryption_key: str = "change-me-totp-encryption-key-at-least-32-bytes"
 
     # 验证码 HMAC 盐值 — 必须与 totp_encryption_key 和 jwt_secret 分开设置
-    verification_code_pepper: str = "change-me-verification-code-pepper-at-least-32-bytes"
+    verification_code_pepper: str = (
+        "change-me-verification-code-pepper-at-least-32-bytes"
+    )
 
     # OAuth (GitHub)
     github_client_id: str = ""

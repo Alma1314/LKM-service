@@ -82,6 +82,7 @@ class TokenPair(BaseModel):
     access_token: str
     refresh_token: str
 
+
 class TOTPSetupBeginData(BaseModel):
     secret: str
     qr_code_uri: str
@@ -98,6 +99,7 @@ class TOTPSetupCompleteData(BaseModel):
 
 class TOTPSetupCompleteTempData(BaseModel):
     """管理员强制设置的响应 — 包含认证令牌。"""
+
     recovery_codes: list[str]
     confirmed_saved_required: bool
     access_token: str | None = None
@@ -194,6 +196,7 @@ class PasskeyLoginOptionsResponse(BaseModel):
 
 class PasskeyRegisterCompleteRequest(BaseModel):
     """WebAuthn 注册完成请求体。"""
+
     rawId: str
     challenge_id: str
     response: dict[str, Any] = Field(default_factory=dict)
@@ -202,6 +205,7 @@ class PasskeyRegisterCompleteRequest(BaseModel):
 
 class PasskeyLoginCompleteRequest(BaseModel):
     """WebAuthn 登录完成请求体。"""
+
     rawId: str
     challenge_id: str
     response: dict[str, Any] = Field(default_factory=dict)

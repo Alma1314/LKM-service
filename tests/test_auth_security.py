@@ -1,26 +1,27 @@
 import time
-import pytest
-import jwt
+from typing import Any
 
+import jwt
+import pytest
+
+from app.core.config import settings
 from app.modules.auth.security import (
     create_access_token,
-    decode_access_token,
     create_temp_token,
+    decode_access_token,
     decode_temp_token,
+    decrypt_secret,
+    encrypt_secret,
+    generate_recovery_codes,
     generate_totp_secret,
     get_totp_uri,
     verify_totp,
-    generate_recovery_codes,
-    encrypt_secret,
-    decrypt_secret,
 )
-from app.core.config import settings
-from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # JWT – access token
 # ---------------------------------------------------------------------------
+
 
 class TestAccessToken:
     async def should_create_and_decode(self):
@@ -48,7 +49,9 @@ class TestAccessToken:
             "iat": now - 9999,
             "exp": now - 3600,  # expired 1 hour ago
         }
-        token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+        token = jwt.encode(
+            payload, settings.jwt_secret, algorithm=settings.jwt_algorithm
+        )
         with pytest.raises(jwt.exceptions.ExpiredSignatureError):
             decode_access_token(token)
 
@@ -62,6 +65,7 @@ class TestAccessToken:
 # ---------------------------------------------------------------------------
 # JWT – temp token
 # ---------------------------------------------------------------------------
+
 
 class TestTempToken:
     async def should_create_and_decode(self):
@@ -81,12 +85,14 @@ class TestTempToken:
 # TOTP
 # ---------------------------------------------------------------------------
 
+
 class TestTOTP:
     async def should_generate_valid_secret(self):
         secret = generate_totp_secret()
         assert len(secret) >= 16  # base32 encoding of 20 bytes
         # should be base32 decodable
         import base64
+
         base64.b32decode(secret, casefold=True)
 
     async def should_generate_uri(self):
@@ -100,16 +106,16 @@ class TestTOTP:
         secret = generate_totp_secret()
         # Generate a valid TOTP code from secret for time step now
         import base64
+        import hashlib
         import hmac
         import struct
-        import hashlib
 
         now = int(time.time()) // 30
         key = base64.b32decode(secret, casefold=True)
         msg = struct.pack(">Q", now)
         h = hmac.new(key, msg, hashlib.sha1).digest()
         offset = h[-1] & 0x0F
-        code = (struct.unpack(">I", h[offset:offset + 4])[0] & 0x7FFFFFFF) % 1_000_000
+        code = (struct.unpack(">I", h[offset : offset + 4])[0] & 0x7FFFFFFF) % 1_000_000
         code_str = f"{code:06d}"
 
         assert verify_totp(secret, code_str, window=0) is not None
@@ -121,9 +127,9 @@ class TestTOTP:
     async def should_accept_code_within_window(self):
         secret = generate_totp_secret()
         import base64
+        import hashlib
         import hmac
         import struct
-        import hashlib
 
         # Generate code for previous time step (now - 30)
         prev_time = int(time.time()) // 30 - 1
@@ -131,7 +137,7 @@ class TestTOTP:
         msg = struct.pack(">Q", prev_time)
         h = hmac.new(key, msg, hashlib.sha1).digest()
         offset = h[-1] & 0x0F
-        code = (struct.unpack(">I", h[offset:offset + 4])[0] & 0x7FFFFFFF) % 1_000_000
+        code = (struct.unpack(">I", h[offset : offset + 4])[0] & 0x7FFFFFFF) % 1_000_000
         code_str = f"{code:06d}"
 
         assert verify_totp(secret, code_str, window=1) is not None
@@ -140,6 +146,7 @@ class TestTOTP:
 # ---------------------------------------------------------------------------
 # Recovery codes
 # ---------------------------------------------------------------------------
+
 
 class TestRecoveryCodes:
     async def should_generate_n_codes(self):
@@ -166,6 +173,7 @@ class TestRecoveryCodes:
 # ---------------------------------------------------------------------------
 # Encrypt / Decrypt
 # ---------------------------------------------------------------------------
+
 
 class TestEncryptDecrypt:
     async def should_roundtrip_secret(self):

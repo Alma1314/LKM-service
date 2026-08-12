@@ -10,23 +10,28 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
-from app.modules.auth.errors import AuthErr
 from app.db.models import User
-import app.modules.auth.models  # pyright: ignore[reportUnusedImport] 副作用导入：注册 auth 表
-from app.modules.auth.models import MagicLink, TOTP
+from app.modules.auth.errors import AuthErr
+from app.modules.auth.models import TOTP, MagicLink
 from app.modules.auth.providers.console import ConsoleEmailProvider
 
 
 def _service():
     from app.modules.auth import service_auth
+
     return service_auth
 
 
-async def _create_user(db: AsyncSession, username: str = "alice", email: str = "alice@example.com",
-                       password: str = "secret123456", account_level: str = "normal") -> User:
+async def _create_user(
+    db: AsyncSession,
+    username: str = "alice",
+    email: str = "alice@example.com",
+    password: str = "secret123456",
+    account_level: str = "normal",
+) -> User:
     """Create a user with the given parameters and return it."""
-    from app.modules.auth.security import hashpwd
     from app.db.models import Profile
+    from app.modules.auth.security import hashpwd
 
     user = User(
         username=username,
@@ -41,16 +46,21 @@ async def _create_user(db: AsyncSession, username: str = "alice", email: str = "
     return user
 
 
-async def _make_magic_link(db: AsyncSession, email: str, purpose: str = "login",
-                           used: bool = False, expired: bool = False) -> tuple[str, MagicLink]:
+async def _make_magic_link(
+    db: AsyncSession,
+    email: str,
+    purpose: str = "login",
+    used: bool = False,
+    expired: bool = False,
+) -> tuple[str, MagicLink]:
     """Create a MagicLink record and return (raw_token, record)."""
     raw_token = secrets.token_hex(32)
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
 
     if expired:
-        expires = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)
+        expires = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=1)
     else:
-        expires = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=15)
+        expires = dt.datetime.now(dt.UTC) + dt.timedelta(minutes=15)
 
     record = MagicLink(
         email=email,
@@ -69,25 +79,45 @@ class TestRequestMagicLink:
         await _create_user(db, username="testuser", email="test@example.com")
         svc = _service()
         await svc.request_magic_link(
-            db, "test@example.com", ConsoleEmailProvider(),
+            db,
+            "test@example.com",
+            ConsoleEmailProvider(),
             purpose="login",
         )
 
-        records = (await db.execute(select(MagicLink).where(MagicLink.email == "test@example.com"))).scalars().all()
+        records = (
+            (
+                await db.execute(
+                    select(MagicLink).where(MagicLink.email == "test@example.com")
+                )
+            )
+            .scalars()
+            .all()
+        )
         assert len(records) == 1
         record = records[0]
         assert record.purpose == "login"
         assert record.used is False
         assert len(record.token_hash) == 64  # SHA-256 hex
 
-    async def should_store_different_tokens_for_repeated_requests(self, db: AsyncSession):
+    async def should_store_different_tokens_for_repeated_requests(
+        self, db: AsyncSession
+    ):
         await _create_user(db, username="user_a", email="a@b.com")
         svc = _service()
 
-        await svc.request_magic_link(db, "a@b.com", ConsoleEmailProvider(), purpose="login")
-        await svc.request_magic_link(db, "a@b.com", ConsoleEmailProvider(), purpose="login")
+        await svc.request_magic_link(
+            db, "a@b.com", ConsoleEmailProvider(), purpose="login"
+        )
+        await svc.request_magic_link(
+            db, "a@b.com", ConsoleEmailProvider(), purpose="login"
+        )
 
-        records = (await db.execute(select(MagicLink).where(MagicLink.email == "a@b.com"))).scalars().all()
+        records = (
+            (await db.execute(select(MagicLink).where(MagicLink.email == "a@b.com")))
+            .scalars()
+            .all()
+        )
         assert len(records) == 2
         assert records[0].token_hash != records[1].token_hash
 
@@ -115,7 +145,12 @@ class TestVerifyMagicLink:
 
         record_id = record.id  # snapshot before expiring the session
         db.expire_all()
-        updated = cast(MagicLink, (await db.execute(select(MagicLink).where(MagicLink.id == record_id))).scalars().first())
+        updated = cast(
+            MagicLink,
+            (await db.execute(select(MagicLink).where(MagicLink.id == record_id)))
+            .scalars()
+            .first(),
+        )
         assert updated.used is True
 
     async def should_reject_expired_magic_link(self, db: AsyncSession):
@@ -179,7 +214,9 @@ class TestVerifyMagicLink:
         assert exc.value.errcode == AuthErr.TOTP_SETUP_REQUIRED
 
     async def should_return_temp_token_when_2fa_required(self, db: AsyncSession):
-        user = await _create_user(db, email="secure@example.com", account_level="normal")
+        user = await _create_user(
+            db, email="secure@example.com", account_level="normal"
+        )
         # enable TOTP
         totp = TOTP(user_id=user.id, secret="MZXW6YTBOJQXI33F", enabled=True)
         db.add(totp)

@@ -4,7 +4,9 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# 以下是为user请求头校验新增的导入
 from app.core.err import BizError, CommonErr
+from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.columns.errors import ColumnErr
 from app.modules.columns.models import ColumnApplicationStatus
 from app.modules.columns.schemas import (
@@ -25,9 +27,6 @@ from app.modules.columns.service import (
     list_posts,
     review_application,
 )
-#以下是为user请求头校验新增的导入
-import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
-from app.modules.auth.security import create_access_token, hashpwd
 
 # db 与 client fixture 均由 tests/conftest.py 提供（内存 sqlite 会话 + httpx.AsyncClient）
 
@@ -35,10 +34,13 @@ from app.modules.auth.security import create_access_token, hashpwd
 async def _user(
     db: AsyncSession, username: str = "alice", email: str = "alice@example.com"
 ) -> int:
-    from app.db.models import User, Profile
+    from app.db.models import Profile, User
+
     user = User(
-        username=username, email=email,
-        hashed_password=hashpwd("secret123456"), account_level="normal",
+        username=username,
+        email=email,
+        hashed_password=hashpwd("secret123456"),
+        account_level="normal",
     )
     db.add(user)
     await db.flush()
@@ -141,7 +143,9 @@ class TestColumnReview:
         assert result["column"]["owner_id"] == user_id
         assert result["column"]["application_id"] == application.id
 
-    async def should_not_create_column_when_application_is_rejected(self, db: AsyncSession):
+    async def should_not_create_column_when_application_is_rejected(
+        self, db: AsyncSession
+    ):
         user_id = await _user(db)
         application = await _application(db, user_id=user_id)
 
@@ -247,13 +251,15 @@ class TestColumnPosts:
             await _post(db, column_id=999, author_id=user_id)
 
         assert exc.value.errcode == ColumnErr.NOT_FOUND
+
+
 class TestColumnRoutes:
-    async def _setup_user(
-        self, db: AsyncSession
-    ) -> tuple[int, str]:
+    async def _setup_user(self, db: AsyncSession) -> tuple[int, str]:
         """Create a user in DB and return (user_id, bearer_token)."""
         user_id = await _user(db, username="testuser", email="test@example.com")
-        token = create_access_token(user_id=user_id, account_level="normal", role="member")
+        token = create_access_token(
+            user_id=user_id, account_level="normal", role="member"
+        )
         return user_id, token
 
     async def should_reject_application_without_auth_header(
@@ -268,8 +274,8 @@ class TestColumnRoutes:
         }
 
         response = await client.post(
-            "/api/v1/columns/applications",
-            json=application_data)
+            "/api/v1/columns/applications", json=application_data
+        )
 
         assert response.status_code == 403
         assert response.json()["code"] == CommonErr.FORBIDDEN
@@ -313,6 +319,7 @@ class TestColumnRoutes:
         assert resp.status_code == 200
         assert resp.json()["code"] == 0
         assert resp.json()["data"]["user_id"] == user_id
+
 
 def should_test():
     pass

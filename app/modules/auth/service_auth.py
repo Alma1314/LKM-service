@@ -6,7 +6,8 @@ import logging
 import secrets
 from typing import Any, Protocol, runtime_checkable
 
-from sqlalchemy import select, update as sa_update
+from sqlalchemy import select
+from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -14,16 +15,17 @@ from sqlalchemy.orm import selectinload
 from app.core.config import settings
 from app.core.err import BizError, CommonErr
 from app.core.throttle import check_password_login_rate_limit
-from app.modules.auth.errors import AuthErr
-from app.db.models import User, Profile, expires_at, now_iso
+from app.db.models import Profile, User, expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise, isolated_update
+from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import (
+    TOTP,
     AuditLog,
     MagicLink,
     PendingRegistration,
     RefreshToken,
-    TOTP,
 )
+from app.modules.auth.providers.base import EmailProvider
 from app.modules.auth.schemas import (
     UserLoginPassword,
     UserRegLocal,
@@ -40,7 +42,6 @@ from app.modules.auth.service_verify import (
     consume_email_code,
     consume_phone_code,
 )
-from app.modules.auth.providers.base import EmailProvider
 
 logger = logging.getLogger(__name__)
 
@@ -73,14 +74,16 @@ def hash_refresh_token(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-async def store_refresh_token(db: AsyncSession, user_id: object, raw: str, mfa_verified: object = False) -> datetime.datetime:
+async def store_refresh_token(
+    db: AsyncSession, user_id: int, raw: str, mfa_verified: bool = False
+) -> datetime.datetime:
     """持久化哈希后的刷新令牌并返回其过期时间（timezone-aware datetime）。"""
     days = settings.refresh_token_expire_days
     expires_str = expires_at(days=days)
     tok = RefreshToken(
-        user_id=int(user_id),  # type: ignore[arg-type]
+        user_id=user_id,
         token_hash=hash_refresh_token(raw),
-        mfa_verified=bool(mfa_verified),
+        mfa_verified=mfa_verified,
         expires_at=expires_str,
     )
     db.add(tok)
@@ -89,7 +92,11 @@ async def store_refresh_token(db: AsyncSession, user_id: object, raw: str, mfa_v
 
 
 async def issue_session_tokens(
-    db: AsyncSession, user: User, *, trust_device: bool = False, mfa_verified: bool = False
+    db: AsyncSession,
+    user: User,
+    *,
+    trust_device: bool = False,
+    mfa_verified: bool = False,
 ) -> tuple[str, str]:
     """发放访问令牌 + 刷新令牌，返回 (access_token, raw_refresh)。"""
     # async 下不能对未加载的 relationship 做 lazy load，统一确保 profile 已初始化
@@ -175,15 +182,19 @@ async def register_local(db: AsyncSession, info: UserRegLocal) -> dict[str, Any]
     """创建一个 ``local`` 账户，若已存在且密码正确则自动登录。"""
     username = _normalize_username(info.username)
     result = await db.execute(
-        select(User).where(User.username == username).options(selectinload(User.profile))
+        select(User)
+        .where(User.username == username)
+        .options(selectinload(User.profile))
     )
     existing = result.scalars().first()
     if existing:
-        hashed: str = existing.hashed_password  # type: ignore[assignment]
+        hashed: str = existing.hashed_password
         if not hashed or not verifypwd(info.password, hashed):
-            raise BizError(AuthErr.ALREADY_REGISTERED, "Account exists but password is incorrect")
-        await upgrade_to_normal(db, existing)  # type: ignore[arg-type]
-        return await _create_auth_response(db, existing)  # type: ignore[arg-type]
+            raise BizError(
+                AuthErr.ALREADY_REGISTERED, "Account exists but password is incorrect"
+            )
+        await upgrade_to_normal(db, existing)
+        return await _create_auth_response(db, existing)
 
     user = User(
         username=username,
@@ -226,27 +237,33 @@ async def register_normal_with_password(
     email_normalized = _normalize_email(info.email) if info.email else None
 
     existing = (
-        await db.execute(
-            select(User)
-            .where(
-                (User.username == username)
-                | ((User.email == email_normalized) if email_normalized else False)
-                | (User.phone == info.phone)
+        (
+            await db.execute(
+                select(User)
+                .where(
+                    (User.username == username)
+                    | ((User.email == email_normalized) if email_normalized else False)
+                    | (User.phone == info.phone)
+                )
+                .options(selectinload(User.profile))
             )
-            .options(selectinload(User.profile))
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if existing:
-        hashed: str = existing.hashed_password  # type: ignore[assignment]
+        hashed: str = existing.hashed_password
         if not hashed or not verifypwd(info.password, hashed):
-            raise BizError(AuthErr.ALREADY_REGISTERED, "Account exists but password is incorrect")
+            raise BizError(
+                AuthErr.ALREADY_REGISTERED, "Account exists but password is incorrect"
+            )
         if email_normalized and not existing.email:
             existing.email = email_normalized
         if info.phone and not existing.phone:
             existing.phone = info.phone
-        await upgrade_to_normal(db, existing)  # type: ignore[arg-type]
+        await upgrade_to_normal(db, existing)
         await db.flush()
-        return await _create_auth_response(db, existing)  # type: ignore[arg-type]
+        return await _create_auth_response(db, existing)
 
     user = User(
         username=username,
@@ -264,7 +281,9 @@ async def register_normal_with_password(
     return await _create_auth_response(db, user)
 
 
-async def register_by_verify(db: AsyncSession, field: str, value: str) -> dict[str, Any]:
+async def register_by_verify(
+    db: AsyncSession, field: str, value: str
+) -> dict[str, Any]:
     """通过邮箱或手机验证创建一个*无密码*的普通用户，若已存在则自动登录。"""
     if field not in ("email", "phone"):
         raise BizError(CommonErr.INVALID_INPUT, "field must be 'email' or 'phone'")
@@ -273,34 +292,47 @@ async def register_by_verify(db: AsyncSession, field: str, value: str) -> dict[s
     if field == "email":
         normalized_value = _normalize_email(value)
         existing = (
-            await db.execute(
-                select(User).where(User.email == normalized_value).options(selectinload(User.profile))
+            (
+                await db.execute(
+                    select(User)
+                    .where(User.email == normalized_value)
+                    .options(selectinload(User.profile))
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
     else:
         normalized_value = value
         existing = (
-            await db.execute(
-                select(User).where(User.phone == normalized_value).options(selectinload(User.profile))
+            (
+                await db.execute(
+                    select(User)
+                    .where(User.phone == normalized_value)
+                    .options(selectinload(User.profile))
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
 
     if existing:
-        await upgrade_to_normal(db, existing)  # type: ignore[arg-type]
+        await upgrade_to_normal(db, existing)
         await db.flush()
         await log_audit(db, existing.id, "register_code", f"auto-login via {field}")
-        return await _create_auth_response(db, existing)  # type: ignore[arg-type]
+        return await _create_auth_response(db, existing)
 
     # 从值中派生用户名
-    if field == "email":
-        username = value.split("@")[0]
-    else:
-        username = f"user_{value[-6:]}"
+    username = value.split("@")[0] if field == "email" else f"user_{value[-6:]}"
 
     # 确保唯一性
     suffix = 1
     base = username
-    while (await db.execute(select(User).where(User.username == username))).scalars().first():
+    while (
+        (await db.execute(select(User).where(User.username == username)))
+        .scalars()
+        .first()
+    ):
         username = f"{base}{suffix}"
         suffix += 1
 
@@ -351,7 +383,9 @@ async def consume_pending_normal_registration(
     phone_code: str | None = None,
 ) -> dict[str, Any]:
     pending = await get_or_raise(
-        db, PendingRegistration, AuthErr.TOKEN_INVALID,
+        db,
+        PendingRegistration,
+        AuthErr.TOKEN_INVALID,
         PendingRegistration.txn_id == txn_id,
         detail="Invalid registration transaction",
     )
@@ -379,30 +413,38 @@ async def consume_pending_normal_registration(
 
     # 检查重复 —— 如果已存在且密码正确则自动登录
     existing = (
-        await db.execute(
-            select(User)
-            .where(
-                (User.username == pending.username)
-                | ((User.email == pending.email) if pending.email else False)
-                | ((User.phone == pending.phone) if pending.phone else False)
+        (
+            await db.execute(
+                select(User)
+                .where(
+                    (User.username == pending.username)
+                    | ((User.email == pending.email) if pending.email else False)
+                    | ((User.phone == pending.phone) if pending.phone else False)
+                )
+                .options(selectinload(User.profile))
             )
-            .options(selectinload(User.profile))
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if existing:
-        hashed: str = existing.hashed_password  # type: ignore[assignment]
-        pending_hashed: str = pending.hashed_password  # type: ignore[assignment]
+        hashed: str = existing.hashed_password
+        pending_hashed: str = pending.hashed_password
         if not hashed or not verifypwd(pending_hashed, hashed):
-            raise BizError(AuthErr.ALREADY_REGISTERED, "Account exists but password is incorrect")
+            raise BizError(
+                AuthErr.ALREADY_REGISTERED, "Account exists but password is incorrect"
+            )
         # 将联系方式绑定到已有账户
         if pending.email and not existing.email:
             existing.email = pending.email
         if pending.phone and not existing.phone:
             existing.phone = pending.phone
-        await upgrade_to_normal(db, existing)  # type: ignore[arg-type]
+        await upgrade_to_normal(db, existing)
         await db.flush()
-        await log_audit(db, existing.id, "register_normal", "auto-login via registration")
-        return await _create_auth_response(db, existing)  # type: ignore[arg-type]
+        await log_audit(
+            db, existing.id, "register_normal", "auto-login via registration"
+        )
+        return await _create_auth_response(db, existing)
 
     user = User(
         username=str(pending.username),
@@ -420,11 +462,17 @@ async def consume_pending_normal_registration(
     return await _create_auth_response(db, user)
 
 
-async def _check_admin_totp_required(db: AsyncSession, user: User) -> dict[str, Any] | None:
+async def _check_admin_totp_required(
+    db: AsyncSession, user: User
+) -> dict[str, Any] | None:
     """如果用户是管理员但尚未设置 TOTP，返回 setup 响应；否则返回 None。"""
     if str(user.account_level) != "admin":
         return None
-    totp = (await db.execute(select(TOTP).where(TOTP.user_id == user.id))).scalars().first()
+    totp = (
+        (await db.execute(select(TOTP).where(TOTP.user_id == user.id)))
+        .scalars()
+        .first()
+    )
     if totp and totp.enabled:
         return None
     setup_token = create_temp_token(user.id, purpose="setup")
@@ -448,15 +496,23 @@ async def finalize_auth_response(db: AsyncSession, user: User) -> dict[str, Any]
     requires_2fa = False
     if str(user.account_level) in ("normal", "admin"):
         totp = (
-            await db.execute(select(TOTP).where(TOTP.user_id == user.id, TOTP.enabled.is_(True)))
-        ).scalars().first()
+            (
+                await db.execute(
+                    select(TOTP).where(TOTP.user_id == user.id, TOTP.enabled.is_(True))
+                )
+            )
+            .scalars()
+            .first()
+        )
         if totp:
             requires_2fa = True
 
-    return await _create_auth_response(db, user, requires_2fa=requires_2fa)  # type: ignore[arg-type]
+    return await _create_auth_response(db, user, requires_2fa=requires_2fa)
 
 
-async def login_password(db: AsyncSession, info: UserLoginPassword, ip_address: str = "") -> dict[str, Any]:
+async def login_password(
+    db: AsyncSession, info: UserLoginPassword, ip_address: str = ""
+) -> dict[str, Any]:
     """通过用户名、邮箱或手机号 + 密码进行认证。"""
     if ip_address:
         check_password_login_rate_limit(ip_address)
@@ -465,33 +521,38 @@ async def login_password(db: AsyncSession, info: UserLoginPassword, ip_address: 
     email_normalized = _normalize_email(info.account)
 
     user = (
-        await db.execute(
-            select(User)
-            .where(
-                (User.username == account)
-                | (User.email == email_normalized)
-                | (User.phone == info.account.strip())
+        (
+            await db.execute(
+                select(User)
+                .where(
+                    (User.username == account)
+                    | (User.email == email_normalized)
+                    | (User.phone == info.account.strip())
+                )
+                .options(selectinload(User.profile))
             )
-            .options(selectinload(User.profile))
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
 
     if not user:
         # 防御用户枚举：执行一个相同成本的虚拟哈希，
         verifypwd(info.password, "$dummy$" + "a" * 64)
         raise BizError(AuthErr.INVALID_CREDENTIALS)
 
-    await _check_account_locked(user)  # type: ignore[arg-type]
+    await _check_account_locked(user)
 
     try:
         ok = verifypwd(info.password, str(user.hashed_password))
     except (ValueError, TypeError):
         logger.exception(
-            "verifypwd raised exception for user_id=%s (possible corrupted hash)", user.id
+            "verifypwd raised exception for user_id=%s (possible corrupted hash)",
+            user.id,
         )
         ok = False
     if not ok:
-        await _record_failed_attempt(db, user)  # type: ignore[arg-type]
+        await _record_failed_attempt(db, user)
         if user.failed_login_attempts >= _FAIL_LOCK_THRESHOLD:
             await log_audit(db, user.id, "account_locked", "5 failed login attempts")
         raise BizError(AuthErr.INVALID_CREDENTIALS)
@@ -508,7 +569,7 @@ async def login_password(db: AsyncSession, info: UserLoginPassword, ip_address: 
 
     await log_audit(db, user.id, "login_password", "success")
 
-    return await finalize_auth_response(db, user)  # type: ignore[arg-type]
+    return await finalize_auth_response(db, user)
 
 
 async def login_code(db: AsyncSession, contact: str, code: str) -> dict[str, Any]:
@@ -516,13 +577,19 @@ async def login_code(db: AsyncSession, contact: str, code: str) -> dict[str, Any
     if "@" in contact:
         await consume_email_code(db, contact, code, "login")
         user = await get_or_raise(
-            db, User, AuthErr.USER_NOT_FOUND, User.email == _normalize_email(contact),
+            db,
+            User,
+            AuthErr.USER_NOT_FOUND,
+            User.email == _normalize_email(contact),
             options=(selectinload(User.profile),),
         )
     else:
         await consume_phone_code(db, contact, code, "login")
         user = await get_or_raise(
-            db, User, AuthErr.USER_NOT_FOUND, User.phone == contact,
+            db,
+            User,
+            AuthErr.USER_NOT_FOUND,
+            User.phone == contact,
             options=(selectinload(User.profile),),
         )
 
@@ -530,10 +597,10 @@ async def login_code(db: AsyncSession, contact: str, code: str) -> dict[str, Any
         raise BizError(AuthErr.ACCOUNT_LEVEL_INSUFFICIENT)
 
     if user.is_locked:
-        await _check_account_locked(user)  # type: ignore[arg-type]
+        await _check_account_locked(user)
 
     # 没有 TOTP 的管理员 —— 与密码登录相同的设置流程
-    return await finalize_auth_response(db, user)  # type: ignore[arg-type]
+    return await finalize_auth_response(db, user)
 
 
 async def request_magic_link(
@@ -612,8 +679,14 @@ async def verify_magic_link(
     ):
         # 令牌可能已过期或不存在 —— 检查具体是哪一种情况
         link_record = (
-            await db.execute(select(MagicLink).where(MagicLink.token_hash == token_hash))
-        ).scalars().first()
+            (
+                await db.execute(
+                    select(MagicLink).where(MagicLink.token_hash == token_hash)
+                )
+            )
+            .scalars()
+            .first()
+        )
         if not link_record:
             raise BizError(AuthErr.TOKEN_INVALID)
         if link_record.purpose != purpose:
@@ -625,12 +698,17 @@ async def verify_magic_link(
 
     # 原子更新后重新获取
     link_record = await get_or_raise(
-        db, MagicLink, AuthErr.TOKEN_INVALID,
+        db,
+        MagicLink,
+        AuthErr.TOKEN_INVALID,
         MagicLink.token_hash == token_hash,
     )
 
     user = await get_or_raise(
-        db, User, AuthErr.USER_NOT_FOUND, User.email == link_record.email,
+        db,
+        User,
+        AuthErr.USER_NOT_FOUND,
+        User.email == link_record.email,
         options=(selectinload(User.profile),),
     )
 
@@ -639,7 +717,11 @@ async def verify_magic_link(
 
     # 没有 TOTP 的管理员必须设置它
     if user.account_level == "admin":
-        totp = (await db.execute(select(TOTP).where(TOTP.user_id == user.id))).scalars().first()
+        totp = (
+            (await db.execute(select(TOTP).where(TOTP.user_id == user.id)))
+            .scalars()
+            .first()
+        )
         if not totp or not totp.enabled:
             raise BizError(AuthErr.TOTP_SETUP_REQUIRED)
 
@@ -647,12 +729,18 @@ async def verify_magic_link(
     requires_2fa = False
     if user.account_level in ("normal", "admin"):
         totp = (
-            await db.execute(select(TOTP).where(TOTP.user_id == user.id, TOTP.enabled.is_(True)))
-        ).scalars().first()
+            (
+                await db.execute(
+                    select(TOTP).where(TOTP.user_id == user.id, TOTP.enabled.is_(True))
+                )
+            )
+            .scalars()
+            .first()
+        )
         if totp:
             requires_2fa = True
 
-    return await _create_auth_response(db, user, requires_2fa=requires_2fa)  # type: ignore[arg-type]
+    return await _create_auth_response(db, user, requires_2fa=requires_2fa)
 
 
 async def upgrade_to_normal(db: AsyncSession, user: User) -> None:
@@ -680,7 +768,9 @@ async def refresh_access_token(db: AsyncSession, raw_refresh: str) -> dict[str, 
 
     # 现在获取记录以得到 user_id 和 mfa_verified
     stored = await get_or_raise(
-        db, RefreshToken, AuthErr.TOKEN_INVALID,
+        db,
+        RefreshToken,
+        AuthErr.TOKEN_INVALID,
         RefreshToken.token_hash == tok_hash,
     )
 
@@ -690,15 +780,22 @@ async def refresh_access_token(db: AsyncSession, raw_refresh: str) -> dict[str, 
 
     # 发放新令牌
     user = await get_or_raise(
-        db, User, AuthErr.USER_NOT_FOUND, User.id == stored.user_id,
+        db,
+        User,
+        AuthErr.USER_NOT_FOUND,
+        User.id == stored.user_id,
         options=(selectinload(User.profile),),
     )
 
     # 管理员用户的刷新令牌会话必须经过 MFA 认证
     if user.account_level == "admin" and not stored.mfa_verified:
-        raise BizError(AuthErr.TOKEN_INVALID, "Admin refresh token requires MFA assurance")
+        raise BizError(
+            AuthErr.TOKEN_INVALID, "Admin refresh token requires MFA assurance"
+        )
 
-    access_token, raw_new = await issue_session_tokens(db, user, mfa_verified=stored.mfa_verified)
+    access_token, raw_new = await issue_session_tokens(
+        db, user, mfa_verified=stored.mfa_verified
+    )
     return {"access_token": access_token, "refresh_token": raw_new}
 
 
@@ -720,13 +817,13 @@ async def revoke_all_refresh_tokens(db: AsyncSession, user_id: int) -> None:
 
 async def log_audit(
     db: AsyncSession,
-    user_id: object,
+    user_id: int | None,
     action: str,
     detail: str | None = None,
     ip_address: str | None = None,
 ) -> None:
     """创建一条审计日志记录。"""
-    uid: int | None = int(user_id) if user_id is not None else None  # type: ignore[arg-type]
+    uid = user_id
     entry = AuditLog(
         user_id=uid,
         action=action,

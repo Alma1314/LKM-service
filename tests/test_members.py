@@ -150,7 +150,9 @@ class TestMembersRoutes:
         assert body["code"] == MemberErr.GROUP_NOT_FOUND
 
     async def test_unknown_group_returns_404(self, client: AsyncClient):
-        resp = await client.get("/api/v1/members?type=projectSubGroups&group=noSuchGroup")
+        resp = await client.get(
+            "/api/v1/members?type=projectSubGroups&group=noSuchGroup"
+        )
         assert resp.status_code == 404
         body: dict[str, Any] = resp.json()
         assert body["code"] == MemberErr.GROUP_NOT_FOUND

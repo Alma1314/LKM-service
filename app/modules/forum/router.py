@@ -16,13 +16,19 @@ from app.modules.forum.schemas import (
 )
 from app.modules.forum.service import (
     create_comment,
-    create_post as create_post_service,
-    delete_post as delete_post_service,
     get_forum_plan,
     get_post,
-    like_post as like_post_service,
     list_comments,
     list_posts,
+)
+from app.modules.forum.service import (
+    create_post as create_post_service,
+)
+from app.modules.forum.service import (
+    delete_post as delete_post_service,
+)
+from app.modules.forum.service import (
+    like_post as like_post_service,
 )
 
 router = APIRouter(prefix="/forum", tags=["forum"])
@@ -45,7 +51,7 @@ async def get_posts(
     limit: int = Query(20, ge=1, le=100),
     category_id: str | None = Query(default=None, max_length=50),
     db: AsyncSession = Depends(get_session),
-):
+) -> PageData[PostInfo]:
     return await list_posts(db, page=page, limit=limit, category_id=category_id)
 
 
@@ -55,13 +61,15 @@ async def create_forum_post(
     info: PostCreate,
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
-):
+) -> PostInfo:
     return await create_post_service(db, cur.id, info)
 
 
 @router.get("/posts/{post_id}", response_model=ApiResp[PostInfo])
 @respond
-async def get_post_detail(post_id: int, db: AsyncSession = Depends(get_session)):
+async def get_post_detail(
+    post_id: int, db: AsyncSession = Depends(get_session)
+) -> PostInfo:
     return await get_post(db, post_id, bump_view=True)
 
 
@@ -71,7 +79,7 @@ async def like_forum_post(
     post_id: int,
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
-):
+) -> dict[str, Any]:
     return {"like_count": await like_post_service(db, post_id)}
 
 
@@ -81,7 +89,7 @@ async def delete_forum_post(
     post_id: int,
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
-):
+) -> dict[str, Any]:
     await delete_post_service(db, post_id, cur.id)
     return {"ok": True}
 
@@ -93,7 +101,7 @@ async def get_post_comments(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_session),
-):
+) -> PageData[CommentInfo]:
     return await list_comments(db, post_id, page=page, limit=limit)
 
 
@@ -104,5 +112,5 @@ async def create_post_comment(
     info: CommentCreate,
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
-):
+) -> CommentInfo:
     return await create_comment(db, post_id, cur.id, info)

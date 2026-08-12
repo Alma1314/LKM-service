@@ -6,15 +6,16 @@ import hmac
 import secrets
 from typing import Any, cast
 
-from sqlalchemy import select, update as sa_update
+from sqlalchemy import select
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.err import BizError
-from app.modules.auth.errors import AuthErr
 from app.core.throttle import RateLimiter
 from app.db.models import now_iso
 from app.db.repo import consume_once, isolated_update
+from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import EmailVerification, PhoneVerification
 
 _CODE_EXPIRE_MINUTES = 10
@@ -30,7 +31,7 @@ def generate_code() -> str:
 
 def hash_code(raw: str, purpose: str = "", contact: str = "", nonce: str = "") -> str:
     pepper = settings.verification_code_pepper.encode()
-    msg = f"{raw}:{purpose}:{contact}:{nonce}".encode("utf-8")
+    msg = f"{raw}:{purpose}:{contact}:{nonce}".encode()
     return hmac.new(pepper, msg, hashlib.sha256).hexdigest()
 
 
@@ -45,7 +46,7 @@ async def _create_verification(
     code = generate_code()
     nonce = secrets.token_hex(8)
     record = model(
-        **{contact_attr: contact},  # type: ignore[call-arg]
+        **{contact_attr: contact},
         code_hash=hash_code(code, purpose, contact=contact, nonce=nonce),
         nonce=nonce,
         purpose=purpose,
@@ -53,7 +54,7 @@ async def _create_verification(
     )
     db.add(record)
     await db.flush()
-    return code, record.id  # type: ignore[union-attr]
+    return code, record.id
 
 
 async def _latest_verification(
@@ -123,12 +124,15 @@ async def _consume(db: AsyncSession, record: Any, code: str) -> bool:
 
     # 验证码不匹配 —— 通过子事务（保存点）递增计数器，
     contact = getattr(record, "email", None) or getattr(record, "phone", "")
-    if not hmac.compare_digest(record.code_hash, hash_code(code, record.purpose, contact=contact, nonce=record.nonce)):
+    if not hmac.compare_digest(
+        record.code_hash,
+        hash_code(code, record.purpose, contact=contact, nonce=record.nonce),
+    ):
         record_cls = cast(type[Any], type(record))
         await isolated_update(
             db,
             sa_update(record_cls)
-            .where(record_cls.id == record.id)  # type: ignore[union-attr]
+            .where(record_cls.id == record.id)
             .values(failed_attempts=record_cls.failed_attempts + 1),
         )
         await db.refresh(record)
@@ -139,7 +143,7 @@ async def _consume(db: AsyncSession, record: Any, code: str) -> bool:
         db,
         record_cls,
         {"used": True},
-        record_cls.id == record.id,  # type: ignore[union-attr]
+        record_cls.id == record.id,
         record_cls.used.is_(False),
         record_cls.failed_attempts < _MAX_FAILED_ATTEMPTS,
         record_cls.expires_at > now,
@@ -149,9 +153,7 @@ async def _consume(db: AsyncSession, record: Any, code: str) -> bool:
     return True
 
 
-def check_code_rate_limit(
-    key: str, max_count: int = 5, window: float = 3600
-) -> None:
+def check_code_rate_limit(key: str, max_count: int = 5, window: float = 3600) -> None:
     """
     如果 *key* 超过了限制，则抛出 ``BizError(VERIFICATION_CODE_RATE_LIMIT)``。
     使用全局内存中的滑动窗口速率限制器。

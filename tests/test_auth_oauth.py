@@ -1,11 +1,11 @@
 """Tests for Github OAuth — service_oauth auth URL generation and callback logic."""
+
 from typing import Any
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
 from app.core.config import settings
 from app.modules.auth.models import OAuthState
 
@@ -52,12 +52,19 @@ class TestGithubAuthUrl:
 
 class TestOAuthState:
     async def should_store_and_consume_state(self, db: AsyncSession):
-        from app.modules.auth.service_oauth import generate_oauth_state, consume_oauth_state
+        from app.modules.auth.service_oauth import (
+            consume_oauth_state,
+            generate_oauth_state,
+        )
 
         state = await generate_oauth_state(db, "login")
         assert len(state) > 0
 
-        records = (await db.execute(select(OAuthState).where(OAuthState.state == state))).scalars().all()
+        records = (
+            (await db.execute(select(OAuthState).where(OAuthState.state == state)))
+            .scalars()
+            .all()
+        )
         assert len(records) == 1
         assert not records[0].consumed
 
@@ -66,8 +73,11 @@ class TestOAuthState:
         assert records[0].consumed
 
     async def should_reject_already_consumed_state(self, db: AsyncSession):
-        from app.modules.auth.service_oauth import generate_oauth_state, consume_oauth_state
         from app.core.err import BizError
+        from app.modules.auth.service_oauth import (
+            consume_oauth_state,
+            generate_oauth_state,
+        )
 
         state = await generate_oauth_state(db, "login")
         await consume_oauth_state(db, state, "login")
@@ -76,8 +86,11 @@ class TestOAuthState:
             await consume_oauth_state(db, state, "login")
 
     async def should_reject_wrong_purpose(self, db: AsyncSession):
-        from app.modules.auth.service_oauth import generate_oauth_state, consume_oauth_state
         from app.core.err import BizError
+        from app.modules.auth.service_oauth import (
+            consume_oauth_state,
+            generate_oauth_state,
+        )
 
         state = await generate_oauth_state(db, "login")
         with pytest.raises(BizError):
@@ -89,8 +102,9 @@ class TestOauthRouterRedirect:
 
     async def should_redirect_login_callback_with_tokens(self, db: AsyncSession):
         from unittest.mock import AsyncMock, patch
-        from fastapi.responses import RedirectResponse
         from urllib.parse import parse_qs, urlparse
+
+        from fastapi.responses import RedirectResponse
 
         from app.modules.auth import router_oauth
 
@@ -119,7 +133,9 @@ class TestOauthRouterRedirect:
         assert qs["refresh_token"] == ["ref123"]
         assert "temp_token" not in qs
 
-    async def should_redirect_login_callback_with_temp_token_when_2fa(self, db: AsyncSession):
+    async def should_redirect_login_callback_with_temp_token_when_2fa(
+        self, db: AsyncSession
+    ):
         from unittest.mock import AsyncMock, patch
         from urllib.parse import parse_qs, urlparse
 
@@ -149,8 +165,9 @@ class TestOauthRouterRedirect:
 
     async def should_redirect_bind_callback_on_success(self, db: AsyncSession):
         from unittest.mock import AsyncMock, patch
-        from fastapi.responses import RedirectResponse
         from urllib.parse import parse_qs, urlparse
+
+        from fastapi.responses import RedirectResponse
 
         from app.modules.auth import router_oauth
 
@@ -168,8 +185,9 @@ class TestOauthRouterRedirect:
 
     async def should_redirect_bind_callback_on_biz_error(self, db: AsyncSession):
         from unittest.mock import patch
-        from fastapi.responses import RedirectResponse
         from urllib.parse import parse_qs, urlparse
+
+        from fastapi.responses import RedirectResponse
 
         from app.core.err import BizError
         from app.modules.auth import router_oauth

@@ -2,6 +2,7 @@
 
 import datetime as _dt
 import os
+from typing import Any
 
 from fastapi import Depends, Header
 from jwt import PyJWTError
@@ -11,9 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.err import BizError, CommonErr
-from app.modules.auth.errors import AuthErr
 from app.db.models import User, now_iso
 from app.db.session import get_session
+from app.modules.auth.errors import AuthErr
 from app.modules.auth.providers.base import EmailProvider, SmsProvider
 from app.modules.auth.providers.console import ConsoleEmailProvider, ConsoleSmsProvider
 from app.modules.auth.security import decode_access_token
@@ -31,7 +32,9 @@ class CurrentUser(BaseModel):
     phone: str | None = None
 
 
-def _parse_bearer(authorization: str | None = Header(None, alias="Authorization")) -> str:
+def _parse_bearer(
+    authorization: str | None = Header(None, alias="Authorization"),
+) -> str:
     """从 Authorization 请求头中提取 Bearer 令牌。如果请求头缺失或格式错误，则抛出 BizError(FORBIDDEN)。"""
     if not authorization:
         raise BizError(CommonErr.FORBIDDEN, "Missing authorization header")
@@ -53,9 +56,7 @@ async def _resolve_current_user(token: str, db: AsyncSession) -> CurrentUser:
         raise BizError(AuthErr.TOKEN_INVALID, "Token missing user_id")
 
     result = await db.execute(
-        select(User)
-        .where(User.id == user_id)
-        .options(selectinload(User.profile))
+        select(User).where(User.id == user_id).options(selectinload(User.profile))
     )
     user = result.scalars().first()
     if user is None:
@@ -68,7 +69,9 @@ async def _resolve_current_user(token: str, db: AsyncSession) -> CurrentUser:
     # token_version 检查：如果用户的 token_version 已经被提升（例如注销或密码重置后），令牌无效。
     token_ver = payload.get("token_version")
     if token_ver is not None and token_ver != user.token_version:
-        raise BizError(AuthErr.TOKEN_EXPIRED, "Session invalidated – please login again")
+        raise BizError(
+            AuthErr.TOKEN_EXPIRED, "Session invalidated – please login again"
+        )
 
     # 密码更改会撤销现有访问令牌
     # JWT iat 必须 >= user.updated_at（允许 5 秒时钟偏差容差）
@@ -76,15 +79,17 @@ async def _resolve_current_user(token: str, db: AsyncSession) -> CurrentUser:
     if user.updated_at:
         token_iat = payload.get("iat")
         if token_iat is not None:
-            updated: _dt.datetime = user.updated_at  # type: ignore[assignment]
-            token_time = _dt.datetime.fromtimestamp(float(token_iat), tz=_dt.timezone.utc)
+            updated: _dt.datetime = user.updated_at
+            token_time = _dt.datetime.fromtimestamp(float(token_iat), tz=_dt.UTC)
             if updated - token_time > _dt.timedelta(seconds=5):
-                raise BizError(AuthErr.TOKEN_EXPIRED, "Password changed – please login again")
+                raise BizError(
+                    AuthErr.TOKEN_EXPIRED, "Password changed – please login again"
+                )
 
     profile = user.profile
     role: str = profile.role if profile else "member"
     return CurrentUser(
-        id=int(user.id),  # type: ignore[arg-type]
+        id=int(user.id),
         account_level=str(user.account_level),
         role=role,
         email=user.email,
@@ -92,12 +97,17 @@ async def _resolve_current_user(token: str, db: AsyncSession) -> CurrentUser:
     )
 
 
-async def get_current_user(token: str = Depends(_parse_bearer), db: AsyncSession = Depends(get_session)) -> CurrentUser:
+async def get_current_user(
+    token: str = Depends(_parse_bearer), db: AsyncSession = Depends(get_session)
+) -> CurrentUser:
     """必选 JWT 认证依赖。抛出ERROR"""
     return await _resolve_current_user(token, db)
 
 
-async def get_optional_user(token: str | None = Header(None, alias="Authorization"), db: AsyncSession = Depends(get_session)) -> CurrentUser | None:
+async def get_optional_user(
+    token: str | None = Header(None, alias="Authorization"),
+    db: AsyncSession = Depends(get_session),
+) -> CurrentUser | None:
     """可选 JWT 认证依赖。不抛出ERROR"""
     if not token:
         return None
@@ -110,7 +120,7 @@ async def get_optional_user(token: str | None = Header(None, alias="Authorizatio
         return None
 
 
-def RequireLevel(min_level: str):
+def RequireLevel(min_level: str) -> Any:
     """
     级别（从低到高排列）：``local``, ``normal``, ``admin``。
     用法::

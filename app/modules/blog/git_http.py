@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import contextlib
 import os
 import subprocess
 
@@ -29,18 +30,20 @@ def _run_git_http_backend(env: dict[str, str], body: bytes) -> Response:
             env=env,
         )
     except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="git executable not found")
+        raise HTTPException(
+            status_code=500, detail="git executable not found"
+        ) from None
 
     try:
         stdout, _ = proc.communicate(input=body, timeout=120)
     except subprocess.TimeoutExpired:
         proc.kill()
-        raise HTTPException(status_code=504, detail="Git operation timed out")
+        raise HTTPException(status_code=504, detail="Git operation timed out") from None
 
     header_end = stdout.find(b"\r\n\r\n")
     if header_end != -1:
         header_section = stdout[:header_end].decode("utf-8", errors="replace")
-        response_body = stdout[header_end + 4:]
+        response_body = stdout[header_end + 4 :]
     else:
         header_section = ""
         response_body = stdout
@@ -51,10 +54,8 @@ def _run_git_http_backend(env: dict[str, str], body: bytes) -> Response:
 
     for line in header_section.split("\r\n"):
         if line.lower().startswith("status:"):
-            try:
+            with contextlib.suppress(ValueError, IndexError):
                 status_code = int(line.split(":", 1)[1].strip().split()[0])
-            except (ValueError, IndexError):
-                pass
         elif ":" in line:
             key, value = line.split(":", 1)
             response_headers[key.strip()] = value.strip()
@@ -75,11 +76,11 @@ async def git_http_backend(
     rest: str,
     request: Request,
     db: AsyncSession = Depends(get_session),
-):
-    root = os.path.abspath(settings.blog_repo_dir)
+) -> Response:
+    root = str(await asyncio.to_thread(os.path.abspath, settings.blog_repo_dir))
     repo_path = os.path.join(root, f"{repo_name}.git")
 
-    if not os.path.isdir(repo_path):
+    if not await asyncio.to_thread(os.path.isdir, repo_path):
         raise HTTPException(status_code=404, detail="Repository not found")
 
     env = os.environ.copy()
@@ -99,8 +100,10 @@ async def git_http_backend(
             decoded = base64.b64decode(auth[6:]).decode("utf-8")
             username, password = decoded.split(":", 1)
             user = (
-                await db.execute(select(User).where(User.username == username))
-            ).scalars().first()
+                (await db.execute(select(User).where(User.username == username)))
+                .scalars()
+                .first()
+            )
             if user and verifypwd(password, user.hashed_password):
                 env["REMOTE_USER"] = username
         except Exception:

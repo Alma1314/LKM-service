@@ -11,9 +11,11 @@ POST /auth/recover/magic-link         – 发送用于密码重置的魔法链�
 POST /auth/recover/magic-link/verify  – 通过魔法链接令牌重置
 """
 
+from typing import Any
+
 from fastapi import APIRouter, BackgroundTasks, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.err import respond
@@ -21,12 +23,6 @@ from app.db.session import get_session
 from app.modules.auth import service_recovery
 from app.modules.auth.deps import get_email_provider, get_sms_provider
 from app.modules.auth.providers.base import EmailProvider
-from app.modules.auth.service_auth import request_magic_link
-from app.modules.auth.service_verify import (
-    check_code_rate_limit,
-    create_email_verification,
-    create_phone_verification,
-)
 from app.modules.auth.schemas import (
     AdminRecoverBeginResponse,
     AdminRecoverVerifyContactResponse,
@@ -34,6 +30,12 @@ from app.modules.auth.schemas import (
     MessageResponse,
     RecoverCheckResponse,
     RecoverRequires2FAResponse,
+)
+from app.modules.auth.service_auth import request_magic_link
+from app.modules.auth.service_verify import (
+    check_code_rate_limit,
+    create_email_verification,
+    create_phone_verification,
 )
 from app.modules.common import ApiResp
 
@@ -81,7 +83,9 @@ class RecoverMagicLinkVerifyRequest(BaseModel):
 
 @router.post("/check", response_model=ApiResp[RecoverCheckResponse])
 @respond
-async def recover_check(info: RecoverCheckRequest, db: AsyncSession = Depends(get_session)):
+async def recover_check(
+    info: RecoverCheckRequest, db: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
     return service_recovery.check_recovery_methods(db, info.account)
 
 
@@ -91,7 +95,7 @@ async def recover_phone(
     info: RecoverPhoneRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_session),
-):
+) -> dict[str, Any]:
     check_code_rate_limit(f"recover:phone:{info.phone}", max_count=5, window=3600)
     code, _ = await create_phone_verification(db, info.phone, "reset")
     background_tasks.add_task(get_sms_provider().send_code, info.phone, code)
@@ -102,8 +106,10 @@ async def recover_phone(
 @respond
 async def recover_phone_verify(
     info: RecoverPhoneVerifyRequest, db: AsyncSession = Depends(get_session)
-):
-    check_code_rate_limit(f"recover:phone:verify:{info.phone}", max_count=5, window=3600)
+) -> dict[str, Any]:
+    check_code_rate_limit(
+        f"recover:phone:verify:{info.phone}", max_count=5, window=3600
+    )
     return await service_recovery.recover_by_phone(
         db, info.phone, info.code, info.new_password
     )
@@ -115,7 +121,7 @@ async def recover_email(
     info: RecoverEmailRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_session),
-):
+) -> dict[str, Any]:
     check_code_rate_limit(f"recover:email:{info.email}", max_count=5, window=3600)
     code, _ = await create_email_verification(db, info.email, "reset")
     background_tasks.add_task(get_email_provider().send_code, info.email, code)
@@ -126,8 +132,10 @@ async def recover_email(
 @respond
 async def recover_email_verify(
     info: RecoverEmailVerifyRequest, db: AsyncSession = Depends(get_session)
-):
-    check_code_rate_limit(f"recover:email:verify:{info.email}", max_count=5, window=3600)
+) -> dict[str, Any]:
+    check_code_rate_limit(
+        f"recover:email:verify:{info.email}", max_count=5, window=3600
+    )
     return await service_recovery.recover_by_email_code(
         db, info.email, info.code, info.new_password
     )
@@ -140,7 +148,7 @@ async def recover_magic_link(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_session),
     email_provider: EmailProvider = Depends(get_email_provider),
-):
+) -> dict[str, Any]:
     await request_magic_link(
         db,
         info.email,
@@ -156,7 +164,7 @@ async def recover_magic_link(
 @respond
 async def recover_magic_link_verify(
     info: RecoverMagicLinkVerifyRequest, db: AsyncSession = Depends(get_session)
-):
+) -> dict[str, Any]:
     check_code_rate_limit("recover:magic-link:verify:global", max_count=10, window=3600)
     return await service_recovery.recover_by_magic_link(
         db, info.token, info.new_password
@@ -177,18 +185,22 @@ class RecoverUserCompleteRequest(BaseModel):
 @respond
 async def recover_user_verify_totp(
     info: RecoverUserVerifyTOTPRequest, db: AsyncSession = Depends(get_session)
-):
+) -> dict[str, Any]:
     """确认用户恢复事务的 2FA。需要用户在完成 2FA 后从 /auth/2fa/verify 获取的 temp_token。"""
-    return await service_recovery.recover_admin_verify_totp(db, info.txn_id, info.temp_token)
+    return await service_recovery.recover_admin_verify_totp(
+        db, info.txn_id, info.temp_token
+    )
 
 
 @router.post("/complete", response_model=ApiResp[MessageResponse])
 @respond
 async def recover_user_complete(
     info: RecoverUserCompleteRequest, db: AsyncSession = Depends(get_session)
-):
+) -> dict[str, Any]:
     """使用新密码完成用户恢复。需要已验证的联系方式+2FA。"""
-    return await service_recovery.recover_user_complete(db, info.txn_id, info.new_password)
+    return await service_recovery.recover_user_complete(
+        db, info.txn_id, info.new_password
+    )
 
 
 class RecoverAdminRequest(BaseModel):
@@ -216,34 +228,48 @@ async def recover_admin_begin(
     info: RecoverAdminRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_session),
-):
+) -> dict[str, Any]:
     """第1步：发起管理员恢复。服务层负责生成并发送验证码。"""
-    return await service_recovery.recover_admin_begin(db, info.contact, background_tasks=background_tasks)
+    return await service_recovery.recover_admin_begin(
+        db, info.contact, background_tasks=background_tasks
+    )
 
 
-@router.post("/admin/verify-contact", response_model=ApiResp[AdminRecoverVerifyContactResponse])
+@router.post(
+    "/admin/verify-contact", response_model=ApiResp[AdminRecoverVerifyContactResponse]
+)
 @respond
 async def recover_admin_verify_contact(
     info: RecoverAdminVerifyContactRequest, db: AsyncSession = Depends(get_session)
-):
+) -> dict[str, Any]:
     """第2步：验证联系方式验证码。返回用于 2FA 的 temp_token。"""
-    check_code_rate_limit(f"recover:admin:verify-contact:{info.txn_id}", max_count=3, window=600)
-    return await service_recovery.recover_admin_verify_contact(db, info.txn_id, info.code)
+    check_code_rate_limit(
+        f"recover:admin:verify-contact:{info.txn_id}", max_count=3, window=600
+    )
+    return await service_recovery.recover_admin_verify_contact(
+        db, info.txn_id, info.code
+    )
 
 
-@router.post("/admin/verify-totp", response_model=ApiResp[AdminRecoverVerifyTOTPResponse])
+@router.post(
+    "/admin/verify-totp", response_model=ApiResp[AdminRecoverVerifyTOTPResponse]
+)
 @respond
 async def recover_admin_verify_totp(
     info: RecoverAdminVerifyTOTPRequest, db: AsyncSession = Depends(get_session)
-):
+) -> dict[str, Any]:
     """第3步：确认 2FA 已完成。需要从 /auth/2fa/verify 获取的 temp_token。"""
-    return await service_recovery.recover_admin_verify_totp(db, info.txn_id, info.temp_token)
+    return await service_recovery.recover_admin_verify_totp(
+        db, info.txn_id, info.temp_token
+    )
 
 
 @router.post("/admin/complete", response_model=ApiResp[MessageResponse])
 @respond
 async def recover_admin_complete(
     info: RecoverAdminCompleteRequest, db: AsyncSession = Depends(get_session)
-):
+) -> dict[str, Any]:
     """第4步：设置新密码。需要前面所有步骤已完成。"""
-    return await service_recovery.recover_admin_complete(db, info.txn_id, info.new_password)
+    return await service_recovery.recover_admin_complete(
+        db, info.txn_id, info.new_password
+    )

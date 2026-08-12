@@ -1,6 +1,7 @@
-from collections.abc import AsyncGenerator
+import asyncio
 import io
 import pathlib
+from collections.abc import AsyncGenerator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -15,11 +16,11 @@ from sqlalchemy.pool import StaticPool
 
 import app.modules.auth.models  # pyright: ignore[reportUnusedImport] ensure auth tables registered
 from app.core.err import BizError, CommonErr
-from app.modules.files.errors import FileErr
 from app.db.models import Base, LibraryFile, Profile, User
 from app.db.session import get_session
 from app.main import app
 from app.modules.auth.security import create_access_token, hashpwd
+from app.modules.files.errors import FileErr
 from app.modules.files.schemas import FileCreate, FileInfo
 from app.modules.files.service import (
     bump_download,
@@ -30,7 +31,7 @@ from app.modules.files.service import (
 
 
 @pytest.fixture
-async def db() -> AsyncGenerator[AsyncSession, None]:
+async def db() -> AsyncGenerator[AsyncSession]:
     engine: AsyncEngine = create_async_engine(
         "sqlite+aiosqlite://",
         poolclass=StaticPool,
@@ -50,20 +51,18 @@ async def db() -> AsyncGenerator[AsyncSession, None]:
 @pytest.fixture
 async def client(
     db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> AsyncGenerator[AsyncClient, None]:
+) -> AsyncGenerator[AsyncClient]:
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
 
-    async def override_get_session() -> AsyncGenerator[AsyncSession, None]:
+    async def override_get_session() -> AsyncGenerator[AsyncSession]:
         yield db
 
     app.dependency_overrides[get_session] = override_get_session
     transport = ASGITransport(app=app)
     try:
-        async with AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as c:
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
             yield c
     finally:
         app.dependency_overrides.pop(get_session, None)
@@ -127,7 +126,11 @@ class TestFilesService:
         assert f.status == "pending"
         assert f.download_count == 0
         assert f.view_count == 0
-        stored = (await db.execute(select(LibraryFile).where(LibraryFile.id == f.id))).scalars().one()
+        stored = (
+            (await db.execute(select(LibraryFile).where(LibraryFile.id == f.id)))
+            .scalars()
+            .one()
+        )
         assert (tmp_path / stored.stored_name).read_bytes() == b"%PDF-1.4 fake content"
 
     async def should_use_username_when_no_nickname(
@@ -167,7 +170,9 @@ class TestFilesService:
         monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
         user_id = await _user(db)
         await _file(db, uploader_id=user_id, category_id="math")
-        await _file(db, uploader_id=user_id, original_name="物理题.pdf", category_id="physics")
+        await _file(
+            db, uploader_id=user_id, original_name="物理题.pdf", category_id="physics"
+        )
 
         page = await list_files(db, category_id="math")
 
@@ -242,7 +247,7 @@ class TestFilesService:
 
         assert exc.value.errcode == FileErr.TOO_LARGE
         assert len((await db.execute(select(LibraryFile))).scalars().all()) == 0
-        assert list(tmp_path.iterdir()) == []
+        assert await asyncio.to_thread(lambda: list(tmp_path.iterdir())) == []
 
     async def should_accept_upload_at_exact_limit(
         self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
@@ -265,10 +270,15 @@ class TestFilesService:
 
 class TestFilesRoutes:
     async def _setup_user(
-        self, db: AsyncSession, username: str = "tester", email: str = "tester@example.com"
+        self,
+        db: AsyncSession,
+        username: str = "tester",
+        email: str = "tester@example.com",
     ) -> tuple[int, str]:
         user_id = await _user(db, username=username, email=email)
-        token = create_access_token(user_id=user_id, account_level="normal", role="member")
+        token = create_access_token(
+            user_id=user_id, account_level="normal", role="member"
+        )
         return user_id, token
 
     async def _upload(
@@ -281,11 +291,23 @@ class TestFilesRoutes:
         return await client.post(
             "/api/v1/files",
             headers={"Authorization": f"Bearer {token}"},
-            files={"file": (original_name, io.BytesIO(b"%PDF-1.4 content"), "application/pdf")},
-            data={"category_id": category_id, "description": "测试上传", "tags": '["数学"]'},
+            files={
+                "file": (
+                    original_name,
+                    io.BytesIO(b"%PDF-1.4 content"),
+                    "application/pdf",
+                )
+            },
+            data={
+                "category_id": category_id,
+                "description": "测试上传",
+                "tags": '["数学"]',
+            },
         )
 
-    async def should_reject_upload_without_auth(self, client: AsyncClient, db: AsyncSession):
+    async def should_reject_upload_without_auth(
+        self, client: AsyncClient, db: AsyncSession
+    ):
         await self._setup_user(db)
         resp = await client.post(
             "/api/v1/files",
@@ -295,7 +317,9 @@ class TestFilesRoutes:
         assert resp.status_code == 403
         assert resp.json()["code"] == CommonErr.FORBIDDEN
 
-    async def should_upload_file_with_token(self, client: AsyncClient, db: AsyncSession):
+    async def should_upload_file_with_token(
+        self, client: AsyncClient, db: AsyncSession
+    ):
         user_id, token = await self._setup_user(db)
         resp = await self._upload(client, token)
 
@@ -330,7 +354,9 @@ class TestFilesRoutes:
         assert resp.status_code == 200
         assert resp.json()["data"]["view_count"] == 1
 
-    async def should_increment_download_through_api(self, client: AsyncClient, db: AsyncSession):
+    async def should_increment_download_through_api(
+        self, client: AsyncClient, db: AsyncSession
+    ):
         _, token = await self._setup_user(db)
         created = (await self._upload(client, token)).json()["data"]
         file_id = created["id"]
@@ -343,14 +369,20 @@ class TestFilesRoutes:
         assert resp.status_code == 200
         assert resp.json()["data"]["download_count"] == 1
 
-    async def should_reject_nonexistent_file_detail(self, client: AsyncClient, db: AsyncSession):
+    async def should_reject_nonexistent_file_detail(
+        self, client: AsyncClient, db: AsyncSession
+    ):
         resp = await client.get("/api/v1/files/999")
 
         assert resp.status_code == 404
         assert resp.json()["code"] == FileErr.NOT_FOUND
 
     async def should_reject_oversized_upload_through_api(
-        self, client: AsyncClient, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        client: AsyncClient,
+        db: AsyncSession,
+        tmp_path: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         from app.core.config import settings
 
@@ -366,7 +398,7 @@ class TestFilesRoutes:
 
         assert resp.status_code == 413
         assert resp.json()["code"] == FileErr.TOO_LARGE
-        assert list(tmp_path.iterdir()) == []
+        assert await asyncio.to_thread(lambda: list(tmp_path.iterdir())) == []
 
     async def should_not_persist_record_when_storage_fails(
         self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
@@ -376,7 +408,9 @@ class TestFilesRoutes:
         store = tmp_path / "store"
         store.mkdir()
         (store / "blocked.txt").write_text("x")
-        monkeypatch.setattr(settings, "files_store_dir", str(store / "blocked.txt" / "sub"))
+        monkeypatch.setattr(
+            settings, "files_store_dir", str(store / "blocked.txt" / "sub")
+        )
 
         user_id = await _user(db)
         with pytest.raises(BizError) as exc:

@@ -12,12 +12,12 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import delete as sa_delete, select
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.err import BizError, CommonErr, respond
-from app.modules.auth.errors import AuthErr
 from app.db.models import User
 from app.db.repo import get_or_raise
 from app.db.session import get_session
@@ -28,6 +28,7 @@ from app.modules.auth.deps import (
     get_email_provider,
     get_sms_provider,
 )
+from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import TOTP, UserOAuth
 from app.modules.auth.providers.base import EmailProvider, SmsProvider
 from app.modules.auth.schemas import (
@@ -80,9 +81,15 @@ async def bind_email_request(
 ) -> dict[str, Any]:
     """请求用于绑定的邮箱验证码。"""
     # 检查邮箱是否已被占用
-    existing = (await db.execute(select(User).where(User.email == body.email))).scalars().first()
+    existing = (
+        (await db.execute(select(User).where(User.email == body.email)))
+        .scalars()
+        .first()
+    )
     if existing:
-        raise BizError(AuthErr.ALREADY_REGISTERED, "Email already bound to another account")
+        raise BizError(
+            AuthErr.ALREADY_REGISTERED, "Email already bound to another account"
+        )
 
     rate_limit_key = f"bind_email:{body.email}"
     check_code_rate_limit(rate_limit_key)
@@ -104,12 +111,21 @@ async def bind_email_verify(
     await consume_email_code(db, body.email, body.code, _BIND_PURPOSE)
 
     # 确保邮箱仍未被占用（可能在请求和验证之间被占用）
-    existing = (await db.execute(select(User).where(User.email == body.email))).scalars().first()
+    existing = (
+        (await db.execute(select(User).where(User.email == body.email)))
+        .scalars()
+        .first()
+    )
     if existing:
-        raise BizError(AuthErr.ALREADY_REGISTERED, "Email already bound to another account")
+        raise BizError(
+            AuthErr.ALREADY_REGISTERED, "Email already bound to another account"
+        )
 
     user = await get_or_raise(
-        db, User, AuthErr.USER_NOT_FOUND, User.id == cur.id,
+        db,
+        User,
+        AuthErr.USER_NOT_FOUND,
+        User.id == cur.id,
         options=(selectinload(User.oauth_bindings),),
     )
 
@@ -117,7 +133,7 @@ async def bind_email_verify(
     await db.flush()
 
     # 如果适用，将本地用户升级为普通用户
-    await service_auth.upgrade_to_normal(db, user)  # type: ignore[arg-type]
+    await service_auth.upgrade_to_normal(db, user)
 
     return {"message": "Email bound successfully"}
 
@@ -133,9 +149,15 @@ async def bind_phone_request(
 ) -> dict[str, Any]:
     """请求用于绑定的短信验证码。"""
     # 检查手机号是否已被占用
-    existing = (await db.execute(select(User).where(User.phone == body.phone))).scalars().first()
+    existing = (
+        (await db.execute(select(User).where(User.phone == body.phone)))
+        .scalars()
+        .first()
+    )
     if existing:
-        raise BizError(AuthErr.ALREADY_REGISTERED, "Phone already bound to another account")
+        raise BizError(
+            AuthErr.ALREADY_REGISTERED, "Phone already bound to another account"
+        )
 
     rate_limit_key = f"bind_phone:{body.phone}"
     check_code_rate_limit(rate_limit_key)
@@ -157,12 +179,21 @@ async def bind_phone_verify(
     await consume_phone_code(db, body.phone, body.code, _BIND_PURPOSE)
 
     # 确保手机号仍未被占用
-    existing = (await db.execute(select(User).where(User.phone == body.phone))).scalars().first()
+    existing = (
+        (await db.execute(select(User).where(User.phone == body.phone)))
+        .scalars()
+        .first()
+    )
     if existing:
-        raise BizError(AuthErr.ALREADY_REGISTERED, "Phone already bound to another account")
+        raise BizError(
+            AuthErr.ALREADY_REGISTERED, "Phone already bound to another account"
+        )
 
     user = await get_or_raise(
-        db, User, AuthErr.USER_NOT_FOUND, User.id == cur.id,
+        db,
+        User,
+        AuthErr.USER_NOT_FOUND,
+        User.id == cur.id,
         options=(selectinload(User.oauth_bindings),),
     )
 
@@ -170,7 +201,7 @@ async def bind_phone_verify(
     await db.flush()
 
     # 如果适用，将本地用户升级为普通用户
-    await service_auth.upgrade_to_normal(db, user)  # type: ignore[arg-type]
+    await service_auth.upgrade_to_normal(db, user)
 
     return {"message": "Phone bound successfully"}
 
@@ -184,13 +215,25 @@ async def get_settings(
     """返回当前用户的绑定状态（邮箱 / 手机号 / GitHub / 2FA）。"""
     user = await get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == cur.id)
     gh = (
-        await db.execute(
-            select(UserOAuth).where(UserOAuth.user_id == cur.id, UserOAuth.provider == "github")
+        (
+            await db.execute(
+                select(UserOAuth).where(
+                    UserOAuth.user_id == cur.id, UserOAuth.provider == "github"
+                )
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     totp = (
-        await db.execute(select(TOTP).where(TOTP.user_id == cur.id, TOTP.enabled.is_(True)))
-    ).scalars().first()
+        (
+            await db.execute(
+                select(TOTP).where(TOTP.user_id == cur.id, TOTP.enabled.is_(True))
+            )
+        )
+        .scalars()
+        .first()
+    )
     return {
         "email": user.email or None,
         "phone": user.phone or None,
@@ -209,29 +252,45 @@ async def unbind(
     body: UnbindRequest,
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
-):
+) -> dict[str, Any]:
     """解绑邮箱 / 手机号 / GitHub。已开启 2FA 时需携带 TOTP 码二次验证。"""
     if binding_type not in _ALLOWED_UNBIND:
-        raise BizError(CommonErr.INVALID_INPUT, f"Unsupported binding type: {binding_type}")
+        raise BizError(
+            CommonErr.INVALID_INPUT, f"Unsupported binding type: {binding_type}"
+        )
 
     user = await get_or_raise(
-        db, User, AuthErr.USER_NOT_FOUND, User.id == cur.id,
+        db,
+        User,
+        AuthErr.USER_NOT_FOUND,
+        User.id == cur.id,
         options=(selectinload(User.oauth_bindings),),
     )
 
     if binding_type in ("email", "phone"):
         # 2FA 门槛：已开启 2FA 必须带 TOTP 码
         totp = (
-            await db.execute(select(TOTP).where(TOTP.user_id == cur.id, TOTP.enabled.is_(True)))
-        ).scalars().first()
+            (
+                await db.execute(
+                    select(TOTP).where(TOTP.user_id == cur.id, TOTP.enabled.is_(True))
+                )
+            )
+            .scalars()
+            .first()
+        )
         if totp is not None:
             if not body.code:
-                raise BizError(AuthErr.TOTP_CODE_INVALID, "2FA 已开启，解绑需要动态验证码")
+                raise BizError(
+                    AuthErr.TOTP_CODE_INVALID, "2FA 已开启，解绑需要动态验证码"
+                )
             await service_2fa.verify_user_totp(db, cur.id, body.code)
 
         # 保留至少一种登录方式：normal 用户要求 email/phone/github 至少留一个
         if _count_login_ways(user) <= 1:
-            raise BizError(CommonErr.INVALID_INPUT, "至少需要保留一种登录方式（邮箱/手机号/GitHub）")
+            raise BizError(
+                CommonErr.INVALID_INPUT,
+                "至少需要保留一种登录方式（邮箱/手机号/GitHub）",
+            )
 
         if binding_type == "email":
             user.email = None
@@ -242,7 +301,9 @@ async def unbind(
 
     # github
     result = await db.execute(
-        sa_delete(UserOAuth).where(UserOAuth.user_id == cur.id, UserOAuth.provider == "github")
+        sa_delete(UserOAuth).where(
+            UserOAuth.user_id == cur.id, UserOAuth.provider == "github"
+        )
     )
     await db.flush()
     if (getattr(result, "rowcount", 0) or 0) == 0:

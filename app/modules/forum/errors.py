@@ -1,4 +1,4 @@
-from app.core.err import ErrCode, NS_FORUM, register
+from app.core.err import NS_FORUM, ErrCode, register
 
 
 class ForumErr(ErrCode):
@@ -8,7 +8,7 @@ class ForumErr(ErrCode):
 
 register(
     {
-        ForumErr.POST_NOT_FOUND:    (404, "Forum post not found"),
+        ForumErr.POST_NOT_FOUND: (404, "Forum post not found"),
         ForumErr.COMMENT_NOT_FOUND: (404, "Forum comment not found"),
     }
 )

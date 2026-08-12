@@ -3,20 +3,22 @@
 import hashlib
 from typing import Any
 
-from sqlalchemy import delete as sa_delete, or_, select, update as sa_update
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import or_, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.err import BizError
-from app.modules.auth.errors import AuthErr
 from app.db.models import User
 from app.db.repo import consume_once, get_or_raise, isolated_update
-from app.modules.auth.models import RecoveryCode, TempTokenUsage, TOTP
+from app.modules.auth.errors import AuthErr
+from app.modules.auth.models import TOTP, RecoveryCode, TempTokenUsage
 from app.modules.auth.security import (
-    decrypt_secret,
     decode_temp_token,
+    decrypt_secret,
     encrypt_secret,
     generate_recovery_codes,
     generate_totp_secret,
@@ -30,7 +32,9 @@ _TOTP_MAX_FAILED = 3
 
 def _check_totp_failed(totp_record: TOTP | None) -> None:
     if totp_record and totp_record.failed_attempts >= _TOTP_MAX_FAILED:
-        raise BizError(AuthErr.TOTP_CODE_INVALID, "TOTP verification locked – too many failures")
+        raise BizError(
+            AuthErr.TOTP_CODE_INVALID, "TOTP verification locked – too many failures"
+        )
 
 
 async def _record_totp_failure(db: AsyncSession, totp_record: TOTP | None) -> None:
@@ -63,7 +67,9 @@ def _decode_temp_token(raw_token: str) -> dict[str, Any]:
         raise BizError(AuthErr.TOKEN_INVALID) from exc
 
 
-async def _check_and_consume_temp_token(db: AsyncSession, raw_token: str, user_id: int, txn_id: str | None = None) -> dict[str, Any]:
+async def _check_and_consume_temp_token(
+    db: AsyncSession, raw_token: str, user_id: int, txn_id: str | None = None
+) -> dict[str, Any]:
     """在成功的第二因素验证后原子地消费临时令牌。"""
     payload = _decode_temp_token(raw_token)
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
@@ -86,21 +92,32 @@ async def _check_and_consume_temp_token(db: AsyncSession, raw_token: str, user_i
         await sp.rollback()
         # 其他人已认领这个哈希值 —— 检查是否已消费
         existing = (
-            await db.execute(
-                select(TempTokenUsage).where(TempTokenUsage.token_hash == token_hash)
+            (
+                await db.execute(
+                    select(TempTokenUsage).where(
+                        TempTokenUsage.token_hash == token_hash
+                    )
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if existing and existing.consumed:
-            raise BizError(AuthErr.TOKEN_INVALID, "Temp token already used")
-        raise BizError(AuthErr.TOKEN_INVALID, "Temp token conflict")
+            raise BizError(AuthErr.TOKEN_INVALID, "Temp token already used") from None
+        raise BizError(AuthErr.TOKEN_INVALID, "Temp token conflict") from None
 
     return payload
 
 
-async def _create_auth_tokens(db: AsyncSession, user: User, trust_device: bool = False) -> dict[str, Any]:
+async def _create_auth_tokens(
+    db: AsyncSession, user: User, trust_device: bool = False
+) -> dict[str, Any]:
     """为给定用户发放访问令牌和刷新令牌。"""
     access_token, raw_refresh = await issue_session_tokens(
-        db, user, trust_device=trust_device, mfa_verified=True,
+        db,
+        user,
+        trust_device=trust_device,
+        mfa_verified=True,
     )
     return {
         "access_token": access_token,
@@ -112,13 +129,20 @@ async def _create_auth_tokens(db: AsyncSession, user: User, trust_device: bool =
 
 async def setup_2fa_begin(db: AsyncSession, user_id: int) -> dict[str, Any]:
     user = await get_or_raise(
-        db, User, AuthErr.USER_NOT_FOUND, User.id == user_id,
+        db,
+        User,
+        AuthErr.USER_NOT_FOUND,
+        User.id == user_id,
         options=(selectinload(User.profile),),
     )
     if user.account_level == "local":
         raise BizError(AuthErr.ACCOUNT_LEVEL_INSUFFICIENT)
 
-    totp_record = (await db.execute(select(TOTP).where(TOTP.user_id == user_id))).scalars().first()
+    totp_record = (
+        (await db.execute(select(TOTP).where(TOTP.user_id == user_id)))
+        .scalars()
+        .first()
+    )
     if totp_record and totp_record.enabled:
         raise BizError(AuthErr.TOTP_ALREADY_ENABLED)
 
@@ -135,21 +159,30 @@ async def setup_2fa_begin(db: AsyncSession, user_id: int) -> dict[str, Any]:
         db.add(totp_record)
     await db.flush()
 
-    return {"secret": secret, "qr_code_uri": get_totp_uri(secret, user.username, settings.app_name)}  # type: ignore[arg-type]
+    return {
+        "secret": secret,
+        "qr_code_uri": get_totp_uri(secret, user.username, settings.app_name),
+    }
 
 
-async def setup_2fa_complete(db: AsyncSession, user_id: int, code: str) -> dict[str, Any]:
-    totp_record = (await db.execute(select(TOTP).where(TOTP.user_id == user_id))).scalars().first()
+async def setup_2fa_complete(
+    db: AsyncSession, user_id: int, code: str
+) -> dict[str, Any]:
+    totp_record = (
+        (await db.execute(select(TOTP).where(TOTP.user_id == user_id)))
+        .scalars()
+        .first()
+    )
     if not totp_record or totp_record.enabled:
         raise BizError(AuthErr.TOTP_NOT_ENABLED)
 
-    _check_totp_failed(totp_record)  # type: ignore[arg-type]
+    _check_totp_failed(totp_record)
 
     plain_secret = decrypt_secret(str(totp_record.secret))
     if verify_totp(plain_secret, code) is None:
-        await _record_totp_failure(db, totp_record)  # type: ignore[arg-type]
+        await _record_totp_failure(db, totp_record)
         raise BizError(AuthErr.TOTP_CODE_INVALID)
-    await _reset_totp_failures(db, totp_record)  # type: ignore[arg-type]
+    await _reset_totp_failures(db, totp_record)
 
     totp_record.enabled = True
     totp_record.confirmed_saved = False
@@ -167,9 +200,15 @@ async def setup_2fa_complete(db: AsyncSession, user_id: int, code: str) -> dict[
     return {"recovery_codes": plain_codes, "confirmed_saved_required": True}
 
 
-async def confirm_recovery_codes_saved(db: AsyncSession, user_id: int) -> dict[str, Any]:
+async def confirm_recovery_codes_saved(
+    db: AsyncSession, user_id: int
+) -> dict[str, Any]:
     """标记用户已保存其恢复码。"""
-    totp_record = (await db.execute(select(TOTP).where(TOTP.user_id == user_id))).scalars().first()
+    totp_record = (
+        (await db.execute(select(TOTP).where(TOTP.user_id == user_id)))
+        .scalars()
+        .first()
+    )
     if not totp_record or not totp_record.enabled:
         raise BizError(AuthErr.TOTP_NOT_ENABLED)
     totp_record.confirmed_saved = True
@@ -190,7 +229,10 @@ async def verify_2fa(
     payload = _decode_temp_token(raw_token=temp_token)
     user_id = payload["user_id"]
     user = await get_or_raise(
-        db, User, AuthErr.USER_NOT_FOUND, User.id == user_id,
+        db,
+        User,
+        AuthErr.USER_NOT_FOUND,
+        User.id == user_id,
         options=(selectinload(User.profile),),
     )
 
@@ -213,20 +255,26 @@ async def verify_2fa(
             raise BizError(AuthErr.RECOVERY_CODE_INVALID)
     elif code:
         totp_record = (
-            await db.execute(select(TOTP).where(TOTP.user_id == user_id, TOTP.enabled.is_(True)))
-        ).scalars().first()
+            (
+                await db.execute(
+                    select(TOTP).where(TOTP.user_id == user_id, TOTP.enabled.is_(True))
+                )
+            )
+            .scalars()
+            .first()
+        )
         if not totp_record:
             raise BizError(AuthErr.TOTP_NOT_ENABLED)
 
-        _check_totp_failed(totp_record)  # type: ignore[arg-type]
+        _check_totp_failed(totp_record)
 
         plain_secret = decrypt_secret(str(totp_record.secret))
         actual_counter = verify_totp(plain_secret, code)
         if actual_counter is None:
-            await _record_totp_failure(db, totp_record)  # type: ignore[arg-type]
+            await _record_totp_failure(db, totp_record)
             raise BizError(AuthErr.TOTP_CODE_INVALID)
 
-        await _reset_totp_failures(db, totp_record)  # type: ignore[arg-type]
+        await _reset_totp_failures(db, totp_record)
 
         # 重放保护：原子地存储匹配的计数器
         if not await consume_once(
@@ -250,7 +298,10 @@ async def verify_2fa(
     # 任何其他用途都会被拒绝。
     _ALLOWED_PURPOSES = {"2fa", "recovery"}
     if purpose not in _ALLOWED_PURPOSES:
-        raise BizError(AuthErr.TOKEN_INVALID, f"Temp token purpose '{purpose}' not allowed for 2FA verification")
+        raise BizError(
+            AuthErr.TOKEN_INVALID,
+            f"Temp token purpose '{purpose}' not allowed for 2FA verification",
+        )
 
     if purpose == "recovery":
         return {
@@ -264,23 +315,27 @@ async def verify_2fa(
         }
 
     # purpose == "2fa" —— 发放登录会话
-    result = await _create_auth_tokens(db, user, trust_device=trust_device)  # type: ignore[arg-type]
+    result = await _create_auth_tokens(db, user, trust_device=trust_device)
     result["trust_device"] = trust_device
     return result
 
 
 async def disable_2fa(db: AsyncSession, user_id: int, code: str) -> dict[str, Any]:
-    totp_record = (await db.execute(select(TOTP).where(TOTP.user_id == user_id))).scalars().first()
+    totp_record = (
+        (await db.execute(select(TOTP).where(TOTP.user_id == user_id)))
+        .scalars()
+        .first()
+    )
     if not totp_record or not totp_record.enabled:
         raise BizError(AuthErr.TOTP_NOT_ENABLED)
 
-    _check_totp_failed(totp_record)  # type: ignore[arg-type]
+    _check_totp_failed(totp_record)
 
     plain_secret = decrypt_secret(str(totp_record.secret))
     if verify_totp(plain_secret, code) is None:
-        await _record_totp_failure(db, totp_record)  # type: ignore[arg-type]
+        await _record_totp_failure(db, totp_record)
         raise BizError(AuthErr.TOTP_CODE_INVALID)
-    await _reset_totp_failures(db, totp_record)  # type: ignore[arg-type]
+    await _reset_totp_failures(db, totp_record)
 
     totp_record.enabled = False
     totp_record.secret = ""
@@ -289,19 +344,21 @@ async def disable_2fa(db: AsyncSession, user_id: int, code: str) -> dict[str, An
     totp_record.last_counter = None
     await db.flush()
 
-    await db.execute(
-        sa_delete(RecoveryCode).where(RecoveryCode.user_id == user_id)
-    )
+    await db.execute(sa_delete(RecoveryCode).where(RecoveryCode.user_id == user_id))
 
     level = await db.scalar(select(User.account_level).where(User.id == user_id))
     await log_audit(db, user_id, "2fa_disabled", "success")
 
     if level == "admin":
-        user = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
+        user = (
+            (await db.execute(select(User).where(User.id == user_id))).scalars().first()
+        )
         if user:
             user.account_level = "normal"
             await db.flush()
-            await log_audit(db, user_id, "level_change", "admin -> normal (2FA disabled)")
+            await log_audit(
+                db, user_id, "level_change", "admin -> normal (2FA disabled)"
+            )
 
     return {"message": "2FA disabled"}
 
@@ -309,15 +366,21 @@ async def disable_2fa(db: AsyncSession, user_id: int, code: str) -> dict[str, An
 async def verify_user_totp(db: AsyncSession, user_id: int, code: str) -> None:
     """校验已登录用户的 TOTP 码（不改状态、不消费，仅二次确认）。失败抛 TOTP_CODE_INVALID。"""
     totp_record = (
-        await db.execute(select(TOTP).where(TOTP.user_id == user_id, TOTP.enabled.is_(True)))
-    ).scalars().first()
+        (
+            await db.execute(
+                select(TOTP).where(TOTP.user_id == user_id, TOTP.enabled.is_(True))
+            )
+        )
+        .scalars()
+        .first()
+    )
     if not totp_record:
         raise BizError(AuthErr.TOTP_NOT_ENABLED)
 
-    _check_totp_failed(totp_record)  # type: ignore[arg-type]
+    _check_totp_failed(totp_record)
 
     plain_secret = decrypt_secret(str(totp_record.secret))
     if verify_totp(plain_secret, code) is None:
-        await _record_totp_failure(db, totp_record)  # type: ignore[arg-type]
+        await _record_totp_failure(db, totp_record)
         raise BizError(AuthErr.TOTP_CODE_INVALID)
-    await _reset_totp_failures(db, totp_record)  # type: ignore[arg-type]
+    await _reset_totp_failures(db, totp_record)

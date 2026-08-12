@@ -8,7 +8,7 @@ DELETE /auth/2fa                  RequireLevel("normal")  禁用 2FA
 """
 
 import hashlib
-from typing import Any, cast
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -16,13 +16,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, respond
-from app.modules.auth.errors import AuthErr
 from app.db.models import User, expires_at, now_iso
 from app.db.repo import consume_once
 from app.db.session import get_session
 from app.modules.auth import security, service_2fa
 from app.modules.auth.deps import CurrentUser, RequireLevel
-from app.modules.auth.models import SetupTransaction, TOTP
+from app.modules.auth.errors import AuthErr
+from app.modules.auth.models import TOTP, SetupTransaction
 from app.modules.auth.schemas import (
     TOTPConfirmResponse,
     TOTPDisableRequest,
@@ -45,10 +45,7 @@ router = APIRouter(prefix="/auth/2fa", tags=["auth-2fa"])
 def _decode_setup_temp_token(temp_token: str) -> tuple[str, int]:
     """解码并验证 setup 临时令牌，返回 (token_hash, user_id)。"""
     try:
-        payload = cast(
-            dict[str, Any],
-            security.decode_temp_token(temp_token),  # type: ignore[reportUnknownMemberType]
-        )
+        payload = security.decode_temp_token(temp_token)
     except Exception as exc:
         raise BizError(AuthErr.TOKEN_INVALID) from exc
     if payload.get("purpose") != "setup":
@@ -57,7 +54,7 @@ def _decode_setup_temp_token(temp_token: str) -> tuple[str, int]:
     if not user_id:
         raise BizError(AuthErr.TOKEN_INVALID)
     token_hash = hashlib.sha256(temp_token.encode()).hexdigest()
-    return token_hash, user_id  # type: ignore[arg-type]
+    return token_hash, user_id
 
 
 @router.post("/setup/begin", response_model=ApiResp[TOTPSetupBeginData])
@@ -67,10 +64,7 @@ async def setup_2fa_begin(
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """开始 TOTP 设置。返回密钥和二维码 URI。"""
-    result = cast(
-        dict[str, Any],
-        await service_2fa.setup_2fa_begin(db, cur.id),  # type: ignore[reportUnknownMemberType]
-    )
+    result = await service_2fa.setup_2fa_begin(db, cur.id)
     return result
 
 
@@ -85,21 +79,20 @@ async def setup_2fa_temp(
 
     # 原子性地声明设置令牌 — 只有一个 begin 调用会成功
     try:
-        db.add(SetupTransaction(
-            token_hash=token_hash,
-            user_id=user_id,
-            consumed=False,
-            expires_at=expires_at(minutes=10),
-        ))
+        db.add(
+            SetupTransaction(
+                token_hash=token_hash,
+                user_id=user_id,
+                consumed=False,
+                expires_at=expires_at(minutes=10),
+            )
+        )
         await db.flush()
     except IntegrityError:
         await db.rollback()
-        raise BizError(AuthErr.TOKEN_INVALID, "Setup token already used")
+        raise BizError(AuthErr.TOKEN_INVALID, "Setup token already used") from None
 
-    return cast(
-        dict[str, Any],
-        await service_2fa.setup_2fa_begin(db, user_id),  # type: ignore[reportUnknownMemberType]
-    )
+    return await service_2fa.setup_2fa_begin(db, user_id)
 
 
 @router.post("/setup/complete/temp", response_model=ApiResp[TOTPSetupCompleteTempData])
@@ -121,16 +114,31 @@ async def setup_2fa_complete_temp(
         SetupTransaction.consumed.is_(False),
         SetupTransaction.expires_at > now_iso(),
     ):
-        raise BizError(AuthErr.TOKEN_INVALID, "Setup token not found, already used, or expired")
+        raise BizError(
+            AuthErr.TOKEN_INVALID, "Setup token not found, already used, or expired"
+        )
 
-    txn = (await db.execute(select(SetupTransaction).where(SetupTransaction.token_hash == token_hash))).scalars().first()
+    txn = (
+        (
+            await db.execute(
+                select(SetupTransaction).where(
+                    SetupTransaction.token_hash == token_hash
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
     if not txn or txn.user_id != user_id:
         raise BizError(AuthErr.TOKEN_INVALID)
 
     result_dict = await service_2fa.setup_2fa_complete(db, user_id, code)
     user = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
     if user:
-        result_dict["access_token"], result_dict["refresh_token"] = await _issue_admin_setup_tokens(db, user)
+        (
+            result_dict["access_token"],
+            result_dict["refresh_token"],
+        ) = await _issue_admin_setup_tokens(db, user)
     return result_dict
 
 
@@ -154,10 +162,7 @@ async def setup_2fa_complete(
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """通过验证 TOTP 码完成 TOTP 设置。返回恢复码。"""
-    result = cast(
-        dict[str, Any],
-        await service_2fa.setup_2fa_complete(db, cur.id, body.code),  # type: ignore[reportUnknownMemberType]
-    )
+    result = await service_2fa.setup_2fa_complete(db, cur.id, body.code)
     return result
 
 
@@ -168,10 +173,7 @@ async def confirm_recovery_codes(
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """确认用户已保存其恢复码。"""
-    return cast(
-        dict[str, Any],
-        await service_2fa.confirm_recovery_codes_saved(db, cur.id),  # type: ignore[reportUnknownMemberType]
-    )
+    return await service_2fa.confirm_recovery_codes_saved(db, cur.id)
 
 
 @router.post("/verify", response_model=ApiResp[TOTPVerifyResponse])
@@ -182,15 +184,12 @@ async def verify_2fa(
 ) -> dict[str, Any]:
     """在登录时使用临时令牌和 TOTP / 恢复码验证 2FA。"""
     check_code_rate_limit("2fa:verify:global", max_count=10, window=3600)
-    result = cast(
-        dict[str, Any],
-        await service_2fa.verify_2fa(  # type: ignore[reportUnknownMemberType]
-            db,
-            temp_token=body.temp_token,
-            code=body.code,
-            recovery_code=body.recovery_code,
-            trust_device=body.trust_device,
-        ),
+    result = await service_2fa.verify_2fa(
+        db,
+        temp_token=body.temp_token,
+        code=body.code,
+        recovery_code=body.recovery_code,
+        trust_device=body.trust_device,
     )
     return result
 
@@ -201,12 +200,9 @@ async def disable_2fa(
     body: TOTPDisableRequest,
     cur: CurrentUser = RequireLevel("normal"),
     db: AsyncSession = Depends(get_session),
-):
+) -> dict[str, Any]:
     """为当前用户禁用 2FA。需要有效的 TOTP 码。"""
-    result = cast(
-        dict[str, Any],
-        await service_2fa.disable_2fa(db, cur.id, body.code),  # type: ignore[reportUnknownMemberType]
-    )
+    result = await service_2fa.disable_2fa(db, cur.id, body.code)
     return result
 
 
@@ -215,9 +211,15 @@ async def disable_2fa(
 async def get_2fa_status(
     cur: CurrentUser = RequireLevel("normal"),
     db: AsyncSession = Depends(get_session),
-):
+) -> dict[str, Any]:
     """返回当前用户 2FA 是否已开启。"""
     totp = (
-        await db.execute(select(TOTP).where(TOTP.user_id == cur.id, TOTP.enabled.is_(True)))
-    ).scalars().first()
+        (
+            await db.execute(
+                select(TOTP).where(TOTP.user_id == cur.id, TOTP.enabled.is_(True))
+            )
+        )
+        .scalars()
+        .first()
+    )
     return {"enabled": totp is not None}

@@ -1,6 +1,5 @@
-from pydantic import BaseModel
-
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from app.core.err import respond
 from app.modules.common import ApiResp
@@ -14,5 +13,5 @@ class HealthData(BaseModel):
 
 @router.get("/health", response_model=ApiResp[HealthData])
 @respond
-async def health_check():
+async def health_check() -> dict[str, str]:
     return {"status": "ok"}

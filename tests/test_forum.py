@@ -5,11 +5,10 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.modules.auth.models  # pyright: ignore[reportUnusedImport] ensure auth tables registered
 from app.core.err import BizError, CommonErr
-from app.modules.forum.errors import ForumErr
 from app.db.models import ForumPost, Profile, User
 from app.modules.auth.security import create_access_token, hashpwd
+from app.modules.forum.errors import ForumErr
 from app.modules.forum.schemas import CommentCreate, CommentInfo, PostCreate, PostInfo
 from app.modules.forum.service import (
     create_comment,
@@ -143,7 +142,9 @@ class TestForumPosts:
         except BizError as exc:
             assert exc.errcode == ForumErr.POST_NOT_FOUND
             return
-        raise AssertionError(f"expected BizError, got post {found.id} (view={found.view_count})")
+        raise AssertionError(
+            f"expected BizError, got post {found.id} (view={found.view_count})"
+        )
 
     async def should_reject_delete_of_others_post(self, db: AsyncSession):
         author = await _user(db)
@@ -208,28 +209,47 @@ class TestForumComments:
 
 class TestForumRoutes:
     async def _setup_user(
-        self, db: AsyncSession, username: str = "tester", email: str = "tester@example.com"
+        self,
+        db: AsyncSession,
+        username: str = "tester",
+        email: str = "tester@example.com",
     ) -> tuple[int, str]:
         user_id = await _user(db, username=username, email=email)
-        token = create_access_token(user_id=user_id, account_level="normal", role="member")
+        token = create_access_token(
+            user_id=user_id, account_level="normal", role="member"
+        )
         return user_id, token
 
-    async def should_reject_create_post_without_auth(self, client: AsyncClient, db: AsyncSession):
+    async def should_reject_create_post_without_auth(
+        self, client: AsyncClient, db: AsyncSession
+    ):
         await self._setup_user(db)
         resp = await client.post(
             "/api/v1/forum/posts",
-            json={"title": "标题", "content": "正文", "category_id": "math", "tags": []},
+            json={
+                "title": "标题",
+                "content": "正文",
+                "category_id": "math",
+                "tags": [],
+            },
         )
 
         assert resp.status_code == 403
         assert resp.json()["code"] == CommonErr.FORBIDDEN
 
-    async def should_create_post_with_token(self, client: AsyncClient, db: AsyncSession):
+    async def should_create_post_with_token(
+        self, client: AsyncClient, db: AsyncSession
+    ):
         user_id, token = await self._setup_user(db)
         resp = await client.post(
             "/api/v1/forum/posts",
             headers={"Authorization": f"Bearer {token}"},
-            json={"title": "标题", "content": "正文", "category_id": "math", "tags": ["数学"]},
+            json={
+                "title": "标题",
+                "content": "正文",
+                "category_id": "math",
+                "tags": ["数学"],
+            },
         )
 
         assert resp.status_code == 200
@@ -251,7 +271,9 @@ class TestForumRoutes:
         assert data["total"] == 1
         assert data["items"][0]["title"] == "公开帖"
 
-    async def should_delete_own_post_through_api(self, client: AsyncClient, db: AsyncSession):
+    async def should_delete_own_post_through_api(
+        self, client: AsyncClient, db: AsyncSession
+    ):
         _, token = await self._setup_user(db)
         created_resp = await client.post(
             "/api/v1/forum/posts",
@@ -267,7 +289,9 @@ class TestForumRoutes:
         )
 
         assert resp.status_code == 200
-        assert (await client.get(f"/api/v1/forum/posts/{post_id}")).json()["code"] == ForumErr.POST_NOT_FOUND
+        assert (await client.get(f"/api/v1/forum/posts/{post_id}")).json()[
+            "code"
+        ] == ForumErr.POST_NOT_FOUND
 
 
 class TestForumGraphQL:
@@ -276,15 +300,21 @@ class TestForumGraphQL:
     async def _run(
         self, client: AsyncClient, query: str, variables: dict[str, Any]
     ) -> Any:
-        resp = await client.post("/graphql", json={"query": query, "variables": variables})
+        resp = await client.post(
+            "/graphql", json={"query": query, "variables": variables}
+        )
         assert resp.status_code == 200
         body: dict[str, Any] = resp.json()
         assert "errors" not in body, body.get("errors")
         return body["data"]
 
-    async def should_query_posts_with_author(self, client: AsyncClient, db: AsyncSession):
+    async def should_query_posts_with_author(
+        self, client: AsyncClient, db: AsyncSession
+    ):
         user_id = await _user(db, username="alice", nickname="爱丽丝")
-        post = await _post(db, author_id=user_id, title="如何学习微积分", category_id="math")
+        post = await _post(
+            db, author_id=user_id, title="如何学习微积分", category_id="math"
+        )
 
         data = await self._run(
             client,
@@ -313,7 +343,9 @@ class TestForumGraphQL:
         assert item["author"]["displayName"] == "爱丽丝"
         assert item["author"]["username"] == "alice"
 
-    async def should_filter_posts_by_category(self, client: AsyncClient, db: AsyncSession):
+    async def should_filter_posts_by_category(
+        self, client: AsyncClient, db: AsyncSession
+    ):
         user_id = await _user(db)
         await _post(db, author_id=user_id, title="数学", category_id="math")
         await _post(db, author_id=user_id, title="物理", category_id="physics")
@@ -329,14 +361,26 @@ class TestForumGraphQL:
     async def should_query_post_detail_with_bio_and_forward_count(
         self, client: AsyncClient, db: AsyncSession
     ):
-        user_id = await _user(db, username="bob", nickname="鲍勃", email="bob@example.com")
+        user_id = await _user(
+            db, username="bob", nickname="鲍勃", email="bob@example.com"
+        )
         # 给 Profile 设置 bio
-        prof = (await db.execute(select(Profile).where(Profile.user_id == user_id))).scalars().first()
+        prof = (
+            (await db.execute(select(Profile).where(Profile.user_id == user_id)))
+            .scalars()
+            .first()
+        )
         assert prof is not None
         prof.bio = "热爱物理与数学"
         await db.flush()
-        post = await _post(db, author_id=user_id, title="物理之美", category_id="physics")
-        post_orm = (await db.execute(select(ForumPost).where(ForumPost.id == post.id))).scalars().first()
+        post = await _post(
+            db, author_id=user_id, title="物理之美", category_id="physics"
+        )
+        post_orm = (
+            (await db.execute(select(ForumPost).where(ForumPost.id == post.id)))
+            .scalars()
+            .first()
+        )
         assert post_orm is not None
         post_orm.forward_count = 7
         await db.flush()
@@ -361,7 +405,9 @@ class TestForumGraphQL:
         assert p["author"]["bio"] == "热爱物理与数学"
         assert p["author"]["displayName"] == "鲍勃"
 
-    async def should_return_null_when_post_missing(self, client: AsyncClient, db: AsyncSession):
+    async def should_return_null_when_post_missing(
+        self, client: AsyncClient, db: AsyncSession
+    ):
         data = await self._run(
             client,
             "query($id: ID!){ post(id: $id){ id } }",

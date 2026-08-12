@@ -1,6 +1,6 @@
 import os
-import subprocess
 import shutil
+import subprocess
 from typing import Any
 
 from app.core.config import settings
@@ -19,7 +19,7 @@ def _repo_path(repo_name: str) -> str:
 
 def _run_git(repo_name: str, *args: str) -> str:
     path = _repo_path(repo_name)
-    cmd = ["git", "--git-dir", path] + list(args)
+    cmd = ["git", "--git-dir", path, *list(args)]
     try:
         result = subprocess.run(
             cmd,
@@ -30,9 +30,9 @@ def _run_git(repo_name: str, *args: str) -> str:
         return result.stdout.decode("utf-8", errors="replace")
     except subprocess.CalledProcessError as e:
         detail = e.stderr.decode("utf-8", errors="replace").strip() or str(e)
-        raise BizError(BlogErr.GIT_ERROR, detail)
+        raise BizError(BlogErr.GIT_ERROR, detail) from e
     except FileNotFoundError:
-        raise BizError(BlogErr.GIT_ERROR, "git executable not found")
+        raise BizError(BlogErr.GIT_ERROR, "git executable not found") from None
 
 
 def init_bare_repo(repo_name: str) -> str:
@@ -54,7 +54,7 @@ def init_bare_repo(repo_name: str) -> str:
         )
     except subprocess.CalledProcessError as e:
         detail = e.stderr.decode("utf-8", errors="replace").strip() or str(e)
-        raise BizError(BlogErr.GIT_ERROR, detail)
+        raise BizError(BlogErr.GIT_ERROR, detail) from e
     return path
 
 
@@ -74,7 +74,7 @@ def ensure_repo_has_commits(repo_name: str) -> bool:
 
 def get_file_tree(repo_name: str) -> list[dict[str, Any]]:
     out = _run_git(repo_name, "ls-tree", "-r", "--name-only", "HEAD")
-    lines = [l.strip() for l in out.splitlines() if l.strip()]
+    lines = [line.strip() for line in out.splitlines() if line.strip()]
     if not lines:
         return []
 

@@ -1,11 +1,16 @@
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Any
 
-from app.modules.columns.errors import ColumnErr
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.db.models import Column, ColumnApplication, ColumnPost, now_iso
 from app.db.repo import get_or_raise
-from app.modules.columns.models import COLUMN_TABLE_PLAN, ColumnApplicationStatus, ColumnPostStatus
+from app.modules.columns.errors import ColumnErr
+from app.modules.columns.models import (
+    COLUMN_TABLE_PLAN,
+    ColumnApplicationStatus,
+    ColumnPostStatus,
+)
 from app.modules.columns.schemas import (
     ColumnApplicationCreate,
     ColumnApplicationInfo,
@@ -53,18 +58,26 @@ async def list_applications(
     return [ColumnApplicationInfo.model_validate(a) for a in apps]
 
 
-async def get_application(db: AsyncSession, application_id: int) -> ColumnApplicationInfo:
-    return ColumnApplicationInfo.model_validate(await get_or_raise(
-        db, ColumnApplication, ColumnErr.APPLICATION_NOT_FOUND,
-        ColumnApplication.id == application_id,
-    ))
+async def get_application(
+    db: AsyncSession, application_id: int
+) -> ColumnApplicationInfo:
+    return ColumnApplicationInfo.model_validate(
+        await get_or_raise(
+            db,
+            ColumnApplication,
+            ColumnErr.APPLICATION_NOT_FOUND,
+            ColumnApplication.id == application_id,
+        )
+    )
 
 
 async def review_application(
     db: AsyncSession, application_id: int, info: ColumnApplicationReview
 ) -> dict[str, Any]:
     app = await get_or_raise(
-        db, ColumnApplication, ColumnErr.APPLICATION_NOT_FOUND,
+        db,
+        ColumnApplication,
+        ColumnErr.APPLICATION_NOT_FOUND,
         ColumnApplication.id == application_id,
     )
 
@@ -84,7 +97,9 @@ async def review_application(
     }
 
 
-async def list_columns(db: AsyncSession, page: int = 1, limit: int | None = None) -> list[ColumnInfo]:
+async def list_columns(
+    db: AsyncSession, page: int = 1, limit: int | None = None
+) -> list[ColumnInfo]:
     stmt = select(Column).order_by(Column.id.desc())
     if limit is not None:
         stmt = stmt.offset((page - 1) * limit).limit(limit)
@@ -93,9 +108,14 @@ async def list_columns(db: AsyncSession, page: int = 1, limit: int | None = None
 
 
 async def get_column(db: AsyncSession, column_id: int) -> ColumnInfo:
-    return ColumnInfo.model_validate(await get_or_raise(
-        db, Column, ColumnErr.NOT_FOUND, Column.id == column_id,
-    ))
+    return ColumnInfo.model_validate(
+        await get_or_raise(
+            db,
+            Column,
+            ColumnErr.NOT_FOUND,
+            Column.id == column_id,
+        )
+    )
 
 
 async def create_post(
@@ -138,17 +158,28 @@ async def get_post(
     filters = [ColumnPost.id == post_id]
     if column_id is not None:
         filters.append(ColumnPost.column_id == column_id)
-    return ColumnPostInfo.model_validate(await get_or_raise(
-        db, ColumnPost, ColumnErr.POST_NOT_FOUND, *filters,
-    ))
+    return ColumnPostInfo.model_validate(
+        await get_or_raise(
+            db,
+            ColumnPost,
+            ColumnErr.POST_NOT_FOUND,
+            *filters,
+        )
+    )
 
 
 async def _ensure_column_for_application(
     db: AsyncSession, application: ColumnApplication
 ) -> ColumnInfo:
     col = (
-        await db.execute(select(Column).where(Column.application_id == application.id))
-    ).scalars().first()
+        (
+            await db.execute(
+                select(Column).where(Column.application_id == application.id)
+            )
+        )
+        .scalars()
+        .first()
+    )
     if col:
         return ColumnInfo.model_validate(col)
 

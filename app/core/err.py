@@ -1,6 +1,7 @@
 import functools
+from collections.abc import Callable, Coroutine
 from enum import IntEnum
-from typing import Any, Callable, Coroutine, ParamSpec, TypeVar, cast
+from typing import Any, ParamSpec, TypeVar, cast
 
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -14,7 +15,7 @@ class Namespace:
     ns_id: int
     prefix: str
 
-    def __init__(self, ns_id: int, prefix: str):
+    def __init__(self, ns_id: int, prefix: str) -> None:
         self.ns_id = ns_id
         self.prefix = prefix
 
@@ -26,12 +27,12 @@ class ErrCode(IntEnum):
     """Base type for every module error-code enum."""
 
 
-NS_COMMON  = Namespace(0, "common")
-NS_AUTH    = Namespace(1, "auth")
+NS_COMMON = Namespace(0, "common")
+NS_AUTH = Namespace(1, "auth")
 NS_COLUMNS = Namespace(2, "columns")
-NS_BLOG    = Namespace(3, "blog")
-NS_FORUM   = Namespace(4, "forum")
-NS_FILES   = Namespace(5, "files")
+NS_BLOG = Namespace(3, "blog")
+NS_FORUM = Namespace(4, "forum")
+NS_FILES = Namespace(5, "files")
 NS_MEMBERS = Namespace(6, "members")
 
 
@@ -54,9 +55,9 @@ def register(errors: dict[ErrCode, tuple[int, str]]) -> None:
 
 register(
     {
-        CommonErr.OK:             (200, "OK"),
-        CommonErr.INVALID_INPUT:  (422, "Invalid input"),
-        CommonErr.FORBIDDEN:      (403, "Forbidden"),
+        CommonErr.OK: (200, "OK"),
+        CommonErr.INVALID_INPUT: (422, "Invalid input"),
+        CommonErr.FORBIDDEN: (403, "Forbidden"),
         CommonErr.INTERNAL_ERROR: (500, "Internal server error"),
     }
 )
@@ -66,7 +67,7 @@ class BizError(Exception):
     errcode: ErrCode
     detail: str
 
-    def __init__(self, errcode: ErrCode, detail: str | None = None):
+    def __init__(self, errcode: ErrCode, detail: str | None = None) -> None:
         self.errcode = errcode
         self.detail = detail or ERRTABLE[errcode][1]
 
@@ -102,7 +103,9 @@ def resp_json(
 
     return JSONResponse(
         status_code=status,
-        content=ApiResp(code=errcode, msg=detail or msg, data=data).model_dump(mode="json"),
+        content=ApiResp(code=errcode, msg=detail or msg, data=data).model_dump(
+            mode="json"
+        ),
     )
 
 
@@ -126,10 +129,14 @@ def respond(
 
 
 def _wrap_result(result: Any) -> JSONResponse:
-    if isinstance(result, tuple) and len(cast(Any, result)) >= 2 and isinstance(result[0], ErrCode):
+    if (
+        isinstance(result, tuple)
+        and len(cast(Any, result)) >= 2
+        and isinstance(result[0], ErrCode)
+    ):
         # isinstance 已收窄 result[0] 为 ErrCode，无需再 cast
         errcode = result[0]
-        payload = cast(Any, result[1])
+        payload = result[1]
         if isinstance(payload, str):
             return resp_json(errcode, detail=payload)
         return resp_json(errcode, data=payload)

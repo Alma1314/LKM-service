@@ -17,10 +17,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
-from app.modules.auth.errors import AuthErr
-from app.modules.auth.deps import CurrentUser
 from app.db.models import User
-from app.modules.auth.models import RecoveryCode, TOTP
+from app.modules.auth.deps import CurrentUser
+from app.modules.auth.errors import AuthErr
+from app.modules.auth.models import TOTP, RecoveryCode
 from app.modules.auth.security import (
     create_temp_token,
     encrypt_secret,
@@ -39,7 +39,9 @@ def _svc():
     return service_2fa
 
 
-def _FakeCurrentUser(id: int, account_level: str = "local", role: str = "member") -> CurrentUser:
+def _FakeCurrentUser(
+    id: int, account_level: str = "local", role: str = "member"
+) -> CurrentUser:
     """测试辅助：构造一个满足 ``CurrentUser`` 类型的用户上下文。"""
     return CurrentUser(id=id, account_level=account_level, role=role)
 
@@ -86,7 +88,7 @@ def _generate_totp_code(secret: str, offset: int = 0) -> str:
     msg = struct.pack(">Q", now)
     h_val = hmac.new(key, msg, hashlib.sha1).digest()
     off = h_val[-1] & 0x0F
-    code = (struct.unpack(">I", h_val[off:off + 4])[0] & 0x7FFFFFFF) % 1_000_000
+    code = (struct.unpack(">I", h_val[off : off + 4])[0] & 0x7FFFFFFF) % 1_000_000
     return f"{code:06d}"
 
 
@@ -105,7 +107,9 @@ async def _get(db: AsyncSession, model: type[_T], *where: Any) -> _T:
 
 class TestSetup2FABegin:
     async def should_reject_local_user(self, db: AsyncSession):
-        user = await _create_user(db, username="localuser", account_level="local", email=None)
+        user = await _create_user(
+            db, username="localuser", account_level="local", email=None
+        )
         with pytest.raises(BizError) as exc:
             await _svc().setup_2fa_begin(db, user.id)
         assert exc.value.errcode == AuthErr.ACCOUNT_LEVEL_INSUFFICIENT
@@ -164,7 +168,15 @@ class TestSetup2FAComplete:
         assert totp_record.enabled is True
 
         # Verify recovery codes are stored as hashes
-        stored_codes = (await db.execute(select(RecoveryCode).where(RecoveryCode.user_id == user.id))).scalars().all()
+        stored_codes = (
+            (
+                await db.execute(
+                    select(RecoveryCode).where(RecoveryCode.user_id == user.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
         assert len(stored_codes) == 10
         for rc in stored_codes:
             assert rc.used is False
@@ -222,7 +234,9 @@ class TestVerify2FA:
 
     async def should_verify_with_recovery_code(self, db: AsyncSession):
         user = await _create_user(db, username="recoveruser")
-        _ = await _enable_totp_for_user(db, user.id)  # TOTP 需启用但验证走 recovery code，secret 不在此用
+        _ = await _enable_totp_for_user(
+            db, user.id
+        )  # TOTP 需启用但验证走 recovery code，secret 不在此用
 
         # Create a recovery code entry directly
         recovery_plain = "test-recovery-code-12345"
@@ -231,14 +245,17 @@ class TestVerify2FA:
         await db.flush()
 
         temp_token = create_temp_token(user.id)
-        result = await _svc().verify_2fa(
-            db, temp_token, recovery_code=recovery_plain
-        )
+        result = await _svc().verify_2fa(db, temp_token, recovery_code=recovery_plain)
         assert "access_token" in result
         assert "refresh_token" in result
 
         # Verify the recovery code is marked used
-        rc = await _get(db, RecoveryCode, RecoveryCode.user_id == user.id, RecoveryCode.code_hash == code_hash)
+        rc = await _get(
+            db,
+            RecoveryCode,
+            RecoveryCode.user_id == user.id,
+            RecoveryCode.code_hash == code_hash,
+        )
         assert rc.used is True
 
     async def should_reject_invalid_recovery_code(self, db: AsyncSession):
@@ -262,9 +279,7 @@ class TestVerify2FA:
 
         temp_token = create_temp_token(user.id)
         code = _generate_totp_code(secret)
-        result = await _svc().verify_2fa(
-            db, temp_token, code=code, trust_device=True
-        )
+        result = await _svc().verify_2fa(db, temp_token, code=code, trust_device=True)
         # trust_device should be False even though we passed True
         assert result["trust_device"] is False
 
@@ -280,7 +295,7 @@ class TestDisable2FA:
         secret = await _enable_totp_for_user(db, user.id)
 
         # Add a recovery code
-        code_hash = hashlib.sha256("dummy-recovery".encode()).hexdigest()
+        code_hash = hashlib.sha256(b"dummy-recovery").hexdigest()
         db.add(RecoveryCode(user_id=user.id, code_hash=code_hash, used=False))
         await db.flush()
 
@@ -293,7 +308,15 @@ class TestDisable2FA:
         assert totp_record.secret == ""
 
         # Recovery codes should be deleted
-        rcs = (await db.execute(select(RecoveryCode).where(RecoveryCode.user_id == user.id))).scalars().all()
+        rcs = (
+            (
+                await db.execute(
+                    select(RecoveryCode).where(RecoveryCode.user_id == user.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
         assert len(rcs) == 0
 
     async def should_reject_when_not_enabled(self, db: AsyncSession):
@@ -330,6 +353,7 @@ class TestGet2FAStatus:
 
     async def _unwrap(self, response: Any) -> dict[str, Any]:
         import json
+
         return json.loads(response.body.decode())
 
     async def should_return_false_when_not_enabled(self, db: AsyncSession):
@@ -337,7 +361,9 @@ class TestGet2FAStatus:
         from app.modules.auth.router_2fa import get_2fa_status
 
         data = await self._unwrap(
-            await get_2fa_status(cur=_FakeCurrentUser(user.id, account_level="normal"), db=db)
+            await get_2fa_status(
+                cur=_FakeCurrentUser(user.id, account_level="normal"), db=db
+            )
         )
         assert data["data"] == {"enabled": False}
 
@@ -347,6 +373,8 @@ class TestGet2FAStatus:
         from app.modules.auth.router_2fa import get_2fa_status
 
         data = await self._unwrap(
-            await get_2fa_status(cur=_FakeCurrentUser(user.id, account_level="normal"), db=db)
+            await get_2fa_status(
+                cur=_FakeCurrentUser(user.id, account_level="normal"), db=db
+            )
         )
         assert data["data"] == {"enabled": True}

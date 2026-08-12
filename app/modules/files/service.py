@@ -10,9 +10,9 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.err import BizError
-from app.modules.files.errors import FileErr
 from app.db.models import LibraryFile, User
 from app.db.repo import get_or_raise
+from app.modules.files.errors import FileErr
 from app.modules.files.models import FILES_TABLE_PLAN
 from app.modules.files.schemas import FileCreate, FileInfo, PageData
 
@@ -42,14 +42,18 @@ def _uploader_name(user: User) -> str:
 
 
 def _file_to_schema(f: LibraryFile, uploader_name: str) -> FileInfo:
-    return FileInfo.model_validate(f).model_copy(update={"uploader_name": uploader_name})
+    return FileInfo.model_validate(f).model_copy(
+        update={"uploader_name": uploader_name}
+    )
 
 
 async def _uploader_map(db: AsyncSession, user_ids: list[int]) -> dict[int, str]:
     if not user_ids:
         return {}
     result = await db.execute(
-        select(User).where(User.id.in_(set(user_ids))).options(selectinload(User.profile))
+        select(User)
+        .where(User.id.in_(set(user_ids)))
+        .options(selectinload(User.profile))
     )
     users = result.scalars().all()
     return {u.id: _uploader_name(u) for u in users}
@@ -75,18 +79,28 @@ async def list_files(
         base = base.where(LibraryFile.status == status)
 
     total = await db.scalar(select(func.count()).select_from(base.subquery())) or 0
-    order = LibraryFile.download_count.desc() if sort == "downloads" else LibraryFile.id.desc()
+    order = (
+        LibraryFile.download_count.desc()
+        if sort == "downloads"
+        else LibraryFile.id.desc()
+    )
     files = (
-        await db.execute(base.order_by(order).offset((page - 1) * limit).limit(limit))
-    ).scalars().all()
+        (await db.execute(base.order_by(order).offset((page - 1) * limit).limit(limit)))
+        .scalars()
+        .all()
+    )
 
     names = await _uploader_map(db, [f.uploader_id for f in files])
     items = [_file_to_schema(f, names.get(f.uploader_id, "")) for f in files]
-    return PageData(items=items, total=total, page=page, pages=(total + limit - 1) // limit)
+    return PageData(
+        items=items, total=total, page=page, pages=(total + limit - 1) // limit
+    )
 
 
 async def get_file(db: AsyncSession, file_id: int, bump_view: bool = False) -> FileInfo:
-    f = await get_or_raise(db, LibraryFile, FileErr.NOT_FOUND, LibraryFile.id == file_id)
+    f = await get_or_raise(
+        db, LibraryFile, FileErr.NOT_FOUND, LibraryFile.id == file_id
+    )
 
     if bump_view:
         f.view_count += 1
@@ -126,8 +140,10 @@ async def _write_upload(stream: _Readable, dest: Path, limit: int) -> int:
     try:
         return await asyncio.to_thread(_stream_to_disk, stream, dest, limit)
     except OSError as exc:
-        dest.unlink(missing_ok=True)
-        raise BizError(FileErr.STORE_ERROR, detail=f"Failed to store file: {exc}") from exc
+        await asyncio.to_thread(dest.unlink, missing_ok=True)
+        raise BizError(
+            FileErr.STORE_ERROR, detail=f"Failed to store file: {exc}"
+        ) from exc
 
 
 async def create_file(
@@ -174,7 +190,9 @@ async def create_file(
 
 
 async def bump_download(db: AsyncSession, file_id: int) -> int:
-    f = await get_or_raise(db, LibraryFile, FileErr.NOT_FOUND, LibraryFile.id == file_id)
+    f = await get_or_raise(
+        db, LibraryFile, FileErr.NOT_FOUND, LibraryFile.id == file_id
+    )
     f.download_count += 1
     await db.flush()
     return f.download_count

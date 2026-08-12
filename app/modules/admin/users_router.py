@@ -1,6 +1,7 @@
 """
 后台只读数据端点：/admin/users（用户列表）、/admin/stats（仪表盘统计）。
 """
+
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
@@ -43,9 +44,13 @@ async def admin_list_users(
 
     total = (await db.execute(count_q)).scalar() or 0
     rows = (
-        await db.execute(query.order_by(User.id.desc()).offset((page - 1) * size).limit(size))
+        await db.execute(
+            query.order_by(User.id.desc()).offset((page - 1) * size).limit(size)
+        )
     ).scalars()
-    items: list[Any] = []  # 列表元素来自各字段类型混合的 model_dump，用 Any 收窄容器泛型
+    items: list[
+        Any
+    ] = []  # 列表元素来自各字段类型混合的 model_dump，用 Any 收窄容器泛型
     for r in rows:
         item = AdminUserListItem(
             id=int(r.id),
@@ -74,7 +79,7 @@ async def _safe_count(db: AsyncSession, stmt: Any) -> int:
 async def admin_stats(
     _cur: CurrentUser = require_admin,
     db: AsyncSession = Depends(get_session),
-):
+) -> AdminStats:
     """仪表盘聚合统计：注册用户数 / 帖子数 / 文件数 / 待审核文件数。"""
     user_count = await _safe_count(db, select(func.count(User.id)))
     post_count = await _safe_count(db, select(func.count(ForumPost.id)))

@@ -2,7 +2,7 @@ import asyncio
 import os
 import sys
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -13,9 +13,16 @@ from app.api.router import api_router
 from app.core.config import settings
 from app.core.err import BizError, map_err, resp_json
 from app.db.init_db import init_db
-from app.db.session import AsyncSession, dispose_engine, get_session as get_graphql_session
+from app.db.session import (
+    AsyncSession,
+    dispose_engine,
+)
+from app.db.session import (
+    get_session as get_graphql_session,
+)
 from app.modules.auth.service_passkey import cleanup_expired_challenges
-from app.modules.forum.graphql import GraphQLContext, schema as forum_graphql_schema
+from app.modules.forum.graphql import GraphQLContext
+from app.modules.forum.graphql import schema as forum_graphql_schema
 
 
 def _verify_production_secrets() -> None:
@@ -54,19 +61,17 @@ def _verify_production_secrets() -> None:
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     _verify_production_secrets()
     init_db()
 
     cleanup_task = asyncio.create_task(cleanup_expired_challenges())
 
-    yield  # type: ignore[redefined-outer-name]
+    yield
 
     cleanup_task.cancel()
-    try:
+    with suppress(asyncio.CancelledError):
         await cleanup_task
-    except asyncio.CancelledError:
-        pass
 
     await dispose_engine()
 
@@ -81,7 +86,9 @@ def create_app() -> FastAPI:
     application.add_exception_handler(BizError, _on_err)
     application.add_exception_handler(RequestValidationError, _on_err)
 
-    async def _graphql_context(db: AsyncSession = Depends(get_graphql_session)) -> GraphQLContext:
+    async def _graphql_context(
+        db: AsyncSession = Depends(get_graphql_session),
+    ) -> GraphQLContext:
         # 会话生命周期由 FastAPI 的 Depends 管理，解析器只读不关闭
         return GraphQLContext(db=db)
 
