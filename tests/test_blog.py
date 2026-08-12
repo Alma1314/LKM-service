@@ -10,9 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.err import BizError, CommonErr
 from app.modules.blog.errors import BlogErr
-from app.db.models import Base
-from app.db.session import get_session
-from app.main import app
 from app.modules.auth.schemas import ProfileUpdate
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.auth.service import update_profile
@@ -485,7 +482,7 @@ class TestBlogRoutes:
         return {"Authorization": f"Bearer {token}"}
 
     async def should_create_series_via_api(self, client: AsyncClient, db: AsyncSession, blog_dir: str) -> None:
-        uid, token = await self._setup_user(db)
+        _, token = await self._setup_user(db)
         resp = await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -509,7 +506,7 @@ class TestBlogRoutes:
         assert resp.status_code == 403
 
     async def should_list_series_via_api(self, client: AsyncClient, db: AsyncSession, blog_dir: str) -> None:
-        uid, token = await self._setup_user(db)
+        _, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -523,7 +520,7 @@ class TestBlogRoutes:
         assert not resp.json()["data"]["items"][0]["is_starred"]
 
     async def should_list_series_with_star_as_authenticated(self, client: AsyncClient, db: AsyncSession, blog_dir: str) -> None:
-        uid, token = await self._setup_user(db)
+        _, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -537,7 +534,7 @@ class TestBlogRoutes:
         assert item["is_starred"]
 
     async def should_get_series_detail_via_api(self, client: AsyncClient, db: AsyncSession, blog_dir: str) -> None:
-        uid, token = await self._setup_user(db)
+        _, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -550,7 +547,7 @@ class TestBlogRoutes:
         assert resp.json()["data"]["file_tree"] is None
 
     async def should_update_series_via_api(self, client: AsyncClient, db: AsyncSession, blog_dir: str) -> None:
-        uid, token = await self._setup_user(db)
+        _, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -565,7 +562,7 @@ class TestBlogRoutes:
         assert resp.json()["data"]["title"] == "Updated"
 
     async def should_reject_update_by_other_via_api(self, client: AsyncClient, db: AsyncSession, blog_dir: str) -> None:
-        uid, token = await self._setup_user(db)
+        _, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -584,7 +581,7 @@ class TestBlogRoutes:
         assert resp.status_code == 403
 
     async def should_delete_series_via_api(self, client: AsyncClient, db: AsyncSession, blog_dir: str) -> None:
-        uid, token = await self._setup_user(db)
+        _, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -598,7 +595,7 @@ class TestBlogRoutes:
         assert resp.json()["code"] == BlogErr.SERIES_NOT_FOUND
 
     async def should_star_via_api(self, client: AsyncClient, db: AsyncSession, blog_dir: str) -> None:
-        uid, token = await self._setup_user(db)
+        _, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -614,7 +611,7 @@ class TestBlogRoutes:
         assert resp.json()["data"]["star_count"] == 0
 
     async def should_comment_via_api(self, client: AsyncClient, db: AsyncSession, blog_dir: str) -> None:
-        uid, token = await self._setup_user(db)
+        _, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -630,7 +627,7 @@ class TestBlogRoutes:
         assert resp.json()["data"]["content"] == "Great!"
 
     async def should_list_comments_threaded_via_api(self, client: AsyncClient, db: AsyncSession, blog_dir: str) -> None:
-        uid, token = await self._setup_user(db)
+        _, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),
@@ -656,7 +653,7 @@ class TestBlogRoutes:
         assert items[0]["replies"][0]["content"] == "Child"
 
     async def should_delete_comment_via_api(self, client: AsyncClient, db: AsyncSession, blog_dir: str) -> None:
-        uid, token = await self._setup_user(db)
+        _, token = await self._setup_user(db)
         await client.post(
             "/api/v1/blog/series",
             headers=self._auth_header(token),

@@ -5,12 +5,10 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.modules.auth.models  # noqa: F401 ensure auth tables registered
+import app.modules.auth.models  # pyright: ignore[reportUnusedImport] ensure auth tables registered
 from app.core.err import BizError, CommonErr
 from app.modules.forum.errors import ForumErr
-from app.db.models import Base, ForumPost, Profile, User
-from app.db.session import get_session
-from app.main import app
+from app.db.models import ForumPost, Profile, User
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.forum.schemas import CommentCreate, CommentInfo, PostCreate, PostInfo
 from app.modules.forum.service import (
@@ -239,7 +237,7 @@ class TestForumRoutes:
         assert resp.json()["data"]["author_id"] == user_id
 
     async def should_list_posts_publicly(self, client: AsyncClient, db: AsyncSession):
-        user_id, token = await self._setup_user(db)
+        _, token = await self._setup_user(db)
         await client.post(
             "/api/v1/forum/posts",
             headers={"Authorization": f"Bearer {token}"},
@@ -254,7 +252,7 @@ class TestForumRoutes:
         assert data["items"][0]["title"] == "公开帖"
 
     async def should_delete_own_post_through_api(self, client: AsyncClient, db: AsyncSession):
-        user_id, token = await self._setup_user(db)
+        _, token = await self._setup_user(db)
         created_resp = await client.post(
             "/api/v1/forum/posts",
             headers={"Authorization": f"Bearer {token}"},

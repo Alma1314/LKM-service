@@ -5,7 +5,7 @@ import json
 import base64
 import struct
 import os
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 
 import pytest
 from sqlalchemy import select
@@ -17,8 +17,7 @@ from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
 from app.core.err import BizError
 from app.modules.auth.errors import AuthErr
-from app.db.models import Base
-import app.modules.auth.models  # noqa: F401
+import app.modules.auth.models  # pyright: ignore[reportUnusedImport] 副作用导入：注册 auth 表
 from app.modules.auth.models import PasskeyCredential
 
 

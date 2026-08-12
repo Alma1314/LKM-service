@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.err import BizError
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.deps import CurrentUser
-from app.db.models import Base, User
+from app.db.models import User
 from app.modules.auth.models import RecoveryCode, TOTP
 from app.modules.auth.security import (
     create_temp_token,
@@ -27,10 +27,6 @@ from app.modules.auth.security import (
     generate_totp_secret,
     hashpwd,
 )
-
-# Re-import the settings so that get_totp_uri uses the same app_name
-from app.core.config import settings
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -226,7 +222,7 @@ class TestVerify2FA:
 
     async def should_verify_with_recovery_code(self, db: AsyncSession):
         user = await _create_user(db, username="recoveruser")
-        secret = await _enable_totp_for_user(db, user.id)
+        _ = await _enable_totp_for_user(db, user.id)  # TOTP 需启用但验证走 recovery code，secret 不在此用
 
         # Create a recovery code entry directly
         recovery_plain = "test-recovery-code-12345"

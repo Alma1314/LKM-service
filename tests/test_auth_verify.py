@@ -10,8 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
 from app.modules.auth.errors import AuthErr
-from app.db.models import Base
-import app.modules.auth.models  # noqa: F401 ensure auth tables registered
+import app.modules.auth.models  # pyright: ignore[reportUnusedImport] ensure auth tables registered
 from app.modules.auth.models import EmailVerification, PhoneVerification
 from app.modules.auth.service_verify import (
     check_code_rate_limit,

@@ -6,10 +6,8 @@ Covers:
 - Error cases: duplicate email/phone, wrong code
 """
 
-import asyncio
 import json
 from typing import Any, cast
-from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
@@ -20,8 +18,8 @@ from app.modules.auth.errors import AuthErr
 from app.modules.auth.deps import CurrentUser
 from app.modules.auth.router_settings import BindEmailVerify, BindPhoneVerify
 from app.modules.auth.schemas import UnbindRequest
-from app.db.models import Base, User
-import app.modules.auth.models  # noqa: F401 — ensure auth tables (refresh_tokens, etc.) are created
+from app.db.models import User
+import app.modules.auth.models  # pyright: ignore[reportUnusedImport] — ensure auth tables (refresh_tokens, etc.) are created
 
 
 def _FakeCurrentUser(id: int, account_level: str = "local", role: str = "member") -> CurrentUser:
@@ -75,23 +73,14 @@ class TestBindEmail:
     async def should_bind_email_and_upgrade_local_to_normal(self, db: AsyncSession):
         """Full happy path: request code, verify, email bound, account upgraded."""
         # Arrange: create a local user
-        from app.db.models import User
-
         reg_result = await _reg_local(db, username="alice")
         user_id = reg_result["user_id"]
         assert (await _get_user(db, user_id)).account_level == "local"
 
-        # Stub providers so we can capture the code
-        captured = {}
-
-        async def fake_send_code(email: str, code: str) -> None:
-            captured["code"] = code
-
-        # Act: request email binding
+        # Act: request email binding（验证码直接取自 create_email_verification 返回值）
         from app.modules.auth.service_verify import create_email_verification
 
-        code, record_id = await create_email_verification(db, "alice@example.com", "bind")
-        captured["code"] = code
+        code, _ = await create_email_verification(db, "alice@example.com", "bind")
 
         # Now use the router function directly
         from app.modules.auth.router_settings import bind_email_verify
@@ -117,7 +106,7 @@ class TestBindEmail:
         reg1 = await _reg_local(db, username="alice")
         reg2 = await _reg_local(db, username="bob")
 
-        from app.modules.auth.service_verify import create_email_verification, consume_email_code
+        from app.modules.auth.service_verify import create_email_verification
 
         # Bind email to alice directly
         user1 = await _get_user(db, reg1["user_id"])
@@ -125,7 +114,7 @@ class TestBindEmail:
         await db.flush()
 
         # Try to bind the same email to bob
-        code, record_id = await create_email_verification(db, "same@example.com", "bind")
+        code, _ = await create_email_verification(db, "same@example.com", "bind")
 
         from app.modules.auth.router_settings import bind_email_verify
 
@@ -167,7 +156,7 @@ class TestBindPhone:
 
         from app.modules.auth.service_verify import create_phone_verification
 
-        code, record_id = await create_phone_verification(db, "13800001111", "bind")
+        code, _ = await create_phone_verification(db, "13800001111", "bind")
 
         from app.modules.auth.router_settings import bind_phone_verify
 
@@ -196,7 +185,7 @@ class TestBindPhone:
 
         from app.modules.auth.service_verify import create_phone_verification
 
-        code, record_id = await create_phone_verification(db, "13800001111", "bind")
+        code, _ = await create_phone_verification(db, "13800001111", "bind")
 
         from app.modules.auth.router_settings import bind_phone_verify
 
@@ -355,7 +344,7 @@ class TestUnbind:
         await db.flush()
 
         from app.modules.auth.router_settings import unbind
-        from app.core.err import BizError, ErrCode
+        from app.core.err import BizError
 
         # 先解绑 phone，使仅剩 email
         _unwrap(await unbind("phone", UnbindRequest(code=None), cur=_FakeCurrentUser(user.id, account_level="normal"), db=db))
@@ -370,7 +359,7 @@ class TestUnbind:
         db.add(TOTP(user_id=user.id, secret="s", enabled=True))
         await db.flush()
 
-        from app.core.err import BizError, ErrCode
+        from app.core.err import BizError
         from app.modules.auth.router_settings import unbind
 
         with pytest.raises(BizError) as exc:
@@ -392,7 +381,7 @@ class TestUnbind:
 
     async def should_reject_invalid_type(self, db: AsyncSession):
         user = await self._reg_with_bindings(db)
-        from app.core.err import BizError, ErrCode
+        from app.core.err import BizError
         from app.modules.auth.router_settings import unbind
 
         with pytest.raises(BizError) as exc:

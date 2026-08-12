@@ -52,36 +52,36 @@ class TestGithubAuthUrl:
 
 class TestOAuthState:
     async def should_store_and_consume_state(self, db: AsyncSession):
-        from app.modules.auth.service_oauth import _generate_oauth_state, _consume_oauth_state
+        from app.modules.auth.service_oauth import generate_oauth_state, consume_oauth_state
 
-        state = await _generate_oauth_state(db, "login")
+        state = await generate_oauth_state(db, "login")
         assert len(state) > 0
 
         records = (await db.execute(select(OAuthState).where(OAuthState.state == state))).scalars().all()
         assert len(records) == 1
         assert not records[0].consumed
 
-        await _consume_oauth_state(db, state, "login")
+        await consume_oauth_state(db, state, "login")
         await db.refresh(records[0])
         assert records[0].consumed
 
     async def should_reject_already_consumed_state(self, db: AsyncSession):
-        from app.modules.auth.service_oauth import _generate_oauth_state, _consume_oauth_state
+        from app.modules.auth.service_oauth import generate_oauth_state, consume_oauth_state
         from app.core.err import BizError
 
-        state = await _generate_oauth_state(db, "login")
-        await _consume_oauth_state(db, state, "login")
+        state = await generate_oauth_state(db, "login")
+        await consume_oauth_state(db, state, "login")
 
         with pytest.raises(BizError):
-            await _consume_oauth_state(db, state, "login")
+            await consume_oauth_state(db, state, "login")
 
     async def should_reject_wrong_purpose(self, db: AsyncSession):
-        from app.modules.auth.service_oauth import _generate_oauth_state, _consume_oauth_state
+        from app.modules.auth.service_oauth import generate_oauth_state, consume_oauth_state
         from app.core.err import BizError
 
-        state = await _generate_oauth_state(db, "login")
+        state = await generate_oauth_state(db, "login")
         with pytest.raises(BizError):
-            await _consume_oauth_state(db, state, "bind")
+            await consume_oauth_state(db, state, "bind")
 
 
 class TestOauthRouterRedirect:
@@ -121,7 +121,6 @@ class TestOauthRouterRedirect:
 
     async def should_redirect_login_callback_with_temp_token_when_2fa(self, db: AsyncSession):
         from unittest.mock import AsyncMock, patch
-        from fastapi.responses import RedirectResponse
         from urllib.parse import parse_qs, urlparse
 
         from app.modules.auth import router_oauth
@@ -168,7 +167,7 @@ class TestOauthRouterRedirect:
         assert qs["success"] == ["1"]
 
     async def should_redirect_bind_callback_on_biz_error(self, db: AsyncSession):
-        from unittest.mock import AsyncMock, patch
+        from unittest.mock import patch
         from fastapi.responses import RedirectResponse
         from urllib.parse import parse_qs, urlparse
 

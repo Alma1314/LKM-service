@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import StaticPool
 
-import app.modules.auth.models  # noqa: F401 ensure auth tables registered
+import app.modules.auth.models  # pyright: ignore[reportUnusedImport] ensure auth tables registered
 from app.core.err import BizError, CommonErr
 from app.modules.files.errors import FileErr
 from app.db.models import Base, LibraryFile, Profile, User
@@ -182,7 +182,7 @@ class TestFilesService:
         monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
         user_id = await _user(db)
         hot = await _file(db, uploader_id=user_id, original_name="热门.zip")
-        cold = await _file(db, uploader_id=user_id, original_name="冷门.pdf")
+        _ = await _file(db, uploader_id=user_id, original_name="冷门.pdf")
         await bump_download(db, hot.id)
         await bump_download(db, hot.id)
 

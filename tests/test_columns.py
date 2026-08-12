@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr
 from app.modules.columns.errors import ColumnErr
-from app.db.models import Base, User
 from app.modules.columns.models import ColumnApplicationStatus
 from app.modules.columns.schemas import (
     ColumnApplicationCreate,
@@ -278,7 +277,7 @@ class TestColumnRoutes:
     async def should_reject_application_when_token_user_mismatches_body_user(
         self, client: AsyncClient, db: AsyncSession
     ) -> None:
-        user_id_1, token = await self._setup_user(db)
+        user_id_1, _ = await self._setup_user(db)
         # Create a second user so token for user_id=2 is valid
         await _user(db, username="other", email="other@example.com")
         token_2 = create_access_token(user_id=2, account_level="normal", role="member")

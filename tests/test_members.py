@@ -5,7 +5,6 @@ from httpx import AsyncClient
 
 from app.core.err import BizError
 from app.modules.members.errors import MemberErr
-from app.main import app
 from app.modules.members.service import get_members
 
 

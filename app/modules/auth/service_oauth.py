@@ -17,7 +17,7 @@ from app.modules.auth.models import OAuthState, UserOAuth
 from app.modules.auth.service_auth import finalize_auth_response, log_audit, upgrade_to_normal
 
 
-async def _generate_oauth_state(db: AsyncSession, purpose: str, user_id: int | None = None) -> str:
+async def generate_oauth_state(db: AsyncSession, purpose: str, user_id: int | None = None) -> str:
     """生成一个高熵的 OAuth state 令牌，存储并返回它。bind 场景关联发起用户。"""
     state = secrets.token_urlsafe(32)
     expiry = expires_at(minutes=10)
@@ -26,7 +26,7 @@ async def _generate_oauth_state(db: AsyncSession, purpose: str, user_id: int | N
     return state
 
 
-async def _consume_oauth_state(db: AsyncSession, state: str, purpose: str) -> OAuthState:
+async def consume_oauth_state(db: AsyncSession, state: str, purpose: str) -> OAuthState:
     """消耗一次 OAuth state，返回该记录（含 user_id，供绑定归属）。无效则抛错。"""
     consumed = await consume_once(
         db,
@@ -46,7 +46,7 @@ async def _consume_oauth_state(db: AsyncSession, state: str, purpose: str) -> OA
 
 
 async def get_github_auth_url(db: AsyncSession, purpose: str = "login", user_id: int | None = None) -> str:
-    state = await _generate_oauth_state(db, purpose, user_id)
+    state = await generate_oauth_state(db, purpose, user_id)
     return (
         f"https://github.com/login/oauth/authorize"
         f"?client_id={settings.github_client_id}"
@@ -110,7 +110,7 @@ async def _get_github_user(access_token: str) -> dict[str, Any]:
 
 
 async def handle_github_callback(db: AsyncSession, code: str, state: str) -> dict[str, Any]:
-    await _consume_oauth_state(db, state, "login")  # login 场景无需用户归属
+    await consume_oauth_state(db, state, "login")  # login 场景无需用户归属
     access_token = await _exchange_github_token(code)
     gh_user = await _get_github_user(access_token)
 
@@ -189,7 +189,7 @@ async def _oauth_login_response(db: AsyncSession, user: User) -> dict[str, Any]:
 
 async def bind_github(db: AsyncSession, code: str, state: str) -> dict[str, Any]:
     """绑定 GitHub 到发起绑定的用户（user_id 由 OAuth state 记录携带，回调无需 JWT）。"""
-    st = await _consume_oauth_state(db, state, "bind")
+    st = await consume_oauth_state(db, state, "bind")
     user_id = st.user_id
     if not user_id:
         raise BizError(AuthErr.OAUTH_PROVIDER_ERROR, "Bind session lost its owner")

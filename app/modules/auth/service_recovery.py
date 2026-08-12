@@ -34,7 +34,7 @@ from app.modules.auth.service_verify import (
 )
 
 
-async def _find_user_by_contact(db: AsyncSession, field: str, value: str) -> User:
+async def find_user_by_contact(db: AsyncSession, field: str, value: str) -> User:
     """通过邮箱或手机号查找用户。"""
     if field == "email":
         user = await get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.email == value)
@@ -86,7 +86,7 @@ def check_recovery_methods(_db: AsyncSession, _account: str) -> dict[str, Any]:
 async def recover_by_phone(db: AsyncSession, phone: str, code: str, new_password: str | None = None) -> dict[str, Any]:
     """第 1 步：验证手机联系方式以进行密码恢复。"""
     await consume_phone_code(db, phone, code, "reset")
-    user = await _find_user_by_contact(db, "phone", phone)
+    user = await find_user_by_contact(db, "phone", phone)
 
     if await _user_requires_mfa(db, user):
         return await _start_user_recovery_txn(db, user)
@@ -100,7 +100,7 @@ async def recover_by_phone(db: AsyncSession, phone: str, code: str, new_password
 async def recover_by_email_code(db: AsyncSession, email: str, code: str, new_password: str | None = None) -> dict[str, Any]:
     """第 1 步：验证邮箱联系方式以进行密码恢复。"""
     await consume_email_code(db, email, code, "reset")
-    user = await _find_user_by_contact(db, "email", email)
+    user = await find_user_by_contact(db, "email", email)
 
     if await _user_requires_mfa(db, user):
         return await _start_user_recovery_txn(db, user)

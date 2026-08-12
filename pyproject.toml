@@ -44,7 +44,8 @@ reportMissingParameterType = true
 reportMissingTypeStubs = false
 reportUnannotatedClassAttribute = true
 reportUnusedCallResult = false
-reportUnusedImport = false
+reportUnusedImport = true
+reportUnusedVariable = true
 
 [dependency-groups]
 dev = [

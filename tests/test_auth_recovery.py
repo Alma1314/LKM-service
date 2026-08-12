@@ -2,8 +2,7 @@
 
 import datetime as dt
 import hashlib
-import re
-from typing import Any, TypeVar, cast
+from typing import cast
 
 import pytest
 from sqlalchemy import select
@@ -11,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
 from app.modules.auth.errors import AuthErr
-from app.db.models import Base, User, Profile
-import app.modules.auth.models  # noqa: F401
+from app.db.models import User, Profile
+import app.modules.auth.models  # pyright: ignore[reportUnusedImport] 副作用导入：注册 auth 表
 from app.modules.auth.models import MagicLink, RefreshToken
 
 
@@ -453,9 +452,9 @@ class TestRecoverByMagicLink:
 class TestFindUserByContact:
     async def should_raise_user_not_found_when_no_match(self, db: AsyncSession):
         with pytest.raises(BizError) as exc:
-            from app.modules.auth.service_recovery import _find_user_by_contact
+            from app.modules.auth.service_recovery import find_user_by_contact
 
-            await _find_user_by_contact(db, "email", "noone@example.com")
+            await find_user_by_contact(db, "email", "noone@example.com")
         assert exc.value.errcode == AuthErr.USER_NOT_FOUND
 
     async def should_raise_recovery_not_supported_for_local_user(self, db: AsyncSession):
@@ -465,7 +464,7 @@ class TestFindUserByContact:
         await db.flush()
 
         with pytest.raises(BizError) as exc:
-            from app.modules.auth.service_recovery import _find_user_by_contact
+            from app.modules.auth.service_recovery import find_user_by_contact
 
-            await _find_user_by_contact(db, "email", "alice@example.com")
+            await find_user_by_contact(db, "email", "alice@example.com")
         assert exc.value.errcode == AuthErr.RECOVERY_NOT_SUPPORTED

@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
 from app.modules.auth.errors import AuthErr
-from app.db.models import Base, User
-import app.modules.auth.models  # noqa: F401
+from app.db.models import User
+import app.modules.auth.models  # pyright: ignore[reportUnusedImport] 副作用导入：注册 auth 表
 from app.modules.auth.models import MagicLink, TOTP
 from app.modules.auth.providers.console import ConsoleEmailProvider
 
