@@ -69,7 +69,6 @@ ignore = [
     "RUF002",
     "RUF003",
     "ANN401",  # 后端在 ORM/stub 边界刻意用 Any
-    "UP042",   # (str, Enum)→StrEnum 属现代化重构，非本次范围
     "UP046",   # Generic[...]→PEP 695 类型参数，非本次范围
     "UP047",   # TypeVar→PEP 695 类型参数（@respond 带 overload，改造风险大），非本次范围
 ]
