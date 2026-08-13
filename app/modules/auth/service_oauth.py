@@ -5,6 +5,7 @@ from typing import Any, cast
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -16,6 +17,7 @@ from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import OAuthState, UserOAuth
 from app.modules.auth.service_auth import (
     finalize_auth_response,
+    handle_duplicate_user_error,
     log_audit,
     upgrade_to_normal,
 )
@@ -200,7 +202,10 @@ async def handle_github_callback(
         account_level="normal",
     )
     db.add(user)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        handle_duplicate_user_error(exc)
 
     db.add(Profile(user_id=int(user.id), role="member"))
     await db.flush()

@@ -203,7 +203,10 @@ async def register_local(db: AsyncSession, info: UserRegLocal) -> dict[str, Any]
         account_level="local",
     )
     db.add(user)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        handle_duplicate_user_error(exc)
 
     db.add(Profile(user_id=user.id, role="member"))
     await db.flush()
@@ -211,7 +214,7 @@ async def register_local(db: AsyncSession, info: UserRegLocal) -> dict[str, Any]
     return await _create_auth_response(db, user)
 
 
-def _handle_duplicate_user_error(exc: Exception) -> None:
+def handle_duplicate_user_error(exc: Exception) -> None:
     """如果是唯一性违规，将 IntegrityError 重新抛出为 ALREADY_REGISTERED。"""
     if isinstance(exc, IntegrityError):
         raise BizError(AuthErr.ALREADY_REGISTERED, "Account already exists") from exc
@@ -274,7 +277,10 @@ async def register_normal_with_password(
         account_level="normal",
     )
     db.add(user)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        handle_duplicate_user_error(exc)
 
     db.add(Profile(user_id=user.id, role="member"))
     await db.flush()
@@ -345,7 +351,10 @@ async def register_by_verify(
         account_level="normal",
     )
     db.add(user)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        handle_duplicate_user_error(exc)
     db.add(Profile(user_id=user.id, role="member"))
     await db.flush()
 
@@ -455,7 +464,10 @@ async def consume_pending_normal_registration(
         account_level="normal",
     )
     db.add(user)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        handle_duplicate_user_error(exc)
     db.add(Profile(user_id=user.id, role="member"))
     await db.flush()
 
