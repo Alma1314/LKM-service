@@ -1,7 +1,7 @@
 import functools
 from collections.abc import Callable, Coroutine
 from enum import IntEnum
-from typing import Any, ParamSpec, TypeVar, cast
+from typing import Any, cast
 
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -90,9 +90,6 @@ def map_err(exc: Exception) -> tuple[int, ErrCode, str]:
     return status, CommonErr.INTERNAL_ERROR, msg
 
 
-P = ParamSpec("P")
-
-
 def resp_json(
     errcode: ErrCode,
     *,
@@ -109,11 +106,8 @@ def resp_json(
     )
 
 
-_R = TypeVar("_R")
-
-
-def respond(
-    func: Callable[P, Coroutine[Any, Any, _R]],
+def respond[**P, R](
+    func: Callable[P, Coroutine[Any, Any, R]],
 ) -> Callable[P, Coroutine[Any, Any, JSONResponse]]:
     """装饰器：将返回值通过 ERRTABLE 包装。
 

@@ -6,7 +6,7 @@
   isolated_update—— 在 savepoint 里更新，调用方事务回滚也不影响
 """
 
-from typing import Any, TypeVar
+from typing import Any
 
 from sqlalchemy import Result, Select, Update, select
 from sqlalchemy import update as sa_update
@@ -15,10 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, ErrCode
 
-M = TypeVar("M")
 
-
-async def get_or_raise(
+async def get_or_raise[M](
     db: AsyncSession,
     model: type[M],
     errcode: ErrCode,
@@ -37,7 +35,7 @@ async def get_or_raise(
     return obj
 
 
-async def consume_once(
+async def consume_once[M](
     db: AsyncSession,
     model: type[M],
     values: dict[str, object],

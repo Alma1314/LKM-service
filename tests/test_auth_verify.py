@@ -1,7 +1,7 @@
 import datetime as dt
 import re
 import time
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -21,12 +21,10 @@ from app.modules.auth.service_verify import (
     hash_code,
 )
 
-_T = TypeVar("_T")
 
-
-async def _get(db: AsyncSession, model: type[_T], *where: Any) -> _T:
+async def _get[T](db: AsyncSession, model: type[T], *where: Any) -> T:
     # 测试均为“先建后查”，必然命中，返回类型直接按 _T 处理
-    return cast(_T, (await db.execute(select(model).where(*where))).scalars().first())
+    return cast(T, (await db.execute(select(model).where(*where))).scalars().first())
 
 
 class TestGenerateCode:
