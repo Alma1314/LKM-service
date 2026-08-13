@@ -5,6 +5,7 @@ Provides both ``run_migrations_offline`` (generate SQL) and
 models so ``autogenerate`` can detect schema changes.
 """
 
+import asyncio
 import sys
 from logging.config import fileConfig
 from pathlib import Path
@@ -12,7 +13,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import Connection, pool
+from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import settings
 
@@ -23,13 +25,13 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Set the database URL
+# Set the database URL（已为 async 方言：postgresql+asyncpg / sqlite+aiosqlite）
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
 # Import all models so metadata is fully populated for autogenerate
 from app.db.models import Base  # noqa: E402
-import app.modules.auth.models  # pyright: ignore[reportUnusedImport]
-import app.modules.columns.models  # pyright: ignore[reportUnusedImport]
+import app.modules.auth.models  # noqa: E402, F401
+import app.modules.columns.models  # noqa: E402, F401
 
 target_metadata = Base.metadata
 
@@ -53,27 +55,39 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def run_migrations_online() -> None:
-    """Run migrations in 'online' (live-database) mode.
+def do_run_migrations(connection: Connection) -> None:
+    """Run migrations against a live connection.
 
-    Creates an Engine and associates a connection with the context.
-    For SQLite the render_as_batch flag is enabled so ALTER statements work.
+    ``connection.run_sync`` 传入的是同步 Connection；``render_as_batch``
+    对 SQLite 的 ALTER 语句必要。
     """
-    connectable = engine_from_config(
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        render_as_batch=True,  # SQLite-compatible
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def run_async_migrations() -> None:
+    """用 async 引擎跑迁移（database_url 已是 async 方言）。"""
+    connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
 
-    with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            render_as_batch=True,  # SQLite-compatible
-        )
+    async with connectable.connect() as connection:
+        await connection.run_sync(do_run_migrations)
 
-        with context.begin_transaction():
-            context.run_migrations()
+    await connectable.dispose()
+
+
+def run_migrations_online() -> None:
+    """Run migrations in 'online' (live-database) mode via an async engine."""
+    asyncio.run(run_async_migrations())
 
 
 if context.is_offline_mode():

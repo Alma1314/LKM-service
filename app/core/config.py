@@ -105,10 +105,10 @@ class Settings(BaseSettings):
     def database_url(self) -> str:
         if self.db_driver == "postgresql":
             return (
-                f"postgresql+psycopg2://{self.db_user}:{self.db_password}"
+                f"postgresql+asyncpg://{self.db_user}:{self.db_password}"
                 f"@{self.db_host}:{self.db_port}/{self.db_name}"
             )
-        return f"sqlite:///{self.db_path}"
+        return f"sqlite+aiosqlite:///{self.db_path}"
 
 
 settings = Settings()

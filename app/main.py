@@ -63,7 +63,7 @@ def _verify_production_secrets() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     _verify_production_secrets()
-    init_db()
+    await init_db()
 
     cleanup_task = asyncio.create_task(cleanup_expired_challenges())
 
