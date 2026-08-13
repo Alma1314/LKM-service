@@ -34,6 +34,7 @@ from app.modules.auth.schemas import (
 from app.modules.auth.security import (
     create_access_token,
     create_temp_token,
+    dummy_verify,
     hashpwd,
     verifypwd,
 )
@@ -149,7 +150,7 @@ async def _check_account_locked(user: User) -> None:
     if user.locked_until:
         if user.locked_until > now_iso():
             # 执行虚拟哈希以保持时序一致
-            verifypwd("dummy", "$dummy$" + "a" * 64)
+            dummy_verify()
             raise BizError(AuthErr.INVALID_CREDENTIALS)
         # 锁定已过期 —— 自动解锁
         user.is_locked = False
@@ -538,14 +539,14 @@ async def login_password(
 
     if not user:
         # 防御用户枚举：执行一个相同成本的虚拟哈希，
-        verifypwd(info.password, "$dummy$" + "a" * 64)
+        dummy_verify()
         raise BizError(AuthErr.INVALID_CREDENTIALS)
 
     await _check_account_locked(user)
 
     try:
         ok = verifypwd(info.password, str(user.hashed_password))
-    except (ValueError, TypeError):
+    except Exception:
         logger.exception(
             "verifypwd raised exception for user_id=%s (possible corrupted hash)",
             user.id,

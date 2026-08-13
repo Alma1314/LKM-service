@@ -10,39 +10,34 @@ from typing import Any
 from urllib.parse import quote
 
 import jwt
+from argon2 import PasswordHasher
+from argon2.exceptions import VerificationError
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.core.config import settings
 
-_ALGORITHM = "pbkdf2:sha256"
-_ITERATIONS = 600_000
-_HASH_FN = "sha256"
+_ph = PasswordHasher()
+# 虚拟哈希，防枚举
+_DUMMY_HASH = _ph.hash("dummy-timing-equalizer")
 
 
 def hashpwd(raw: str) -> str:
-    salt = secrets.token_hex(16)
-    hashed = hashlib.pbkdf2_hmac(
-        _HASH_FN, raw.encode(), salt.encode(), _ITERATIONS
-    ).hex()
-    return f"{_ALGORITHM}${salt}${hashed}"
+    """返回 Argon2id 密码哈希（argon2-cffi 默认参数）。"""
+    return _ph.hash(raw)
 
 
 def verifypwd(raw: str, stored: str) -> bool:
+    """验证密码。哈希格式无效或密码不匹配时返回 False，不抛异常。"""
     try:
-        parts = stored.split("$")
-        if len(parts) == 3:
-            algo, salt, hashed = parts
-            _ = algo
-        elif len(parts) == 2:
-            salt, hashed = parts
-        else:
-            return False
-    except (ValueError, AttributeError):
+        _ph.verify(stored, raw)
+        return True
+    except (VerificationError, ValueError):
         return False
-    nhash = hashlib.pbkdf2_hmac(
-        _HASH_FN, raw.encode(), salt.encode(), _ITERATIONS
-    ).hex()
-    return hmac.compare_digest(nhash, hashed)
+
+
+def dummy_verify() -> None:
+    """执行一次与真实验证等成本的虚拟验证，保持时序一致。"""
+    verifypwd("dummy", _DUMMY_HASH)
 
 
 _ACCESS_TYPE = "access"

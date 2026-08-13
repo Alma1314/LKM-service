@@ -16,8 +16,8 @@ from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import TOTP, MagicLink, RecoveryTransaction, TempTokenUsage
 from app.modules.auth.security import (
     create_temp_token,
+    dummy_verify,
     hashpwd,
-    verifypwd,
 )
 from app.modules.auth.service_auth import (
     BackgroundTasksLike,
@@ -248,7 +248,7 @@ async def recover_admin_begin(
         }
 
     check_code_rate_limit(f"recover:admin:{contact}", max_count=3, window=3600)
-    verifypwd("dummy", "$dummy$" + "a" * 64)
+    dummy_verify()
     return {
         "message": "If the account is eligible, recovery instructions will be sent to the registered contact."
     }
