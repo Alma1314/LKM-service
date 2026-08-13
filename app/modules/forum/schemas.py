@@ -1,10 +1,8 @@
 import datetime
 import json
-from typing import Any, ClassVar, Generic, TypeVar, cast
+from typing import Any, ClassVar, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-
-T = TypeVar("T")
 
 
 class PostCreate(BaseModel):
@@ -64,7 +62,7 @@ class CommentInfo(BaseModel):
     created_at: datetime.datetime
 
 
-class PageData(BaseModel, Generic[T]):
+class PageData[T](BaseModel):
     items: list[T]
     total: int
     page: int
