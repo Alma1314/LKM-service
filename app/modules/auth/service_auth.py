@@ -17,6 +17,7 @@ from app.core.err import BizError, CommonErr
 from app.core.throttle import check_password_login_rate_limit
 from app.db.models import Profile, User, expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise, isolated_update
+from app.modules.auth.channels import CHANNELS, channel_for
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import (
     TOTP,
@@ -179,6 +180,33 @@ async def _record_failed_attempt(db: AsyncSession, user: User) -> None:
         await db.refresh(user)
 
 
+async def ensure_unique_username(db: AsyncSession, base: str) -> str:
+    """在 base 上追加数字后缀直到用户名唯一。"""
+    username = base
+    suffix = 1
+    while (
+        (await db.execute(select(User).where(User.username == username)))
+        .scalars()
+        .first()
+    ):
+        username = f"{base}{suffix}"
+        suffix += 1
+    return username
+
+
+async def create_user_with_profile(db: AsyncSession, **fields: Any) -> User:
+    """创建用户 + 默认 Profile；唯一性冲突统一转 ALREADY_REGISTERED。"""
+    user = User(**fields)
+    db.add(user)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        handle_duplicate_user_error(exc)
+    db.add(Profile(user_id=user.id, role="member"))
+    await db.flush()
+    return user
+
+
 async def register_local(db: AsyncSession, info: UserRegLocal) -> dict[str, Any]:
     """创建一个 ``local`` 账户，若已存在且密码正确则自动登录。"""
     username = _normalize_username(info.username)
@@ -197,19 +225,12 @@ async def register_local(db: AsyncSession, info: UserRegLocal) -> dict[str, Any]
         await upgrade_to_normal(db, existing)
         return await _create_auth_response(db, existing)
 
-    user = User(
+    user = await create_user_with_profile(
+        db,
         username=username,
         hashed_password=hashpwd(info.password),
         account_level="local",
     )
-    db.add(user)
-    try:
-        await db.flush()
-    except IntegrityError as exc:
-        handle_duplicate_user_error(exc)
-
-    db.add(Profile(user_id=user.id, role="member"))
-    await db.flush()
 
     return await _create_auth_response(db, user)
 
@@ -269,21 +290,14 @@ async def register_normal_with_password(
         await db.flush()
         return await _create_auth_response(db, existing)
 
-    user = User(
+    user = await create_user_with_profile(
+        db,
         username=username,
         hashed_password=hashpwd(info.password),
         email=email_normalized,
         phone=info.phone,
         account_level="normal",
     )
-    db.add(user)
-    try:
-        await db.flush()
-    except IntegrityError as exc:
-        handle_duplicate_user_error(exc)
-
-    db.add(Profile(user_id=user.id, role="member"))
-    await db.flush()
 
     return await _create_auth_response(db, user)
 
@@ -292,71 +306,26 @@ async def register_by_verify(
     db: AsyncSession, field: str, value: str
 ) -> dict[str, Any]:
     """通过邮箱或手机验证创建一个*无密码*的普通用户，若已存在则自动登录。"""
-    if field not in ("email", "phone"):
+    channel = CHANNELS.get(field)
+    if channel is None:
         raise BizError(CommonErr.INVALID_INPUT, "field must be 'email' or 'phone'")
 
-    # 规范化并检查重复
-    if field == "email":
-        normalized_value = _normalize_email(value)
-        existing = (
-            (
-                await db.execute(
-                    select(User)
-                    .where(User.email == normalized_value)
-                    .options(selectinload(User.profile))
-                )
-            )
-            .scalars()
-            .first()
-        )
-    else:
-        normalized_value = value
-        existing = (
-            (
-                await db.execute(
-                    select(User)
-                    .where(User.phone == normalized_value)
-                    .options(selectinload(User.profile))
-                )
-            )
-            .scalars()
-            .first()
-        )
-
+    normalized_value = channel.normalize(value)
+    existing = await channel.find_user(db, normalized_value)
     if existing:
         await upgrade_to_normal(db, existing)
         await db.flush()
         await log_audit(db, existing.id, "register_code", f"auto-login via {field}")
         return await _create_auth_response(db, existing)
 
-    # 从值中派生用户名
-    username = value.split("@")[0] if field == "email" else f"user_{value[-6:]}"
-
-    # 确保唯一性
-    suffix = 1
-    base = username
-    while (
-        (await db.execute(select(User).where(User.username == username)))
-        .scalars()
-        .first()
-    ):
-        username = f"{base}{suffix}"
-        suffix += 1
-
-    user = User(
+    username = await ensure_unique_username(db, channel.username_from(value))
+    user = await create_user_with_profile(
+        db,
         username=username,
-        email=normalized_value if field == "email" else None,
-        phone=value if field == "phone" else None,
         hashed_password="",
         account_level="normal",
+        **{field: normalized_value},
     )
-    db.add(user)
-    try:
-        await db.flush()
-    except IntegrityError as exc:
-        handle_duplicate_user_error(exc)
-    db.add(Profile(user_id=user.id, role="member"))
-    await db.flush()
 
     await log_audit(db, user.id, "register_code", f"registered via {field}")
     return await _create_auth_response(db, user)
@@ -456,20 +425,14 @@ async def consume_pending_normal_registration(
         )
         return await _create_auth_response(db, existing)
 
-    user = User(
+    user = await create_user_with_profile(
+        db,
         username=str(pending.username),
         email=str(pending.email) if pending.email else None,
         phone=str(pending.phone) if pending.phone else None,
         hashed_password=str(pending.hashed_password),
         account_level="normal",
     )
-    db.add(user)
-    try:
-        await db.flush()
-    except IntegrityError as exc:
-        handle_duplicate_user_error(exc)
-    db.add(Profile(user_id=user.id, role="member"))
-    await db.flush()
 
     await log_audit(db, user.id, "register_normal", "password registration complete")
     return await _create_auth_response(db, user)
@@ -587,24 +550,11 @@ async def login_password(
 
 async def login_code(db: AsyncSession, contact: str, code: str) -> dict[str, Any]:
     """使用有时效性的验证码进行认证。"""
-    if "@" in contact:
-        await consume_email_code(db, contact, code, "login")
-        user = await get_or_raise(
-            db,
-            User,
-            AuthErr.USER_NOT_FOUND,
-            User.email == _normalize_email(contact),
-            options=(selectinload(User.profile),),
-        )
-    else:
-        await consume_phone_code(db, contact, code, "login")
-        user = await get_or_raise(
-            db,
-            User,
-            AuthErr.USER_NOT_FOUND,
-            User.phone == contact,
-            options=(selectinload(User.profile),),
-        )
+    channel = channel_for(contact)
+    await channel.consume_code(db, contact, code, "login")
+    user = await channel.find_user(db, channel.normalize(contact))
+    if user is None:
+        raise BizError(AuthErr.USER_NOT_FOUND)
 
     if user.account_level == "local":
         raise BizError(AuthErr.ACCOUNT_LEVEL_INSUFFICIENT)

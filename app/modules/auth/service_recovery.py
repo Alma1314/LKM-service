@@ -11,7 +11,7 @@ from app.core.err import BizError, CommonErr
 from app.db.models import User, expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise
 from app.modules.auth import security
-from app.modules.auth.deps import get_email_provider, get_sms_provider
+from app.modules.auth.channels import CHANNELS, channel_for
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import TOTP, MagicLink, RecoveryTransaction, TempTokenUsage
 from app.modules.auth.security import (
@@ -25,23 +25,17 @@ from app.modules.auth.service_auth import (
     revoke_all_refresh_tokens,
     verify_magic_link,
 )
-from app.modules.auth.service_verify import (
-    check_code_rate_limit,
-    consume_email_code,
-    consume_phone_code,
-    create_email_verification,
-    create_phone_verification,
-)
+from app.modules.auth.service_verify import check_code_rate_limit
 
 
 async def find_user_by_contact(db: AsyncSession, field: str, value: str) -> User:
     """通过邮箱或手机号查找用户。"""
-    if field == "email":
-        user = await get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.email == value)
-    elif field == "phone":
-        user = await get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.phone == value)
-    else:
+    channel = CHANNELS.get(field)
+    if channel is None:
         raise BizError(CommonErr.INVALID_INPUT, "field must be 'email' or 'phone'")
+    user = await channel.find_user(db, value)
+    if user is None:
+        raise BizError(AuthErr.USER_NOT_FOUND)
 
     if user.account_level == "local":
         raise BizError(
@@ -93,12 +87,13 @@ def check_recovery_methods(_db: AsyncSession, _account: str) -> dict[str, Any]:
     return {"recoverable": False}
 
 
-async def recover_by_phone(
-    db: AsyncSession, phone: str, code: str, new_password: str | None = None
+async def recover_by_contact(
+    db: AsyncSession, contact: str, code: str, new_password: str | None = None
 ) -> dict[str, Any]:
-    """第 1 步：验证手机联系方式以进行密码恢复。"""
-    await consume_phone_code(db, phone, code, "reset")
-    user = await find_user_by_contact(db, "phone", phone)
+    """第 1 步：通过邮箱或手机号验证码重置密码（通道由 contact 自动判定）。"""
+    channel = channel_for(contact)
+    await channel.consume_code(db, contact, code, "reset")
+    user = await find_user_by_contact(db, channel.name, contact)
 
     if await _user_requires_mfa(db, user):
         return await _start_user_recovery_txn(db, user)
@@ -107,22 +102,20 @@ async def recover_by_phone(
         raise BizError(CommonErr.INVALID_INPUT, "new_password is required")
     await _reset_password(db, user, new_password)
     return {"message": "Password reset successful"}
+
+
+async def recover_by_phone(
+    db: AsyncSession, phone: str, code: str, new_password: str | None = None
+) -> dict[str, Any]:
+    """兼容入口：手机号验证码重置。"""
+    return await recover_by_contact(db, phone, code, new_password)
 
 
 async def recover_by_email_code(
     db: AsyncSession, email: str, code: str, new_password: str | None = None
 ) -> dict[str, Any]:
-    """第 1 步：验证邮箱联系方式以进行密码恢复。"""
-    await consume_email_code(db, email, code, "reset")
-    user = await find_user_by_contact(db, "email", email)
-
-    if await _user_requires_mfa(db, user):
-        return await _start_user_recovery_txn(db, user)
-
-    if not new_password:
-        raise BizError(CommonErr.INVALID_INPUT, "new_password is required")
-    await _reset_password(db, user, new_password)
-    return {"message": "Password reset successful"}
+    """兼容入口：邮箱验证码重置。"""
+    return await recover_by_contact(db, email, code, new_password)
 
 
 async def recover_by_magic_link(
@@ -227,20 +220,11 @@ async def recover_admin_begin(
         db.add(txn)
         await db.flush()
 
-        if "@" in contact:
-            check_code_rate_limit(f"recover:admin:{contact}", max_count=3, window=3600)
-            code, _ = await create_email_verification(db, contact, "reset")
-            if background_tasks is not None:
-                cast(Any, background_tasks).add_task(
-                    get_email_provider().send_code, contact, code
-                )
-        else:
-            check_code_rate_limit(f"recover:admin:{contact}", max_count=3, window=3600)
-            code, _ = await create_phone_verification(db, contact, "reset")
-            if background_tasks is not None:
-                cast(Any, background_tasks).add_task(
-                    get_sms_provider().send_code, contact, code
-                )
+        channel = channel_for(contact)
+        check_code_rate_limit(f"recover:admin:{contact}", max_count=3, window=3600)
+        code, _ = await channel.create_verification(db, contact, "reset")
+        if background_tasks is not None:
+            cast(Any, background_tasks).add_task(channel.send_code, contact, code)
 
         return {
             "message": "If the account is eligible, recovery instructions have been sent.",
@@ -275,10 +259,8 @@ async def recover_admin_verify_contact(
     """第 2 步：在恢复事务中验证管理员的邮箱/手机验证码。"""
     txn = await _get_recovery_txn(db, txn_id)
 
-    if "@" in txn.contact:
-        await consume_email_code(db, txn.contact, code, "reset")
-    else:
-        await consume_phone_code(db, txn.contact, code, "reset")
+    channel = channel_for(txn.contact)
+    await channel.consume_code(db, txn.contact, code, "reset")
 
     txn.contact_verified = True
     await db.flush()

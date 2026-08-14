@@ -110,7 +110,7 @@ async def recover_phone_verify(
     check_code_rate_limit(
         f"recover:phone:verify:{info.phone}", max_count=5, window=3600
     )
-    return await service_recovery.recover_by_phone(
+    return await service_recovery.recover_by_contact(
         db, info.phone, info.code, info.new_password
     )
 
@@ -136,7 +136,7 @@ async def recover_email_verify(
     check_code_rate_limit(
         f"recover:email:verify:{info.email}", max_count=5, window=3600
     )
-    return await service_recovery.recover_by_email_code(
+    return await service_recovery.recover_by_contact(
         db, info.email, info.code, info.new_password
     )
 
