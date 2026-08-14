@@ -25,7 +25,9 @@ ENV PATH="/app/.venv/bin:$PATH" \
 # 复制应用代码与 alembic 迁移(init_db 在 lifespan 跑迁移)
 COPY . .
 
-# 数据持久化目录(由 backend_data 卷挂载到 /data)
+# 数据持久化目录(由 backend_data 卷挂载到 /data);先创建,保证无卷场景也能启动
+RUN mkdir -p /data
+
 ENV LKM_DB_PATH=/data/lkm.db \
     LKM_BLOG_REPO_DIR=/data/blog_repos \
     LKM_FILES_STORE_DIR=/data/files_store
