@@ -17,6 +17,20 @@ def _parse_json_text(v: object, default: Any) -> Any:
         return default
 
 
+def _parse_list(v: object, default: list[str]) -> list[str]:
+    parsed = _parse_json_text(v, default)
+    if isinstance(parsed, list):
+        return cast(list[str], parsed)
+    return default
+
+
+def _parse_dict(v: object, default: dict[str, Any]) -> dict[str, Any]:
+    parsed = _parse_json_text(v, default)
+    if isinstance(parsed, dict):
+        return cast(dict[str, Any], parsed)
+    return default
+
+
 class _Out(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
@@ -40,8 +54,7 @@ class StarHopeQuestionOut(_Out):
     def _options(cls, v: object) -> list[str] | None:
         if v is None:
             return None
-        parsed = _parse_json_text(v, None)
-        return cast(list[str], parsed) if isinstance(parsed, list) else None
+        return _parse_list(v, [])
 
     @field_validator("answer", mode="before")
     @classmethod
@@ -60,8 +73,7 @@ class StarHopeQuestionOut(_Out):
     @field_validator("tags", mode="before")
     @classmethod
     def _tags(cls, v: object) -> list[str]:
-        parsed = _parse_json_text(v, [])
-        return cast(list[str], parsed) if isinstance(parsed, list) else []
+        return _parse_list(v, [])
 
 
 class StarHopeQuestionIn(BaseModel):
@@ -114,22 +126,19 @@ class StarHopeSessionOut(_Out):
     @field_validator("question_ids", mode="before")
     @classmethod
     def _question_ids(cls, v: object) -> list[str]:
-        parsed = _parse_json_text(v, [])
-        return cast(list[str], parsed) if isinstance(parsed, list) else []
+        return _parse_list(v, [])
 
     @field_validator("answers", mode="before")
     @classmethod
     def _answers(cls, v: object) -> dict[str, str | list[str]]:
-        parsed = _parse_json_text(v, {})
-        return cast(dict[str, str | list[str]], parsed) if isinstance(parsed, dict) else {}
+        return cast(dict[str, str | list[str]], _parse_dict(v, {}))
 
     @field_validator("results", mode="before")
     @classmethod
     def _results(cls, v: object) -> dict[str, dict[str, Any]] | None:
         if v is None:
             return None
-        parsed = _parse_json_text(v, None)
-        return cast(dict[str, dict[str, Any]], parsed) if isinstance(parsed, dict) else None
+        return cast(dict[str, dict[str, Any]], _parse_dict(v, {}))
 
 
 class StarHopeSessionIn(BaseModel):

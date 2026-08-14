@@ -12,7 +12,12 @@ from app.modules.starhope.service import pull_entity, push_entity
 
 
 async def _user(db, username: str = "alice") -> int:
-    user = User(username=username, email=f"{username}@x.com", hashed_password=hashpwd("secret123456"), account_level="normal")
+    user = User(
+        username=username,
+        email=f"{username}@x.com",
+        hashed_password=hashpwd("secret123456"),
+        account_level="normal",
+    )
     db.add(user)
     await db.flush()
     db.add(Profile(user_id=user.id))
@@ -22,9 +27,15 @@ async def _user(db, username: str = "alice") -> int:
 
 def _q(**over) -> dict:
     base = {
-        "id": "q1", "type": "single", "content": "1+1=?",
-        "options": ["1", "2"], "answer": "2", "analysis": "基础",
-        "tags": ["数学"], "folder_id": None, "difficulty": 1,
+        "id": "q1",
+        "type": "single",
+        "content": "1+1=?",
+        "options": ["1", "2"],
+        "answer": "2",
+        "analysis": "基础",
+        "tags": ["数学"],
+        "folder_id": None,
+        "difficulty": 1,
         "updated_at": datetime.datetime(2026, 8, 15, tzinfo=datetime.UTC),
     }
     base.update(over)
@@ -52,16 +63,30 @@ class TestStarHopeService:
     async def test_push_last_write_wins_skip_stale(self, db):
         uid = await _user(db)
         await push_entity(db, "questions", uid, [_q()], [])
-        stale = _q(content="旧版本", updated_at=datetime.datetime(2026, 8, 14, tzinfo=datetime.UTC))
+        stale = _q(
+            content="旧版本",
+            updated_at=datetime.datetime(2026, 8, 14, tzinfo=datetime.UTC),
+        )
         res = await push_entity(db, "questions", uid, [stale], [])
         assert res.synced == 0
-        row = (await db.execute(select(StarHopeQuestion).where(StarHopeQuestion.id == "q1"))).scalars().one()
+        row = (
+            (
+                await db.execute(
+                    select(StarHopeQuestion).where(StarHopeQuestion.id == "q1")
+                )
+            )
+            .scalars()
+            .one()
+        )
         assert row.content == "1+1=?"
 
     async def test_push_newer_overwrites(self, db):
         uid = await _user(db)
         await push_entity(db, "questions", uid, [_q()], [])
-        newer = _q(content="新版本", updated_at=datetime.datetime(2026, 8, 16, tzinfo=datetime.UTC))
+        newer = _q(
+            content="新版本",
+            updated_at=datetime.datetime(2026, 8, 16, tzinfo=datetime.UTC),
+        )
         await push_entity(db, "questions", uid, [newer], [])
         data = await pull_entity(db, "questions", uid, None)
         assert data.items[0]["content"] == "新版本"
@@ -69,7 +94,9 @@ class TestStarHopeService:
     async def test_delete_tombstone_returned(self, db):
         uid = await _user(db)
         await push_entity(db, "questions", uid, [_q()], [])
-        tomb = StarHopeTombstone(id="q1", deleted_at=datetime.datetime(2026, 8, 17, tzinfo=datetime.UTC))
+        tomb = StarHopeTombstone(
+            id="q1", deleted_at=datetime.datetime(2026, 8, 17, tzinfo=datetime.UTC)
+        )
         await push_entity(db, "questions", uid, [], [tomb])
         data = await pull_entity(db, "questions", uid, None)
         assert data.items == []
@@ -78,9 +105,33 @@ class TestStarHopeService:
 
     async def test_pull_since_filters(self, db):
         uid = await _user(db)
-        await push_entity(db, "questions", uid, [_q(id="old", updated_at=datetime.datetime(2026, 8, 10, tzinfo=datetime.UTC))], [])
-        await push_entity(db, "questions", uid, [_q(id="new", updated_at=datetime.datetime(2026, 8, 20, tzinfo=datetime.UTC))], [])
-        data = await pull_entity(db, "questions", uid, datetime.datetime(2026, 8, 15, tzinfo=datetime.UTC))
+        await push_entity(
+            db,
+            "questions",
+            uid,
+            [
+                _q(
+                    id="old",
+                    updated_at=datetime.datetime(2026, 8, 10, tzinfo=datetime.UTC),
+                )
+            ],
+            [],
+        )
+        await push_entity(
+            db,
+            "questions",
+            uid,
+            [
+                _q(
+                    id="new",
+                    updated_at=datetime.datetime(2026, 8, 20, tzinfo=datetime.UTC),
+                )
+            ],
+            [],
+        )
+        data = await pull_entity(
+            db, "questions", uid, datetime.datetime(2026, 8, 15, tzinfo=datetime.UTC)
+        )
         assert [i["id"] for i in data.items] == ["new"]
 
     async def test_invalid_entity(self, db):

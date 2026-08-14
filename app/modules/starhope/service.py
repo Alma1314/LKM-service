@@ -11,6 +11,7 @@ from app.db.models import (
     StarHopeFolder,
     StarHopePracticeSession,
     StarHopeQuestion,
+    now_iso,
 )
 from app.modules.starhope.errors import StarHopeErr
 from app.modules.starhope.schemas import (
@@ -28,18 +29,12 @@ from app.modules.starhope.schemas import (
 )
 
 # type → (ORM 模型, In schema, Out schema)
-ENTITY_MAP: dict[
-    str, tuple[type[Any], type[Any], type[Any]]
-] = {
+ENTITY_MAP: dict[str, tuple[type[Any], type[Any], type[Any]]] = {
     "questions": (StarHopeQuestion, StarHopeQuestionIn, StarHopeQuestionOut),
     "folders": (StarHopeFolder, StarHopeFolderIn, StarHopeFolderOut),
     "sessions": (StarHopePracticeSession, StarHopeSessionIn, StarHopeSessionOut),
     "agents": (StarHopeAiAgent, StarHopeAgentIn, StarHopeAgentOut),
 }
-
-
-def _now() -> datetime.datetime:
-    return datetime.datetime.now(datetime.UTC)
 
 
 def parse_since(since: str | None) -> datetime.datetime | None:
@@ -95,7 +90,7 @@ async def pull_entity(
     ]
 
     return StarHopePullData[Any](
-        items=items, tombstones=tombstones, server_time=_now()
+        items=items, tombstones=tombstones, server_time=now_iso()
     )
 
 
@@ -109,25 +104,39 @@ async def push_entity(
     model, in_schema, _out = _lookup(entity)
     synced = 0
 
-    for raw in upserts:
-        parsed = in_schema.model_validate(raw)
+    parsed_upserts = [in_schema.model_validate(raw) for raw in upserts]
+
+    # 批量取回现有记录，避免逐条 select 的 N+1
+    all_ids = {p.id for p in parsed_upserts} | {t.id for t in deletes}
+    existing_map: dict[str, Any] = {}
+    if all_ids:
+        rows = (
+            (
+                await db.execute(
+                    select(model).where(model.id.in_(all_ids), model.user_id == user_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        existing_map = {row.id: row for row in rows}
+
+    for parsed in parsed_upserts:
         data = parsed.model_dump()
         data["user_id"] = user_id
         data = _dump_scalars(data)
 
-        existing = (
-            await db.execute(
-                select(model).where(model.id == parsed.id, model.user_id == user_id)
-            )
-        ).scalars().first()
-
+        existing = existing_map.get(parsed.id)
         if existing is None:
             db.add(model(**data))
             synced += 1
         else:
             incoming_updated = parsed.updated_at
             # 已软删除：只有 incoming 更新才恢复
-            if existing.deleted_at is not None and incoming_updated < existing.deleted_at:
+            if (
+                existing.deleted_at is not None
+                and incoming_updated < existing.deleted_at
+            ):
                 continue
             if incoming_updated >= existing.updated_at:
                 for key, value in data.items():
@@ -137,20 +146,16 @@ async def push_entity(
                 synced += 1
 
     for tomb in deletes:
-        existing = (
-            await db.execute(
-                select(model).where(model.id == tomb.id, model.user_id == user_id)
-            )
-        ).scalars().first()
+        existing = existing_map.get(tomb.id)
         if existing is None:
             continue
         if existing.deleted_at is None or tomb.deleted_at > existing.deleted_at:
             existing.deleted_at = tomb.deleted_at
-            existing.updated_at = _now()
+            existing.updated_at = now_iso()
             synced += 1
 
     await db.flush()
-    return StarHopePushResult(synced=synced, server_time=_now())
+    return StarHopePushResult(synced=synced, server_time=now_iso())
 
 
 def _lookup(entity: str) -> tuple[type[Any], type[Any], type[Any]]:

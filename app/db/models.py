@@ -451,9 +451,7 @@ class StarHopeAiAgent(Base):
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     service: Mapped[str] = mapped_column(String(20), nullable=False, default="openai")
     model: Mapped[str] = mapped_column(String(100), nullable=False)
-    temperature: Mapped[float] = mapped_column(
-        Float, nullable=False, default=0.7
-    )
+    temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.7)
     top_p: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
     max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=4096)
     created_at: Mapped[datetime.datetime] = mapped_column(

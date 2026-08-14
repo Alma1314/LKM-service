@@ -4,7 +4,12 @@ from app.modules.auth.security import create_access_token, hashpwd
 
 
 async def _setup_user(db, username="tester") -> tuple[int, str]:
-    user = User(username=username, email=f"{username}@x.com", hashed_password=hashpwd("secret123456"), account_level="normal")
+    user = User(
+        username=username,
+        email=f"{username}@x.com",
+        hashed_password=hashpwd("secret123456"),
+        account_level="normal",
+    )
     db.add(user)
     await db.flush()
     db.add(Profile(user_id=user.id))
@@ -20,12 +25,20 @@ class TestStarHopeRoutes:
 
     async def test_push_and_pull_roundtrip(self, client, db):
         _, token = await _setup_user(db)
-        upserts = [{
-            "id": "q1", "type": "single", "content": "1+1=?",
-            "options": ["1", "2"], "answer": "2", "analysis": None,
-            "tags": ["数学"], "folder_id": None, "difficulty": 1,
-            "updated_at": "2026-08-15T00:00:00+00:00",
-        }]
+        upserts = [
+            {
+                "id": "q1",
+                "type": "single",
+                "content": "1+1=?",
+                "options": ["1", "2"],
+                "answer": "2",
+                "analysis": None,
+                "tags": ["数学"],
+                "folder_id": None,
+                "difficulty": 1,
+                "updated_at": "2026-08-15T00:00:00+00:00",
+            }
+        ]
         resp = await client.post(
             "/api/v1/starhope/questions/sync",
             json={"upserts": upserts, "deletes": []},

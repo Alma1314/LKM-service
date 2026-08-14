@@ -14,11 +14,11 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import StaticPool
 
-import app.modules.auth.models  # pyright: ignore[reportUnusedImport] ensure auth tables registered
+import app.modules.auth.models  # noqa: F401  副作用导入：注册 auth 表到 Base.metadata
 from app.core.err import BizError, CommonErr
 from app.db.models import Base, LibraryFile, Profile, User
 from app.db.session import get_session
-from app.main import app
+from app.main import app as fastapi_app
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.files.errors import FileErr
 from app.modules.files.schemas import FileCreate, FileInfo
@@ -59,13 +59,13 @@ async def client(
     async def override_get_session() -> AsyncGenerator[AsyncSession]:
         yield db
 
-    app.dependency_overrides[get_session] = override_get_session
-    transport = ASGITransport(app=app)
+    fastapi_app.dependency_overrides[get_session] = override_get_session
+    transport = ASGITransport(app=fastapi_app)
     try:
         async with AsyncClient(transport=transport, base_url="http://test") as c:
             yield c
     finally:
-        app.dependency_overrides.pop(get_session, None)
+        fastapi_app.dependency_overrides.pop(get_session, None)
 
 
 async def _user(
