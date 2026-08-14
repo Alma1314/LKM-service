@@ -6,86 +6,95 @@ import os
 import secrets
 import struct
 import time
+from typing import Any
+from urllib.parse import quote
 
 import jwt
+from argon2 import PasswordHasher
+from argon2.exceptions import VerificationError
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from fastapi import Header
 
 from app.core.config import settings
-from app.core.err import BizError, CommonErr
 
-_ALGORITHM = "pbkdf2:sha256"
-_ITERATIONS = 600_000
-_HASH_FN = "sha256"
-
-
-def get_current_user_id(x_user_id: int = Header(..., alias="X-User-Id")) -> int:
-    if x_user_id <= 0:
-        raise BizError(CommonErr.FORBIDDEN, "Invalid user identity")
-    return x_user_id
+_ph = PasswordHasher()
+# 虚拟哈希，防枚举
+_DUMMY_HASH = _ph.hash("dummy-timing-equalizer")
 
 
 def hashpwd(raw: str) -> str:
-    salt = secrets.token_hex(16)
-    hashed = hashlib.pbkdf2_hmac(_HASH_FN, raw.encode(), salt.encode(), _ITERATIONS).hex()
-    return f"{_ALGORITHM}${salt}${hashed}"
+    """返回 Argon2id 密码哈希（argon2-cffi 默认参数）。"""
+    return _ph.hash(raw)
 
 
 def verifypwd(raw: str, stored: str) -> bool:
+    """验证密码。哈希格式无效或密码不匹配时返回 False，不抛异常。"""
     try:
-        parts = stored.split("$")
-        if len(parts) == 3:
-            algo, salt, hashed = parts
-            _ = algo
-        elif len(parts) == 2:
-            salt, hashed = parts
-        else:
-            return False
-    except (ValueError, AttributeError):
+        _ph.verify(stored, raw)
+        return True
+    except (VerificationError, ValueError):
         return False
-    nhash = hashlib.pbkdf2_hmac(_HASH_FN, raw.encode(), salt.encode(), _ITERATIONS).hex()
-    return hmac.compare_digest(nhash, hashed)
+
+
+def dummy_verify() -> None:
+    """执行一次与真实验证等成本的虚拟验证，保持时序一致。"""
+    verifypwd("dummy", _DUMMY_HASH)
+
 
 _ACCESS_TYPE = "access"
 _TEMP_TYPE = "temp"
 
+# JWT audience：区分三套互不混用的令牌，防止 token 被误喂给其他端点
+_AUD_WEB = "lkm:web"  # 前台 Bearer access
+_AUD_TEMP = "lkm:temp"  # 一次性 temp（2FA/recovery/setup）
+_AUD_ADMIN = "lkm:admin"  # 后台 access cookie
+
 
 def create_access_token(
-    user_id: object,
-    account_level: object,
-    role: object,
+    user_id: int,
+    account_level: str,
+    role: str,
     trust_device: bool = False,
-    token_version: object = 0,
+    token_version: int = 0,
 ) -> str:
     now = int(time.time())
-    payload = {
-        "user_id": int(user_id),  # type: ignore[arg-type]
-        "account_level": str(account_level),
-        "role": str(role),
+    payload: dict[str, Any] = {
+        "user_id": user_id,
+        "account_level": account_level,
+        "role": role,
         "trust_device": trust_device,
         "type": _ACCESS_TYPE,
-        "token_version": int(token_version),  # type: ignore[arg-type]
+        "token_version": token_version,
+        "aud": _AUD_WEB,
         "iat": now,
         "exp": now + settings.access_token_expire_minutes * 60,
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def decode_access_token(token: str) -> dict:
-    payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+def decode_access_token(token: str) -> dict[str, Any]:
+    payload = jwt.decode(
+        token,
+        settings.jwt_secret,
+        algorithms=[settings.jwt_algorithm],
+        audience=_AUD_WEB,
+    )
     if payload.get("type") != _ACCESS_TYPE:
         raise ValueError("non-access token")
     return payload
 
+
 _TEMP_EXPIRE_SECONDS = 60
 
 
-def create_temp_token(user_id: int, purpose: str = "2fa", txn_id: str | None = None) -> str:
+def create_temp_token(
+    user_id: int, purpose: str = "2fa", txn_id: str | None = None
+) -> str:
     now = int(time.time())
-    payload = {
+    payload: dict[str, Any] = {
         "user_id": user_id,
         "type": _TEMP_TYPE,
         "purpose": purpose,
+        "aud": _AUD_TEMP,
         "iat": now,
         "exp": now + _TEMP_EXPIRE_SECONDS,
     }
@@ -94,11 +103,17 @@ def create_temp_token(user_id: int, purpose: str = "2fa", txn_id: str | None = N
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def decode_temp_token(token: str) -> dict:
-    payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+def decode_temp_token(token: str) -> dict[str, Any]:
+    payload = jwt.decode(
+        token,
+        settings.jwt_secret,
+        algorithms=[settings.jwt_algorithm],
+        audience=_AUD_TEMP,
+    )
     if payload.get("type") != _TEMP_TYPE:
         raise ValueError("non-temp token")
     return payload
+
 
 _TOTP_DIGITS = 6
 _TOTP_STEP = 30
@@ -110,8 +125,6 @@ def generate_totp_secret() -> str:
 
 
 def get_totp_uri(secret: str, username: str, issuer: str) -> str:
-    from urllib.parse import quote
-
     label = quote(f"{issuer}:{username}")
     params = f"secret={quote(secret)}&issuer={quote(issuer)}&algorithm=SHA1&digits={_TOTP_DIGITS}&period={_TOTP_STEP}"
     return f"otpauth://totp/{label}?{params}"
@@ -125,7 +138,7 @@ def _totp_code(key: bytes, counter: int) -> str:
     msg = struct.pack(">Q", counter)
     h = hmac.new(key, msg, hashlib.sha1).digest()
     offset = h[-1] & 0x0F
-    raw = struct.unpack(">I", h[offset:offset + 4])[0] & 0x7FFFFFFF
+    raw = struct.unpack(">I", h[offset : offset + 4])[0] & 0x7FFFFFFF
     return f"{raw % 1_000_000:0{_TOTP_DIGITS}d}"
 
 
@@ -140,6 +153,7 @@ def verify_totp(secret: str, code: str, window: int = 1) -> int | None:
             return step
     return None
 
+
 _RECOVERY_CODE_BYTES = 10  # 20 hex chars
 
 
@@ -150,6 +164,7 @@ def generate_recovery_codes(n: int = 10) -> list[tuple[str, str]]:
         hashed = hashlib.sha256(plain.encode()).hexdigest()
         codes.append((plain, hashed))
     return codes
+
 
 def _derive_key() -> bytes:
     """32-byte AES-256 key from SHA-256."""

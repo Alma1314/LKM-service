@@ -1,4 +1,4 @@
-from app.core.err import ErrCode, NS_FILES, register
+from app.core.err import NS_FILES, ErrCode, register
 
 
 class FileErr(ErrCode):
@@ -9,8 +9,8 @@ class FileErr(ErrCode):
 
 register(
     {
-        FileErr.NOT_FOUND:    (404, "File not found"),
-        FileErr.STORE_ERROR:  (500, "File storage operation failed"),
-        FileErr.TOO_LARGE:    (413, "File exceeds upload size limit"),
+        FileErr.NOT_FOUND: (404, "File not found"),
+        FileErr.STORE_ERROR: (500, "File storage operation failed"),
+        FileErr.TOO_LARGE: (413, "File exceeds upload size limit"),
     }
 )

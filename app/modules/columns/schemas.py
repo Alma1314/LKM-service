@@ -1,3 +1,6 @@
+import datetime
+from typing import Any, ClassVar
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.columns.models import (
@@ -15,7 +18,7 @@ class ColumnApplicationCreate(BaseModel):
 
 
 class ColumnApplicationInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     id: int
     user_id: int
@@ -25,8 +28,8 @@ class ColumnApplicationInfo(BaseModel):
     status: ColumnApplicationStatus = ColumnApplicationStatus.PENDING
     reviewer_id: int | None = None
     review_note: str | None = None
-    created_at: str
-    reviewed_at: str | None = None
+    created_at: datetime.datetime
+    reviewed_at: datetime.datetime | None = None
 
 
 class ColumnApplicationReview(BaseModel):
@@ -36,7 +39,7 @@ class ColumnApplicationReview(BaseModel):
 
 
 class ColumnInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     id: int
     owner_id: int
@@ -45,8 +48,8 @@ class ColumnInfo(BaseModel):
     description: str
     cover_url: str | None = None
     status: ColumnStatus = ColumnStatus.ACTIVE
-    created_at: str
-    updated_at: str
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
 
 
 class ColumnPostCreate(BaseModel):
@@ -57,7 +60,7 @@ class ColumnPostCreate(BaseModel):
 
 
 class ColumnPostInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     id: int
     column_id: int
@@ -65,9 +68,9 @@ class ColumnPostInfo(BaseModel):
     title: str
     summary: str | None = None
     status: ColumnPostStatus = ColumnPostStatus.DRAFT
-    created_at: str
-    updated_at: str
-    published_at: str | None = None
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
+    published_at: datetime.datetime | None = None
 
 
 class ReviewResultData(BaseModel):
@@ -77,5 +80,5 @@ class ReviewResultData(BaseModel):
 
 class ColumnPlanData(BaseModel):
     status: str
-    tables: dict
+    tables: dict[str, Any]
     next_steps: list[str]

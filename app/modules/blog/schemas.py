@@ -1,8 +1,10 @@
+import datetime
+from typing import Any, ClassVar
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.modules.auth.schemas import ProfileInfo
 from app.modules.blog.models import BlogSeriesStatus
-
 
 # ---- request schemas ----
 
@@ -35,7 +37,7 @@ class BlogStarStatus(BaseModel):
 
 
 class BlogSeriesInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     id: int
     owner_id: int
@@ -44,14 +46,14 @@ class BlogSeriesInfo(BaseModel):
     cover_url: str | None = None
     repo_name: str
     status: BlogSeriesStatus = BlogSeriesStatus.ACTIVE
-    created_at: str
-    updated_at: str
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
     star_count: int = 0
     is_starred: bool = False
 
 
 class BlogSeriesDetail(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     id: int
     owner_id: int
@@ -60,29 +62,29 @@ class BlogSeriesDetail(BaseModel):
     cover_url: str | None = None
     repo_name: str
     status: BlogSeriesStatus = BlogSeriesStatus.ACTIVE
-    created_at: str
-    updated_at: str
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
     star_count: int = 0
     is_starred: bool = False
-    file_tree: list[dict] | None = None
+    file_tree: list[dict[str, Any]] | None = None
 
 
 class BlogCommentInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     id: int
     user_id: int
     series_id: int
     content: str
     parent_id: int | None = None
-    created_at: str
-    updated_at: str
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
     profile: ProfileInfo | None = None
     replies: list["BlogCommentInfo"] = []
 
     @field_validator("replies", mode="before")
     @classmethod
-    def _ignore_orm_replies(cls, v):
+    def _ignore_orm_replies(cls, v: Any) -> list[Any]:
         # 树由 service 手动拼装，忽略 ORM 的 replies 关联
         return []
 

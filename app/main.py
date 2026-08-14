@@ -1,15 +1,28 @@
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-
-from fastapi import FastAPI
-from fastapi.exceptions import RequestValidationError
-
+import asyncio
+import os
 import sys
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager, suppress
+
+from fastapi import Depends, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from strawberry.fastapi import GraphQLRouter
 
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.err import BizError, map_err, resp_json
 from app.db.init_db import init_db
+from app.db.session import (
+    AsyncSession,
+    dispose_engine,
+)
+from app.db.session import (
+    get_session as get_graphql_session,
+)
+from app.modules.auth.service_passkey import cleanup_expired_challenges
+from app.modules.forum.graphql import GraphQLContext
+from app.modules.forum.graphql import schema as forum_graphql_schema
 
 
 def _verify_production_secrets() -> None:
@@ -17,8 +30,6 @@ def _verify_production_secrets() -> None:
     仅显式测试环境 (LKM_ENV=test 或 PYTEST_RUNNING) 允许使用弱密钥继续运行。
     其他所有模式都必须为 JWT_SECRET 和 TOTP 加密密钥设置强且非默认的值。
     """
-    import os
-
     if os.environ.get("LKM_ENV") == "test" or os.environ.get("PYTEST_RUNNING"):
         return
 
@@ -50,25 +61,19 @@ def _verify_production_secrets() -> None:
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    import asyncio
-
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     _verify_production_secrets()
-    init_db()
+    await init_db()
 
-    from app.modules.auth.service_passkey import cleanup_expired_challenges
     cleanup_task = asyncio.create_task(cleanup_expired_challenges())
 
-    yield  # type: ignore[redefined-outer-name]
+    yield
 
     cleanup_task.cancel()
-    try:
+    with suppress(asyncio.CancelledError):
         await cleanup_task
-    except asyncio.CancelledError:
-        pass
 
-    from app.db.session import dispose_engine
-    dispose_engine()
+    await dispose_engine()
 
 
 def create_app() -> FastAPI:
@@ -81,6 +86,19 @@ def create_app() -> FastAPI:
     application.add_exception_handler(BizError, _on_err)
     application.add_exception_handler(RequestValidationError, _on_err)
 
+    async def _graphql_context(
+        db: AsyncSession = Depends(get_graphql_session),
+    ) -> GraphQLContext:
+        # 会话生命周期由 FastAPI 的 Depends 管理，解析器只读不关闭
+        return GraphQLContext(db=db)
+
+    graphql_router = GraphQLRouter(
+        forum_graphql_schema,
+        path="/graphql",
+        context_getter=_graphql_context,
+    )
+    application.include_router(graphql_router)
+
     @application.get("/")
     async def root() -> dict[str, str]:
         return {"message": "OK"}
@@ -88,7 +106,7 @@ def create_app() -> FastAPI:
     return application
 
 
-async def _on_err(_request, exc):
+async def _on_err(_request: Request, exc: Exception) -> JSONResponse:
     _, errcode, detail = map_err(exc)
     return resp_json(errcode, detail=detail)
 

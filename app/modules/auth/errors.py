@@ -1,4 +1,4 @@
-from app.core.err import ErrCode, NS_AUTH, register
+from app.core.err import NS_AUTH, ErrCode, register
 
 
 class AuthErr(ErrCode):
@@ -30,29 +30,32 @@ class AuthErr(ErrCode):
 
 register(
     {
-        AuthErr.ALREADY_REGISTERED:           (400, "Username or email already registered"),
-        AuthErr.INVALID_CREDENTIALS:          (401, "Invalid username or password"),
-        AuthErr.USER_NOT_FOUND:               (401, "User not found"),
-        AuthErr.ACCOUNT_LOCKED:               (423, "Account is locked"),
-        AuthErr.ACCOUNT_LEVEL_INSUFFICIENT:   (403, "Account level insufficient"),
-        AuthErr.VERIFICATION_CODE_INVALID:    (400, "Verification code invalid"),
-        AuthErr.VERIFICATION_CODE_EXPIRED:    (400, "Verification code expired"),
-        AuthErr.VERIFICATION_CODE_RATE_LIMIT: (429, "Verification code rate limit exceeded"),
-        AuthErr.TOKEN_EXPIRED:                (401, "Token expired"),
-        AuthErr.TOKEN_INVALID:                (401, "Token invalid"),
-        AuthErr.REFRESH_TOKEN_REVOKED:        (401, "Refresh token revoked"),
-        AuthErr.TOTP_NOT_ENABLED:             (400, "TOTP not enabled"),
-        AuthErr.TOTP_ALREADY_ENABLED:         (400, "TOTP already enabled"),
-        AuthErr.TOTP_SETUP_REQUIRED:          (400, "TOTP setup required"),
-        AuthErr.TOTP_CODE_INVALID:            (400, "TOTP code invalid"),
-        AuthErr.RECOVERY_CODE_INVALID:        (400, "Recovery code invalid"),
-        AuthErr.RECOVERY_CODE_USED:           (400, "Recovery code already used"),
-        AuthErr.OAUTH_CANCELED:               (400, "OAuth login canceled"),
-        AuthErr.OAUTH_PROVIDER_ERROR:         (502, "OAuth provider error"),
-        AuthErr.OAUTH_EMAIL_TAKEN:            (409, "OAuth email already taken"),
-        AuthErr.PASSKEY_REGISTRATION_FAILED:  (400, "Passkey registration failed"),
-        AuthErr.PASSKEY_VERIFICATION_FAILED:  (400, "Passkey verification failed"),
-        AuthErr.RECOVERY_NOT_SUPPORTED:       (400, "Recovery not supported"),
-        AuthErr.RECOVERY_METHOD_UNAVAILABLE:  (400, "Recovery method unavailable"),
+        AuthErr.ALREADY_REGISTERED: (400, "Username or email already registered"),
+        AuthErr.INVALID_CREDENTIALS: (401, "Invalid username or password"),
+        AuthErr.USER_NOT_FOUND: (401, "User not found"),
+        AuthErr.ACCOUNT_LOCKED: (423, "Account is locked"),
+        AuthErr.ACCOUNT_LEVEL_INSUFFICIENT: (403, "Account level insufficient"),
+        AuthErr.VERIFICATION_CODE_INVALID: (400, "Verification code invalid"),
+        AuthErr.VERIFICATION_CODE_EXPIRED: (400, "Verification code expired"),
+        AuthErr.VERIFICATION_CODE_RATE_LIMIT: (
+            429,
+            "Verification code rate limit exceeded",
+        ),
+        AuthErr.TOKEN_EXPIRED: (401, "Token expired"),
+        AuthErr.TOKEN_INVALID: (401, "Token invalid"),
+        AuthErr.REFRESH_TOKEN_REVOKED: (401, "Refresh token revoked"),
+        AuthErr.TOTP_NOT_ENABLED: (400, "TOTP not enabled"),
+        AuthErr.TOTP_ALREADY_ENABLED: (400, "TOTP already enabled"),
+        AuthErr.TOTP_SETUP_REQUIRED: (400, "TOTP setup required"),
+        AuthErr.TOTP_CODE_INVALID: (400, "TOTP code invalid"),
+        AuthErr.RECOVERY_CODE_INVALID: (400, "Recovery code invalid"),
+        AuthErr.RECOVERY_CODE_USED: (400, "Recovery code already used"),
+        AuthErr.OAUTH_CANCELED: (400, "OAuth login canceled"),
+        AuthErr.OAUTH_PROVIDER_ERROR: (502, "OAuth provider error"),
+        AuthErr.OAUTH_EMAIL_TAKEN: (409, "OAuth email already taken"),
+        AuthErr.PASSKEY_REGISTRATION_FAILED: (400, "Passkey registration failed"),
+        AuthErr.PASSKEY_VERIFICATION_FAILED: (400, "Passkey verification failed"),
+        AuthErr.RECOVERY_NOT_SUPPORTED: (400, "Recovery not supported"),
+        AuthErr.RECOVERY_METHOD_UNAVAILABLE: (400, "Recovery method unavailable"),
     }
 )

@@ -1,5 +1,7 @@
 from fastapi import APIRouter
 
+from app.modules.admin.auth_router import router as admin_router
+from app.modules.admin.users_router import router as admin_data_router
 from app.modules.auth.router import router as auth_router
 from app.modules.auth.router_2fa import router as auth_2fa_router
 from app.modules.auth.router_oauth import router as auth_oauth_router
@@ -10,14 +12,16 @@ from app.modules.blog.git_http import git_router
 from app.modules.blog.router import router as blog_router
 from app.modules.boards.router import router as boards_router
 from app.modules.columns.router import router as columns_router
-from app.modules.forum.router import router as forum_router
 from app.modules.files.router import router as files_router
+from app.modules.forum.router import router as forum_router
 from app.modules.health.router import router as health_router
 from app.modules.members.router import router as members_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
 api_router.include_router(members_router)
+api_router.include_router(admin_router)
+api_router.include_router(admin_data_router)
 api_router.include_router(auth_router)
 api_router.include_router(auth_2fa_router)
 api_router.include_router(auth_oauth_router)

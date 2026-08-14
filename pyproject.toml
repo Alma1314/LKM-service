@@ -5,44 +5,84 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "fastapi>=0.139.2",
     "pydantic[email]>=2.13.4",
     "fastapi[standard]>=0.139.2",
     "sqlalchemy>=2.0.0",
-    "psycopg2-binary>=2.9.0",
     "pydantic-settings>=2.0.0",
     "pyjwt[crypto]>=2.9.0",
     "cryptography>=43.0.0",
     "httpx>=0.28.0",
     "cbor2>=5.6.0",
-    "httpx2>=2.7.0",
+    "strawberry-graphql>=0.263.0",
+    "aiosqlite>=0.22.1",
+    "asyncpg>=0.31.0",
+    "webauthn>=2,<3",
+    "argon2-cffi>=23.1.0",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 python_functions = ["test_*", "should_*"]
+asyncio_mode = "auto"
 filterwarnings = [
     "error",
     "ignore::ResourceWarning",
 ]
 
-[tool.pyright]
+[tool.basedpyright]
 include = ["app"]
 typeCheckingMode = "standard"
-reportUnknownArgumentType = false
-reportUnknownParameterType = false
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownLambdaType = false
-reportMissingParameterType = false
+reportOverlappingOverload = false
+reportUnknownArgumentType = true
+reportUnknownParameterType = true
+reportUnknownVariableType = true
+reportUnknownMemberType = true
+reportUnknownLambdaType = true
+reportMissingParameterType = true
 reportMissingTypeStubs = false
-reportUnannotatedClassAttribute = false
+reportUnannotatedClassAttribute = true
 reportUnusedCallResult = false
-reportUnusedImport = false
+reportUnusedImport = true
+reportUnusedVariable = true
 
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
     "alembic>=1.13.0",
     "basedpyright>=1.39.9",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16",
+    "ty>=0.0.70",
 ]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+extend-exclude = ["alembic", "blog_repos"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "RUF", "SIM", "ASYNC", "PERF", "ANN"]
+ignore = [
+    "RUF001",  # 中文全角标点/破折号非 bug，保留中文风格
+    "RUF002",
+    "RUF003",
+    "ANN401",  # 后端在 ORM/stub 边界刻意用 Any
+]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends", "fastapi.Security",
+    "fastapi.Query", "fastapi.Path", "fastapi.Header",
+    "fastapi.Cookie", "fastapi.Body", "fastapi.Form", "fastapi.File",
+    "app.modules.auth.deps.RequireLevel",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["ANN"]  # 测试函数不强制返回类型标注
+"main.py" = ["F401"]       # from app.main import app 是 uvicorn 入口
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ty.environment]
+python-version = "3.13"

@@ -1,8 +1,8 @@
 from app.core.err import BizError
-from app.modules.members.errors import MemberErr
 from app.modules.common import ListData
+from app.modules.members.errors import MemberErr
 from app.modules.members.models import ALL_TYPES, MEMBER_LISTS, SUB_GROUP_MAPS
-from app.modules.members.schemas import Member
+from app.modules.members.schemas import Member, SubGroupItem
 
 
 def get_members(type: str, group: str | None = None) -> ListData[Member]:
@@ -31,4 +31,20 @@ def get_members(type: str, group: str | None = None) -> ListData[Member]:
     raise BizError(
         MemberErr.GROUP_NOT_FOUND,
         detail=f"未知数据组: {type}，可用：{', '.join(ALL_TYPES)}",
+    )
+
+
+def get_sub_groups(type: str) -> ListData[SubGroupItem]:
+    """返回某 subGroupMap 类型的完整分组结构（含 label/desc/members）。"""
+    sg_map = SUB_GROUP_MAPS.get(type)
+    if sg_map is None:
+        raise BizError(
+            MemberErr.GROUP_NOT_FOUND,
+            detail=f"未知子组集合: {type}，可用：{', '.join(sorted(SUB_GROUP_MAPS.keys()))}",
+        )
+    return ListData(
+        items=[
+            SubGroupItem(key=k, label=sg.label, desc=sg.desc, members=sg.members)
+            for k, sg in sg_map.items()
+        ]
     )

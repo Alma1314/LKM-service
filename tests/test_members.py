@@ -1,9 +1,10 @@
+from typing import Any
+
 import pytest
-from fastapi.testclient import TestClient
+from httpx import AsyncClient
 
 from app.core.err import BizError
 from app.modules.members.errors import MemberErr
-from app.main import app
 from app.modules.members.service import get_members
 
 
@@ -125,49 +126,69 @@ class TestMembersService:
 
 
 class TestMembersRoutes:
-    """HTTP 层：测试 /api/v1/members 端点。"""
+    """HTTP 层：测试 /api/v1/members 端点。client 由 tests/conftest.py 提供。"""
 
-    @pytest.fixture
-    def client(self):
-        with TestClient(app) as c:
-            yield c
-
-    def test_get_founder_members(self, client):
-        resp = client.get("/api/v1/members?type=founderMembers")
+    async def test_get_founder_members(self, client: AsyncClient):
+        resp = await client.get("/api/v1/members?type=founderMembers")
         assert resp.status_code == 200
-        body = resp.json()
+        body: dict[str, Any] = resp.json()
         assert body["code"] == 0
         assert len(body["data"]["items"]) == 1
         assert body["data"]["items"][0]["name"] == "可琪（若有千寻）"
 
-    def test_get_project_sub_group(self, client):
-        resp = client.get("/api/v1/members?type=projectSubGroups&group=textbooks")
+    async def test_get_project_sub_group(self, client: AsyncClient):
+        resp = await client.get("/api/v1/members?type=projectSubGroups&group=textbooks")
         assert resp.status_code == 200
-        body = resp.json()
+        body: dict[str, Any] = resp.json()
         assert body["code"] == 0
         assert len(body["data"]["items"]) == 3
 
-    def test_unknown_type_returns_404(self, client):
-        resp = client.get("/api/v1/members?type=noSuchType")
+    async def test_unknown_type_returns_404(self, client: AsyncClient):
+        resp = await client.get("/api/v1/members?type=noSuchType")
         assert resp.status_code == 404
-        body = resp.json()
+        body: dict[str, Any] = resp.json()
         assert body["code"] == MemberErr.GROUP_NOT_FOUND
 
-    def test_unknown_group_returns_404(self, client):
-        resp = client.get("/api/v1/members?type=projectSubGroups&group=noSuchGroup")
+    async def test_unknown_group_returns_404(self, client: AsyncClient):
+        resp = await client.get(
+            "/api/v1/members?type=projectSubGroups&group=noSuchGroup"
+        )
         assert resp.status_code == 404
-        body = resp.json()
+        body: dict[str, Any] = resp.json()
         assert body["code"] == MemberErr.GROUP_NOT_FOUND
 
-    def test_missing_type_returns_422(self, client):
-        resp = client.get("/api/v1/members")
+    async def test_missing_type_returns_422(self, client: AsyncClient):
+        resp = await client.get("/api/v1/members")
         assert resp.status_code == 422
 
-    def test_response_structure(self, client):
+    async def test_response_structure(self, client: AsyncClient):
         """验证 ApiResp + ListData 包装结构。"""
-        resp = client.get("/api/v1/members?type=techMembers")
-        body = resp.json()
+        resp = await client.get("/api/v1/members?type=techMembers")
+        body: dict[str, Any] = resp.json()
         assert "code" in body
         assert "msg" in body
         assert "data" in body
         assert "items" in body["data"]
+
+    async def test_get_subgroups_project(self, client: AsyncClient):
+        """验证 /api/v1/members/subgroups 返回完整分组结构。"""
+        resp = await client.get("/api/v1/members/subgroups?type=projectSubGroups")
+        assert resp.status_code == 200
+        body: dict[str, Any] = resp.json()
+        assert body["code"] == 0
+        groups: list[Any] = body["data"]["items"]
+        assert len(groups) == 2
+        textbooks: dict[str, Any] = next(g for g in groups if g["key"] == "textbooks")
+        assert textbooks["label"] == "教材项目组"
+        assert textbooks["desc"]
+        assert len(textbooks["members"]) == 3
+        assert "key" in textbooks
+
+    async def test_get_subgroups_unknown_returns_404(self, client: AsyncClient):
+        resp = await client.get("/api/v1/members/subgroups?type=noSuchType")
+        assert resp.status_code == 404
+        assert resp.json()["code"] == MemberErr.GROUP_NOT_FOUND
+
+    async def test_get_subgroups_missing_type_returns_422(self, client: AsyncClient):
+        resp = await client.get("/api/v1/members/subgroups")
+        assert resp.status_code == 422
