@@ -35,6 +35,7 @@ NS_FORUM = Namespace(4, "forum")
 NS_FILES = Namespace(5, "files")
 NS_MEMBERS = Namespace(6, "members")
 NS_STARHOPE = Namespace(7, "starhope")
+NS_ARTICLES = Namespace(8, "articles")
 
 
 class CommonErr(ErrCode):

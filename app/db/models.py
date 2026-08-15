@@ -463,3 +463,25 @@ class StarHopeAiAgent(Base):
     deleted_at: Mapped[datetime.datetime | None] = mapped_column(
         UTCDateTime, nullable=True
     )
+
+
+class Article(Base):
+    __tablename__: str = "articles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    slug: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cover: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category: Mapped[str] = mapped_column(String(50), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    publisher: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    department: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    keywords: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published: Mapped[datetime.datetime] = mapped_column(UTCDateTime, nullable=False)
+    views: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    likes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    comments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    bookmarks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime.datetime] = mapped_column(UTCDateTime, nullable=False, default=now_iso)
+    updated_at: Mapped[datetime.datetime] = mapped_column(UTCDateTime, nullable=False, default=now_iso)
