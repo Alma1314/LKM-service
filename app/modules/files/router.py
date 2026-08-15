@@ -1,85 +1,84 @@
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+import shutil
+from datetime import datetime
+from hashlib import sha3_256
+from pathlib import Path
+from tempfile import SpooledTemporaryFile
+from typing import Annotated, cast
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.core.err import respond
+from app.core.config import settings
+from app.db.models import UserStorageItem
 from app.db.session import get_session
 from app.modules.auth.deps import CurrentUser, get_current_user
-from app.modules.common import ApiResp, ModuleStatus
-from app.modules.files.schemas import FileCreate, FileInfo, PageData
-from app.modules.files.service import (
-    bump_download,
-    get_file,
-    get_files_plan,
-    list_files,
-)
-from app.modules.files.service import (
-    create_file as create_file_service,
-)
+from app.modules.common import ApiResp
+from app.modules.files.models import FileStatus
+from app.modules.files.schemas import FileInfo
 
 router = APIRouter(prefix="/files", tags=["files"])
 
-
-@router.get("/status", response_model=ModuleStatus)
-def files_status() -> ModuleStatus:
-    return ModuleStatus(
-        module="files",
-        status="implemented_minimal",
-        responsibility="Manage shared academic files and downloads.",
-        next_steps=get_files_plan()["next_steps"],
-    )
+FILE_MAX_SIZE = 20 * 1 << 30  # 20GB
+BLOCK_SIZE = 1 << 20  # 1MB
 
 
-@router.get("", response_model=ApiResp[PageData[FileInfo]])
-@respond
-def get_files(
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
-    category_id: str | None = Query(default=None, max_length=50),
-    status: str | None = Query(default=None, max_length=20),
-    sort: str = Query(default="newest"),
-    db: Session = Depends(get_session),
-):
-    return list_files(db, page=page, limit=limit, category_id=category_id, status=status, sort=sort)
+@router.post("/upload")
+def upload_files(
+    file: Annotated[UploadFile, File(...)],
+    cur: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_session)],
+    target_path: Annotated[str, Form()] = "",
+    category_id: Annotated[str, Form()] = "",
+    description: Annotated[str, Form()] = "",
+    tags: Annotated[str, Form()] = "[]",
+) -> ApiResp[FileInfo]:
+    """
+    上传文件，顺便算好sha3，然后落盘
+    """
+    sha3_hash = sha3_256()
+    file_size = 0
+    spooled = cast(SpooledTemporaryFile, cast(object, file.file))
+    while True:
+        chunk = spooled.read(BLOCK_SIZE)
+        if not chunk:
+            break
+        sha3_hash.update(chunk)
+        file_size += len(chunk)
+        if file_size > FILE_MAX_SIZE:
+            raise HTTPException(status_code=413, detail="File Exceed MAX File size 20GB")
+    hash_string = sha3_hash.hexdigest()
+    file_storage_path = Path(settings.files_store_dir) / hash_string[0:4] / hash_string
+    file_storage_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # 当同hash文件不存在再落盘
+    if not file_storage_path.exists():
+        if file_size <= BLOCK_SIZE:
+            spooled.rollover()
+        shutil.move(spooled.name, str(file_storage_path))
 
-@router.post("", response_model=ApiResp[FileInfo])
-@respond
-def upload_file(
-    file: UploadFile = File(...),
-    category_id: str = Form(default=""),
-    description: str = Form(default=""),
-    tags: str = Form(default="[]"),
-    cur: CurrentUser = Depends(get_current_user),
-    db: Session = Depends(get_session),
-):
-    import json
-
-    try:
-        tags_list = json.loads(tags) if tags else []
-    except json.JSONDecodeError:
-        tags_list = []
-
-    info = FileCreate(
-        original_name=file.filename or "untitled",
-        mime_type=file.content_type or "application/octet-stream",
+    # 入库
+    metadata = FileInfo(
+        original_name=target_path,
+        uploader_id=cur.id,
+        mime_type=file.content_type if file.content_type else "",
+        size=file_size,
         category_id=category_id,
+        status=FileStatus.PENDING,
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
         description=description,
-        tags=tags_list,
+        tags=tags,
+        download_count=0,
+        view_count=0
     )
-    return create_file_service(db, cur.id, info, file.file)
+    item = UserStorageItem(
+        owner_id = cur.id,
+        showed_path = target_path,
+        actual_path = str(file_storage_path),
+        file_metadata = metadata
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return ApiResp[FileInfo](code=200, msg="success", data=metadata)
 
-
-@router.get("/{file_id}", response_model=ApiResp[FileInfo])
-@respond
-def get_file_detail(file_id: int, db: Session = Depends(get_session)):
-    return get_file(db, file_id, bump_view=True)
-
-
-@router.post("/{file_id}/download", response_model=ApiResp[dict])
-@respond
-def download_file(
-    file_id: int,
-    cur: CurrentUser = Depends(get_current_user),
-    db: Session = Depends(get_session),
-):
-    return {"download_count": bump_download(db, file_id)}

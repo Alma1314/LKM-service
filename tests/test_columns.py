@@ -55,7 +55,7 @@ def client(db):
             pass
 
     app.dependency_overrides[get_session] = override_get_session
-    
+
     try:
         with TestClient(app) as test_client:
             yield test_client

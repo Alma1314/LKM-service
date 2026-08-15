@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import json
+from datetime import datetime
 from typing import Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -17,7 +20,6 @@ class FileCreate(BaseModel):
 class FileInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
     original_name: str
     uploader_id: int
     uploader_name: str = ""
@@ -26,12 +28,13 @@ class FileInfo(BaseModel):
     category_id: str
     category_name: str = ""
     description: str
-    tags: list[str]
+    tags: list[str] | str
     status: str
     review_comment: str | None = None
     download_count: int
     view_count: int
-    created_at: str
+    created_at: datetime
+    updated_at: datetime
 
     @field_validator("tags", mode="before")
     @classmethod
@@ -44,7 +47,7 @@ class FileInfo(BaseModel):
             return []
 
 
-class PageData(BaseModel, Generic[T]):
+class PageData[T](BaseModel):
     items: list[T]
     total: int
     page: int
