@@ -1,6 +1,4 @@
 import asyncio
-import os
-import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 
@@ -25,44 +23,8 @@ from app.modules.forum.graphql import GraphQLContext
 from app.modules.forum.graphql import schema as forum_graphql_schema
 
 
-def _verify_production_secrets() -> None:
-    """
-    仅显式测试环境 (LKM_ENV=test 或 PYTEST_RUNNING) 允许使用弱密钥继续运行。
-    其他所有模式都必须为 JWT_SECRET 和 TOTP 加密密钥设置强且非默认的值。
-    """
-    if os.environ.get("LKM_ENV") == "test" or os.environ.get("PYTEST_RUNNING"):
-        return
-
-    if settings.jwt_secret.startswith("change-me") or len(settings.jwt_secret) < 32:
-        print(
-            "ERROR: Default or weak JWT secret detected. "
-            "Set LKM_JWT_SECRET to a random 64+ character value.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    # JWT 签名密钥必须与 TOTP 加密密钥分开
-    if settings.jwt_secret == getattr(settings, "totp_encryption_key", None):
-        print(
-            "ERROR: JWT_SECRET must be different from TOTP encryption key.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    # TOTP 加密密钥不得使用默认值
-    totp_key = getattr(settings, "totp_encryption_key", "")
-    if not totp_key or totp_key.startswith("change-me") or len(totp_key) < 32:
-        print(
-            "ERROR: Default or weak TOTP encryption key detected. "
-            "Set LKM_TOTP_ENCRYPTION_KEY to a random 64+ character value.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
-    _verify_production_secrets()
     await init_db()
 
     cleanup_task = asyncio.create_task(cleanup_expired_challenges())
@@ -85,6 +47,7 @@ def create_app() -> FastAPI:
     application.include_router(api_router, prefix=settings.api_prefix)
     application.add_exception_handler(BizError, _on_err)
     application.add_exception_handler(RequestValidationError, _on_err)
+    application.add_exception_handler(Exception, _on_err)
 
     async def _graphql_context(
         db: AsyncSession = Depends(get_graphql_session),

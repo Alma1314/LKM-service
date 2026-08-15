@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.err import BizError, CommonErr
-from app.db.models import ForumComment, ForumPost, User
+from app.db.models import ForumComment, ForumPost, ForumPostLike, User
 from app.db.repo import get_or_raise
 from app.modules.forum.errors import ForumErr
 from app.modules.forum.models import FORUM_TABLE_PLAN
@@ -136,10 +136,28 @@ async def delete_post(db: AsyncSession, post_id: int, current_user_id: int) -> N
     await db.flush()
 
 
-async def like_post(db: AsyncSession, post_id: int) -> int:
+async def like_post(db: AsyncSession, post_id: int, user_id: int) -> int:
     post = await get_or_raise(
         db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id
     )
+
+    # 幂等：同一用户重复点赞不重复计数（复合主键兜底并发下的唯一约束）
+    existing = (
+        (
+            await db.execute(
+                select(ForumPostLike).where(
+                    ForumPostLike.post_id == post_id,
+                    ForumPostLike.user_id == user_id,
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if existing is not None:
+        return post.like_count
+
+    db.add(ForumPostLike(user_id=user_id, post_id=post_id))
     post.like_count += 1
     await db.flush()
     return post.like_count

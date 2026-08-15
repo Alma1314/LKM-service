@@ -1,4 +1,5 @@
 import functools
+import logging
 from collections.abc import Callable, Coroutine
 from enum import IntEnum
 from typing import Any, cast
@@ -7,6 +8,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.modules.common import ApiResp
+
+logger = logging.getLogger(__name__)
 
 
 class Namespace:
@@ -88,6 +91,7 @@ def map_err(exc: Exception) -> tuple[int, ErrCode, str]:
         status, _ = ERRTABLE[CommonErr.INVALID_INPUT]
         return status, CommonErr.INVALID_INPUT, detail
 
+    logger.error("Unhandled exception", exc_info=exc)
     status, msg = ERRTABLE[CommonErr.INTERNAL_ERROR]
     return status, CommonErr.INTERNAL_ERROR, msg
 

@@ -13,8 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.err import CommonErr, resp_json, respond
 from app.db.models import User, now_iso
+from app.db.repo import consume_once, get_or_raise
 from app.db.session import get_session
 from app.modules.auth.deps import CurrentUser
+from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import RefreshToken
 from app.modules.auth.security import verifypwd
 from app.modules.auth.service_auth import generate_refresh_token, hash_refresh_token
@@ -125,11 +127,9 @@ async def admin_refresh(
     request: Request,
     db: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """用 refresh cookie 换新 access + 旋转新 refresh（复用检测：旧值被用 → 作废会话）。
+    """用 refresh cookie 换新 access + 旋转新 refresh。
 
-    与前台 refresh_access_token 共用 RefreshToken 表的原子撤销语义。
-    注意：前台该表无 kind 列，本骨架将 admin refresh 与其混存；
-          区分"web/admin"需要新增 kind 列并做 Alembic 迁移，作为后续项（方案 §6.2）。
+    consume_once 原子撤销：并发下同一 refresh 只能被消费一次（复用检测）。
     """
     check_code_rate_limit("admin:token:refresh:global", max_count=30, window=60)
 
@@ -139,35 +139,38 @@ async def admin_refresh(
 
     tok_hash = hash_refresh_token(raw_refresh)
     now = now_iso()
-    # 原子撤销：仅当记录存在且未撤销时置 revoked_at（此步即"复用检测"）
-    result = await db.execute(
-        select(RefreshToken).where(
-            RefreshToken.token_hash == tok_hash,
-            RefreshToken.kind == "admin",
-            RefreshToken.revoked_at.is_(None),
-        )
-    )
-    stored = result.scalars().first()
-    if stored is None:
-        # 旧 refresh 已被用/不存在 → 视为会话被冒用，快速清 cookie 即可
+    if not await consume_once(
+        db,
+        RefreshToken,
+        {"revoked_at": now},
+        RefreshToken.token_hash == tok_hash,
+        RefreshToken.kind == "admin",
+        RefreshToken.revoked_at.is_(None),
+    ):
         return resp_json(CommonErr.FORBIDDEN, detail="刷新令牌无效")
 
-    stored.revoked_at = now
+    stored = await get_or_raise(
+        db,
+        RefreshToken,
+        AuthErr.TOKEN_INVALID,
+        RefreshToken.token_hash == tok_hash,
+    )
     if stored.expires_at <= now:
-        await db.commit()
         return resp_json(CommonErr.FORBIDDEN, detail="会话已过期")
 
-    user_result = await db.execute(select(User).where(User.id == stored.user_id))
-    user = user_result.scalars().first()
-    if user is None or user.account_level != "admin":
-        await db.commit()
+    user = await get_or_raise(
+        db,
+        User,
+        AuthErr.USER_NOT_FOUND,
+        User.id == stored.user_id,
+    )
+    if user.account_level != "admin":
         return resp_json(CommonErr.FORBIDDEN, detail="会话无效")
 
     # 会话体在 commit 前快照（避免 commit 后 expire 引发异步重载）
     access_token = create_admin_access_token(user)
     payload = _admin_user_payload(user)
 
-    # 旋转：发放新 refresh
     new_refresh = generate_refresh_token()
     db.add(
         RefreshToken(

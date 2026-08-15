@@ -189,6 +189,25 @@ class TestAdminRefreshAndLogout:
         again = await client.post("/api/v1/admin/auth/refresh")
         assert again.status_code == 403
 
+    async def should_reject_reuse_of_old_refresh_after_rotation(
+        self, db: AsyncSession, client: AsyncClient
+    ):
+        # 用独特用户名避开共享内存 admin 登录限流（5 次/300s）在本进程跨用例累计
+        await _create_user(db, username="root_reuse", account_level="admin")
+        login = await _login(client, "root_reuse")
+        assert login.status_code == 200
+
+        old_refresh = client.cookies.get("admin_refresh")
+        assert old_refresh
+
+        first = await client.post("/api/v1/admin/auth/refresh")
+        assert first.status_code == 200
+
+        # 旋转后，旧 refresh 已撤销：清掉新 cookie，塞回旧值再刷新应被拒
+        client.cookies.set("admin_refresh", old_refresh, path="/api/v1/admin")
+        again = await client.post("/api/v1/admin/auth/refresh")
+        assert again.status_code == 403
+
 
 # ===================================================================
 # 用户列表 / 统计（require_admin 保护）

@@ -80,7 +80,7 @@ async def like_forum_post(
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    return {"like_count": await like_post_service(db, post_id)}
+    return {"like_count": await like_post_service(db, post_id, cur.id)}
 
 
 @router.delete("/posts/{post_id}", response_model=ApiResp[dict[str, Any]])

@@ -87,7 +87,7 @@ class User(Base):
         UTCDateTime, nullable=False, default=now_iso
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        UTCDateTime, nullable=False, default=now_iso
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
     )
 
     profile: Mapped[Profile] = relationship(
@@ -171,7 +171,7 @@ class Column(Base):
         UTCDateTime, nullable=False, default=now_iso
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        UTCDateTime, nullable=False, default=now_iso
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
     )
 
     owner: Mapped[User] = relationship(back_populates="owned_columns")
@@ -199,7 +199,7 @@ class ColumnPost(Base):
         UTCDateTime, nullable=False, default=now_iso
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        UTCDateTime, nullable=False, default=now_iso
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
     )
     published_at: Mapped[datetime.datetime | None] = mapped_column(
         UTCDateTime, nullable=True
@@ -230,7 +230,7 @@ class ForumPost(Base):
         UTCDateTime, nullable=False, default=now_iso
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        UTCDateTime, nullable=False, default=now_iso
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
     )
 
     author: Mapped[User] = relationship(back_populates="forum_posts")
@@ -262,6 +262,18 @@ class ForumComment(Base):
     )
     replies: Mapped[list[ForumComment]] = relationship(
         back_populates="parent", cascade="all, delete-orphan"
+    )
+
+
+class ForumPostLike(Base):
+    """论坛帖子点赞记录，复合主键保证同一用户对同一帖子最多一条（点赞幂等）。"""
+
+    __tablename__: str = "forum_post_likes"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    post_id: Mapped[int] = mapped_column(ForeignKey("forum_posts.id"), primary_key=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
     )
 
 
@@ -306,7 +318,7 @@ class BlogSeries(Base):
         UTCDateTime, nullable=False, default=now_iso
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        UTCDateTime, nullable=False, default=now_iso
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
     )
 
     owner: Mapped[User] = relationship(back_populates="blog_series")
@@ -347,7 +359,7 @@ class BlogComment(Base):
         UTCDateTime, nullable=False, default=now_iso
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        UTCDateTime, nullable=False, default=now_iso
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
     )
 
     user: Mapped[User] = relationship()
@@ -379,7 +391,7 @@ class StarHopeQuestion(Base):
         UTCDateTime, nullable=False, default=now_iso
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        UTCDateTime, nullable=False, default=now_iso
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
     )
     deleted_at: Mapped[datetime.datetime | None] = mapped_column(
         UTCDateTime, nullable=True
@@ -400,7 +412,7 @@ class StarHopeFolder(Base):
         UTCDateTime, nullable=False, default=now_iso
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        UTCDateTime, nullable=False, default=now_iso
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
     )
     deleted_at: Mapped[datetime.datetime | None] = mapped_column(
         UTCDateTime, nullable=True
@@ -432,7 +444,7 @@ class StarHopePracticeSession(Base):
         UTCDateTime, nullable=False, default=now_iso
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        UTCDateTime, nullable=False, default=now_iso
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
     )
     deleted_at: Mapped[datetime.datetime | None] = mapped_column(
         UTCDateTime, nullable=True
@@ -458,7 +470,7 @@ class StarHopeAiAgent(Base):
         UTCDateTime, nullable=False, default=now_iso
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        UTCDateTime, nullable=False, default=now_iso
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
     )
     deleted_at: Mapped[datetime.datetime | None] = mapped_column(
         UTCDateTime, nullable=True
@@ -483,5 +495,9 @@ class Article(Base):
     likes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     comments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     bookmarks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[datetime.datetime] = mapped_column(UTCDateTime, nullable=False, default=now_iso)
-    updated_at: Mapped[datetime.datetime] = mapped_column(UTCDateTime, nullable=False, default=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
+    )

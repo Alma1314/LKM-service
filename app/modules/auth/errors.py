@@ -26,6 +26,7 @@ class AuthErr(ErrCode):
     PASSKEY_VERIFICATION_FAILED = NS_AUTH.err(22)
     RECOVERY_NOT_SUPPORTED = NS_AUTH.err(23)
     RECOVERY_METHOD_UNAVAILABLE = NS_AUTH.err(24)
+    OAUTH_EMAIL_ALREADY_REGISTERED = NS_AUTH.err(25)
 
 
 register(
@@ -57,5 +58,9 @@ register(
         AuthErr.PASSKEY_VERIFICATION_FAILED: (400, "Passkey verification failed"),
         AuthErr.RECOVERY_NOT_SUPPORTED: (400, "Recovery not supported"),
         AuthErr.RECOVERY_METHOD_UNAVAILABLE: (400, "Recovery method unavailable"),
+        AuthErr.OAUTH_EMAIL_ALREADY_REGISTERED: (
+            409,
+            "OAuth email already registered",
+        ),
     }
 )

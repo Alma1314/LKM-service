@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import contextlib
+import logging
 import os
 import subprocess
 
@@ -12,6 +13,8 @@ from app.core.config import settings
 from app.db.models import User
 from app.db.session import get_session
 from app.modules.auth.security import verifypwd
+
+logger = logging.getLogger(__name__)
 
 git_router = APIRouter(prefix="/blog/git", tags=["blog-git"])
 
@@ -106,8 +109,8 @@ async def git_http_backend(
             )
             if user and verifypwd(password, user.hashed_password):
                 env["REMOTE_USER"] = username
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("git Basic Auth 校验失败，回退为匿名（读公开）: %s", exc)
 
     body = await request.body()
 

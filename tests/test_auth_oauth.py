@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.modules.auth.models import OAuthState
+from app.modules.auth.models import OAuthState, UserOAuth
 
 
 class TestGithubAuthUrl:
@@ -203,3 +203,58 @@ class TestOauthRouterRedirect:
         qs = parse_qs(urlparse(resp.headers["location"]).fragment)
         assert qs["success"] == ["0"]
         assert qs["error"] == ["OAUTH_EMAIL_TAKEN"]
+
+
+class TestOAuthEmailAutoBind:
+    async def should_reject_github_login_when_email_already_registered(
+        self, db: AsyncSession
+    ):
+        from unittest.mock import AsyncMock, patch
+
+        from app.core.err import BizError
+        from app.db.models import User
+        from app.modules.auth import service_oauth
+        from app.modules.auth.errors import AuthErr
+        from app.modules.auth.security import hashpwd
+        from app.modules.auth.service_oauth import (
+            generate_oauth_state,
+            handle_github_callback,
+        )
+
+        db.add(
+            User(
+                username="alice",
+                email="alice@example.com",
+                hashed_password=hashpwd("secret123456"),
+                account_level="normal",
+            )
+        )
+        await db.flush()
+
+        state = await generate_oauth_state(db, "login")
+
+        with (
+            patch.object(
+                service_oauth,
+                "_exchange_github_token",
+                new=AsyncMock(return_value="tok"),
+            ),
+            patch.object(
+                service_oauth,
+                "_get_github_user",
+                new=AsyncMock(
+                    return_value={
+                        "provider_user_id": "123",
+                        "provider_email": "alice@example.com",
+                        "login": "alice",
+                    }
+                ),
+            ),
+            pytest.raises(BizError) as exc,
+        ):
+            await handle_github_callback(db, "code", state)
+
+        assert exc.value.errcode == AuthErr.OAUTH_EMAIL_ALREADY_REGISTERED
+        # 负向断言：未创建任何 OAuth 绑定（自动绑定确已移除）
+        bindings = (await db.execute(select(UserOAuth))).scalars().all()
+        assert bindings == []

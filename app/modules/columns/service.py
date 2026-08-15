@@ -3,6 +3,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.err import BizError
 from app.db.models import Column, ColumnApplication, ColumnPost, now_iso
 from app.db.repo import get_or_raise
 from app.modules.columns.errors import ColumnErr
@@ -34,10 +35,10 @@ def get_column_plan() -> dict[str, Any]:
 
 
 async def create_application(
-    db: AsyncSession, info: ColumnApplicationCreate
+    db: AsyncSession, user_id: int, info: ColumnApplicationCreate
 ) -> ColumnApplicationInfo:
     app = ColumnApplication(
-        user_id=info.user_id,
+        user_id=user_id,
         title=info.title,
         description=info.description,
         reason=info.reason,
@@ -72,7 +73,10 @@ async def get_application(
 
 
 async def review_application(
-    db: AsyncSession, application_id: int, info: ColumnApplicationReview
+    db: AsyncSession,
+    application_id: int,
+    info: ColumnApplicationReview,
+    reviewer_id: int,
 ) -> dict[str, Any]:
     app = await get_or_raise(
         db,
@@ -81,8 +85,12 @@ async def review_application(
         ColumnApplication.id == application_id,
     )
 
+    # 已审幂等：非 PENDING 状态拒绝再次审批（防状态翻转/重复审批）
+    if app.status != ColumnApplicationStatus.PENDING:
+        raise BizError(ColumnErr.APPLICATION_ALREADY_REVIEWED)
+
     app.status = info.status
-    app.reviewer_id = info.reviewer_id
+    app.reviewer_id = reviewer_id
     app.review_note = info.review_note
     app.reviewed_at = now_iso()
     await db.flush()
@@ -119,13 +127,13 @@ async def get_column(db: AsyncSession, column_id: int) -> ColumnInfo:
 
 
 async def create_post(
-    db: AsyncSession, column_id: int, info: ColumnPostCreate
+    db: AsyncSession, column_id: int, info: ColumnPostCreate, author_id: int
 ) -> ColumnPostInfo:
     await get_or_raise(db, Column, ColumnErr.NOT_FOUND, Column.id == column_id)
 
     post = ColumnPost(
         column_id=column_id,
-        author_id=info.author_id,
+        author_id=author_id,
         title=info.title,
         summary=info.summary,
         content=info.content,

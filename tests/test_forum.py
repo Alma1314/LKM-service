@@ -156,12 +156,13 @@ class TestForumPosts:
 
         assert exc.value.errcode == CommonErr.FORBIDDEN
 
-    async def should_increment_like(self, db: AsyncSession):
+    async def should_like_idempotently(self, db: AsyncSession):
         user_id = await _user(db)
         post = await _post(db, author_id=user_id)
 
-        assert await like_post(db, post.id) == 1
-        assert await like_post(db, post.id) == 2
+        assert await like_post(db, post.id, user_id) == 1
+        # 幂等：同一用户重复点赞不重复计数
+        assert await like_post(db, post.id, user_id) == 1
 
 
 class TestForumComments:

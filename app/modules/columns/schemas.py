@@ -11,7 +11,6 @@ from app.modules.columns.models import (
 
 
 class ColumnApplicationCreate(BaseModel):
-    user_id: int
     title: str = Field(..., min_length=1, max_length=80)
     description: str = Field(..., min_length=1, max_length=300)
     reason: str = Field(..., min_length=1, max_length=500)
@@ -33,7 +32,6 @@ class ColumnApplicationInfo(BaseModel):
 
 
 class ColumnApplicationReview(BaseModel):
-    reviewer_id: int
     status: ColumnApplicationStatus
     review_note: str | None = Field(default=None, max_length=300)
 
@@ -53,10 +51,9 @@ class ColumnInfo(BaseModel):
 
 
 class ColumnPostCreate(BaseModel):
-    author_id: int
     title: str = Field(..., min_length=1, max_length=120)
     summary: str | None = Field(default=None, max_length=300)
-    content: str = Field(..., min_length=1)
+    content: str = Field(..., min_length=1, max_length=200_000)
 
 
 class ColumnPostInfo(BaseModel):

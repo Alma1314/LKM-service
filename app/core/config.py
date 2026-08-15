@@ -1,3 +1,4 @@
+import urllib.parse
 from typing import ClassVar
 
 from pydantic import model_validator
@@ -85,6 +86,10 @@ class Settings(BaseSettings):
             v = value or ""
             if not v or any(p in v.lower() for p in placeholders):
                 insecure.append(name)
+            elif name in ("jwt_secret", "totp_encryption_key") and len(v) < 32:
+                insecure.append(f"{name}(too short)")
+        if self.jwt_secret == self.totp_encryption_key:
+            insecure.append("jwt_secret==totp_encryption_key")
         if insecure:
             raise ValueError(
                 "Insecure secrets in production (set LKM_ENV to a non-dev value but secrets "
@@ -104,8 +109,9 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         if self.db_driver == "postgresql":
+            password = urllib.parse.quote_plus(self.db_password)
             return (
-                f"postgresql+asyncpg://{self.db_user}:{self.db_password}"
+                f"postgresql+asyncpg://{self.db_user}:{password}"
                 f"@{self.db_host}:{self.db_port}/{self.db_name}"
             )
         return f"sqlite+aiosqlite:///{self.db_path}"

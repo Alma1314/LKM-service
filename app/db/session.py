@@ -63,9 +63,13 @@ async def get_session() -> AsyncIterator[AsyncSession]:
     try:
         yield db
         await db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         await db.rollback()
-        raise BizError(AuthErr.ALREADY_REGISTERED, "Resource already exists") from None
+        if _is_unique_violation(exc):
+            raise BizError(
+                AuthErr.ALREADY_REGISTERED, "Resource already exists"
+            ) from None
+        raise
     except Exception:
         await db.rollback()
         raise
@@ -86,3 +90,14 @@ async def dispose_engine() -> None:
         await _async_engine.dispose()
         _async_engine = None
         _AsyncSessionLocal = None
+
+
+def _is_unique_violation(exc: IntegrityError) -> bool:
+    """判断 IntegrityError 是否由唯一约束冲突引起（区别于外键/NOT NULL 等）。"""
+    orig = exc.orig
+    if orig is None:
+        return False
+    name = type(orig).__name__
+    if "UniqueViolation" in name:
+        return True
+    return "UNIQUE constraint failed" in str(orig)

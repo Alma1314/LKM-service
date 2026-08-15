@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # 以下是为user请求头校验新增的导入
 from app.core.err import BizError, CommonErr
+from app.modules.auth.errors import AuthErr
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.columns.errors import ColumnErr
 from app.modules.columns.models import ColumnApplicationStatus
@@ -52,8 +53,8 @@ async def _user(
 async def _application(db: AsyncSession, user_id: int = 1) -> ColumnApplicationInfo:
     return await create_application(
         db,
+        user_id,
         ColumnApplicationCreate(
-            user_id=user_id,
             title="数学思维训练",
             description="面向高中生的数学思维和解题方法专栏。",
             reason="希望长期整理数学学习笔记。",
@@ -67,10 +68,10 @@ async def _approved_column(db: AsyncSession, user_id: int = 1) -> dict[str, Any]
         db,
         application.id,
         ColumnApplicationReview(
-            reviewer_id=user_id,
             status=ColumnApplicationStatus.APPROVED,
             review_note="方向明确，允许开设。",
         ),
+        user_id,
     )
     return result["column"]
 
@@ -82,11 +83,11 @@ async def _post(
         db,
         column_id,
         ColumnPostCreate(
-            author_id=author_id,
             title="如何建立函数思想",
             summary="从变量关系和图像理解入门函数思想。",
             content="函数思想的核心，是用变化关系理解问题。",
         ),
+        author_id,
     )
 
 
@@ -132,10 +133,8 @@ class TestColumnReview:
         result: dict[str, Any] = await review_application(
             db,
             application.id,
-            ColumnApplicationReview(
-                reviewer_id=user_id,
-                status=ColumnApplicationStatus.APPROVED,
-            ),
+            ColumnApplicationReview(status=ColumnApplicationStatus.APPROVED),
+            user_id,
         )
 
         assert result["application"]["status"] == ColumnApplicationStatus.APPROVED
@@ -153,29 +152,29 @@ class TestColumnReview:
             db,
             application.id,
             ColumnApplicationReview(
-                reviewer_id=user_id,
                 status=ColumnApplicationStatus.REJECTED,
                 review_note="内容方向还不够清晰。",
             ),
+            user_id,
         )
 
         assert result["application"]["status"] == ColumnApplicationStatus.REJECTED
         assert result["column"] is None
         assert await list_columns(db) == []
 
-    async def should_not_duplicate_column_when_approving_twice(self, db: AsyncSession):
+    async def should_reject_reviewing_already_reviewed_application(
+        self, db: AsyncSession
+    ):
         user_id = await _user(db)
         application = await _application(db, user_id=user_id)
-        review = ColumnApplicationReview(
-            reviewer_id=user_id,
-            status=ColumnApplicationStatus.APPROVED,
-        )
+        review = ColumnApplicationReview(status=ColumnApplicationStatus.APPROVED)
 
-        first: dict[str, Any] = await review_application(db, application.id, review)
-        second: dict[str, Any] = await review_application(db, application.id, review)
+        await review_application(db, application.id, review, user_id)
 
-        assert first["column"]["id"] == second["column"]["id"]
-        assert len(await list_columns(db)) == 1
+        with pytest.raises(BizError) as exc:
+            await review_application(db, application.id, review, user_id)
+
+        assert exc.value.errcode == ColumnErr.APPLICATION_ALREADY_REVIEWED
 
 
 class TestColumns:
@@ -267,7 +266,6 @@ class TestColumnRoutes:
     ) -> None:
         await self._setup_user(db)
         application_data: dict[str, Any] = {
-            "user_id": 1,
             "title": "数学思维训练",
             "description": "面向高中生的数学思维和解题方法专栏。",
             "reason": "希望长期整理数学学习笔记。",
@@ -280,27 +278,6 @@ class TestColumnRoutes:
         assert response.status_code == 403
         assert response.json()["code"] == CommonErr.FORBIDDEN
 
-    async def should_reject_application_when_token_user_mismatches_body_user(
-        self, client: AsyncClient, db: AsyncSession
-    ) -> None:
-        user_id_1, _ = await self._setup_user(db)
-        # Create a second user so token for user_id=2 is valid
-        await _user(db, username="other", email="other@example.com")
-        token_2 = create_access_token(user_id=2, account_level="normal", role="member")
-        resp = await client.post(
-            "/api/v1/columns/applications",
-            headers={"Authorization": f"Bearer {token_2}"},
-            json={
-                "user_id": user_id_1,
-                "title": "数学专栏",
-                "description": "整理数学学习内容。",
-                "reason": "长期输出学习笔记。",
-            },
-        )
-
-        assert resp.status_code == 403
-        assert resp.json()["code"] == CommonErr.FORBIDDEN
-
     async def should_accept_application_when_token_user_matches_body_user(
         self, client: AsyncClient, db: AsyncSession
     ) -> None:
@@ -309,7 +286,6 @@ class TestColumnRoutes:
             "/api/v1/columns/applications",
             headers={"Authorization": f"Bearer {token}"},
             json={
-                "user_id": user_id,
                 "title": "数学专栏",
                 "description": "整理数学学习内容。",
                 "reason": "长期输出学习笔记。",
@@ -319,6 +295,47 @@ class TestColumnRoutes:
         assert resp.status_code == 200
         assert resp.json()["code"] == 0
         assert resp.json()["data"]["user_id"] == user_id
+
+    async def should_reject_applications_list_for_non_admin(
+        self, client: AsyncClient, db: AsyncSession
+    ) -> None:
+        _, token = await self._setup_user(db)
+        resp = await client.get(
+            "/api/v1/columns/applications",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403
+        assert resp.json()["code"] == AuthErr.ACCOUNT_LEVEL_INSUFFICIENT
+
+    async def should_reject_review_for_non_admin(
+        self, client: AsyncClient, db: AsyncSession
+    ) -> None:
+        user_id, token = await self._setup_user(db)
+        await _application(db, user_id=user_id)
+        resp = await client.post(
+            "/api/v1/columns/applications/1/review",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"status": "approved"},
+        )
+        assert resp.status_code == 403
+        assert resp.json()["code"] == AuthErr.ACCOUNT_LEVEL_INSUFFICIENT
+
+    async def should_reject_post_for_non_owner(
+        self, client: AsyncClient, db: AsyncSession
+    ) -> None:
+        owner_id, _ = await self._setup_user(db)
+        column = await _approved_column(db, user_id=owner_id)
+        intruder_id = await _user(db, username="intruder", email="intruder@example.com")
+        token = create_access_token(
+            user_id=intruder_id, account_level="normal", role="member"
+        )
+        resp = await client.post(
+            f"/api/v1/columns/{column['id']}/posts",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"title": "越权帖", "content": "x"},
+        )
+        assert resp.status_code == 403
+        assert resp.json()["code"] == CommonErr.FORBIDDEN
 
 
 def should_test():

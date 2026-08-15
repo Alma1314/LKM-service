@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr
+from app.db.models import expires_at
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import RefreshToken
 
@@ -486,3 +487,32 @@ class TestAuditLog:
         assert logs[0].action == "login"
         assert logs[0].detail == "password login"
         assert logs[0].ip_address == "127.0.0.1"
+
+
+# ===================================================================
+# TestRefreshKindIsolation
+# ===================================================================
+
+
+class TestRefreshKindIsolation:
+    async def should_reject_admin_kind_refresh_in_web_refresh(self, db: AsyncSession):
+        from app.modules.auth.models import RefreshToken
+        from app.modules.auth.service_auth import (
+            hash_refresh_token,
+            refresh_access_token,
+        )
+
+        db.add(
+            RefreshToken(
+                user_id=1,
+                token_hash=hash_refresh_token("raw-admin-refresh"),
+                kind="admin",
+                mfa_verified=True,
+                expires_at=expires_at(days=1),
+                revoked_at=None,
+            )
+        )
+        await db.flush()
+
+        with pytest.raises(BizError):
+            await refresh_access_token(db, "raw-admin-refresh")

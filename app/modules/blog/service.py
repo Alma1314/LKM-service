@@ -101,6 +101,20 @@ async def _get_profile(db: AsyncSession, user_id: int) -> ProfileInfo | None:
     return None
 
 
+async def _get_profiles(
+    db: AsyncSession, user_ids: set[int]
+) -> dict[int, ProfileInfo | None]:
+    """批量查询多个用户的 Profile，避免逐条查询的 N+1。"""
+    if not user_ids:
+        return {}
+    rows = (
+        (await db.execute(select(Profile).where(Profile.user_id.in_(user_ids))))
+        .scalars()
+        .all()
+    )
+    return {p.user_id: ProfileInfo.model_validate(p) for p in rows}
+
+
 # ---- series CRUD ----
 
 
@@ -323,9 +337,7 @@ async def list_comments(db: AsyncSession, series_id: int) -> list[BlogCommentInf
     )
 
     user_ids = {c.user_id for c in comments}
-    profiles: dict[int, ProfileInfo | None] = {}
-    for uid in user_ids:
-        profiles[uid] = await _get_profile(db, uid)
+    profiles = await _get_profiles(db, user_ids)
 
     comment_map: dict[int, BlogCommentInfo] = {}
     roots: list[BlogCommentInfo] = []

@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class PostCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=120)
-    content: str = Field(..., min_length=1)
+    content: str = Field(..., min_length=1, max_length=200_000)
     category_id: str = Field(..., min_length=1, max_length=50)
     tags: list[str] = Field(default_factory=list)
 

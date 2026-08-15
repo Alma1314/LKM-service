@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr, respond
 from app.db.session import get_session
-from app.modules.auth.deps import CurrentUser, get_current_user
+from app.modules.auth.deps import CurrentUser, RequireLevel, get_current_user
 from app.modules.columns.schemas import (
     ColumnApplicationCreate,
     ColumnApplicationInfo,
@@ -60,14 +60,13 @@ async def apply_column(
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> ColumnApplicationInfo:
-    if cur.id != info.user_id:
-        raise BizError(CommonErr.FORBIDDEN)
-    return await create_application(db, info)
+    return await create_application(db, cur.id, info)
 
 
 @router.get("/applications", response_model=ApiResp[ListData[ColumnApplicationInfo]])
 @respond
 async def get_applications(
+    cur: CurrentUser = RequireLevel("admin"),
     db: AsyncSession = Depends(get_session),
     page: int = Query(1, ge=1),
     limit: int | None = Query(default=None, ge=1, le=200),
@@ -80,9 +79,14 @@ async def get_applications(
 )
 @respond
 async def get_application_detail(
-    application_id: int, db: AsyncSession = Depends(get_session)
+    application_id: int,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
 ) -> ColumnApplicationInfo:
-    return await get_application(db, application_id)
+    app = await get_application(db, application_id)
+    if cur.account_level != "admin" and cur.id != app.user_id:
+        raise BizError(CommonErr.FORBIDDEN)
+    return app
 
 
 @router.post(
@@ -92,12 +96,10 @@ async def get_application_detail(
 async def review_column_application(
     application_id: int,
     info: ColumnApplicationReview,
-    cur: CurrentUser = Depends(get_current_user),
+    cur: CurrentUser = RequireLevel("admin"),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    if cur.id != info.reviewer_id:
-        raise BizError(CommonErr.FORBIDDEN)
-    return await review_application(db, application_id, info)
+    return await review_application(db, application_id, info, cur.id)
 
 
 @router.get("", response_model=ApiResp[ListData[ColumnInfo]])
@@ -126,9 +128,10 @@ async def publish_column_post(
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> ColumnPostInfo:
-    if cur.id != info.author_id:
+    column = await get_column(db, column_id)
+    if cur.account_level != "admin" and cur.id != column.owner_id:
         raise BizError(CommonErr.FORBIDDEN)
-    return await create_post(db, column_id, info)
+    return await create_post(db, column_id, info, cur.id)
 
 
 @router.get("/{column_id}/posts", response_model=ApiResp[ListData[ColumnPostInfo]])

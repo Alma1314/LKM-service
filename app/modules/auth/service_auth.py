@@ -768,13 +768,15 @@ async def refresh_access_token(db: AsyncSession, raw_refresh: str) -> dict[str, 
     tok_hash = hash_refresh_token(raw_refresh)
     now = now_iso()
 
-    # 原子撤销：仅在令牌存在且尚未被撤销时才撤销
+    # 原子撤销：仅在令牌存在、尚未被撤销且属于 web 端点时才撤销。
+    # kind == "web" 过滤：堵住 admin-kind token 被 web 端点轮换的跨会话互用。
     if not await consume_once(
         db,
         RefreshToken,
         {"revoked_at": now},
         RefreshToken.token_hash == tok_hash,
         RefreshToken.revoked_at.is_(None),
+        RefreshToken.kind == "web",
     ):
         # 令牌已被使用、不存在或已被撤销
         raise BizError(AuthErr.TOKEN_INVALID)

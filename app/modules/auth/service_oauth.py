@@ -158,9 +158,9 @@ async def handle_github_callback(
         )
         return await _oauth_login_response(db, user)
 
-    # 2. 通过邮箱查找现有用户 -> 绑定
+    # 2. 邮箱已被注册 → 拒绝自动绑定登录（需显式绑定后登录，防账号接管）
     if gh_user["provider_email"]:
-        user = (
+        existing = (
             (
                 await db.execute(
                     select(User).where(User.email == gh_user["provider_email"])
@@ -169,18 +169,11 @@ async def handle_github_callback(
             .scalars()
             .first()
         )
-        if user:
-            db.add(
-                UserOAuth(
-                    user_id=int(user.id),
-                    provider="github",
-                    provider_user_id=gh_user["provider_user_id"],
-                    provider_email=gh_user["provider_email"],
-                )
+        if existing:
+            raise BizError(
+                AuthErr.OAUTH_EMAIL_ALREADY_REGISTERED,
+                "该邮箱已注册，请用密码登录或先在设置中绑定 GitHub",
             )
-            await db.flush()
-            await upgrade_to_normal(db, user)
-            return await _oauth_login_response(db, user)
 
     # 3. 创建新用户
     username = gh_user["login"]

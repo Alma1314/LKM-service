@@ -58,7 +58,9 @@ async def get_me(cur: CurrentUser = Depends(get_current_user)) -> CurrentUser:
 @router.get("/{user_id}", response_model=ApiResp[ProfileInfo])
 @respond
 async def get_user(
-    user_id: int, db: AsyncSession = Depends(get_session)
+    user_id: int,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
 ) -> ProfileInfo:
     return await get_profile(db, user_id)
 

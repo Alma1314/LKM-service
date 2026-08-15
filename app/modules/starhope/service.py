@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.err import BizError
+from app.core.err import BizError, CommonErr
 from app.db.models import (
     StarHopeAiAgent,
     StarHopeFolder,
@@ -51,6 +51,15 @@ def _json_dump(value: Any) -> str:
 
 
 _JSON_UNION_FIELDS = {"answer"}
+
+# 单次 push 的 upserts/deletes 数量上限，防客户端无界灌库
+_MAX_PUSH_BATCH = 500
+
+
+def _validate_entity_id(value: str) -> None:
+    """校验客户端可控的实体 id：非空且长度不超过 DB 列上限 String(36)。"""
+    if not value or len(value) > 36:
+        raise BizError(CommonErr.INVALID_INPUT, "Invalid entity id")
 
 
 def _dump_scalars(data: dict[str, Any]) -> dict[str, Any]:
@@ -102,9 +111,17 @@ async def push_entity(
     deletes: list[StarHopeTombstone],
 ) -> StarHopePushResult:
     model, in_schema, _out = _lookup(entity)
+    if len(upserts) > _MAX_PUSH_BATCH or len(deletes) > _MAX_PUSH_BATCH:
+        raise BizError(
+            CommonErr.INVALID_INPUT, f"Batch too large (max {_MAX_PUSH_BATCH})"
+        )
     synced = 0
 
     parsed_upserts = [in_schema.model_validate(raw) for raw in upserts]
+    for parsed in parsed_upserts:
+        _validate_entity_id(parsed.id)
+    for tomb in deletes:
+        _validate_entity_id(tomb.id)
 
     # 批量取回现有记录，避免逐条 select 的 N+1
     all_ids = {p.id for p in parsed_upserts} | {t.id for t in deletes}
