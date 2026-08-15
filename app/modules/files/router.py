@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.db.models import UserStorageItem
 from app.db.session import get_session
 from app.modules.auth.deps import CurrentUser, get_current_user
-from app.modules.common import ApiResp
+from app.modules.common import ApiResp, ListData
 from app.modules.files.models import FileStatus
 from app.modules.files.schemas import FileInfo
 
@@ -69,16 +69,31 @@ def upload_files(
         description=description,
         tags=tags,
         download_count=0,
-        view_count=0
+        view_count=0,
     )
     item = UserStorageItem(
-        owner_id = cur.id,
-        showed_path = target_path,
-        actual_path = str(file_storage_path),
-        file_metadata = metadata
+        owner_id=cur.id, showed_path=target_path, actual_path=str(file_storage_path), file_metadata=metadata
     )
     db.add(item)
     db.commit()
     db.refresh(item)
     return ApiResp[FileInfo](code=200, msg="success", data=metadata)
+
+
+@router.get("/ls")
+def get_file_under_folder(
+    cur: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_session)],
+    target_path: Annotated[str, Form()] = "",
+) -> ApiResp[ListData[FileInfo]]:
+    """
+    获取文件夹下的所有文件
+    """
+    items = db.query(UserStorageItem).filter(
+        UserStorageItem.owner_id == cur.id,
+        UserStorageItem.showed_path.startswith(target_path),
+    ).all()
+    return ApiResp[ListData[FileInfo]](
+        code=200, msg="success", data=ListData[FileInfo](items=[item.file_metadata for item in items])
+    )
 
