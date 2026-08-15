@@ -18,7 +18,7 @@ from app.modules.files.schemas import FileInfo
 
 router = APIRouter(prefix="/files", tags=["files"])
 
-FILE_MAX_SIZE = 20 * 1 << 30  # 20GB
+FILE_MAX_SIZE = settings.max_upload_bytes
 BLOCK_SIZE = 1 << 20  # 1MB
 
 
