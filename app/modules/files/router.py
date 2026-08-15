@@ -97,3 +97,26 @@ def get_file_under_folder(
         code=200, msg="success", data=ListData[FileInfo](items=[item.file_metadata for item in items])
     )
 
+@router.get("/review")
+def review_file(
+    cur: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_session)],
+    target_item_id: Annotated[int, Form()] = -1,
+    target_status: Annotated[str, Form()] = "",
+):
+    if cur.account_level != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can review files")
+    if target_item_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid item ID")
+    if target_status not in [FileStatus.APPROVED, FileStatus.REJECTED]:
+        raise HTTPException(status_code=400, detail="Invalid status")
+    item = db.query(UserStorageItem).filter(UserStorageItem.id == target_item_id).first()
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    else:
+        if item.file_metadata.status != FileStatus.PENDING:
+            raise HTTPException(status_code=400, detail="Item status is not pending")
+        item.file_metadata.status = target_status
+        db.commit()
+        db.refresh(item.file_metadata)
+        return ApiResp[FileInfo](code=200, msg=f"Item {target_item_id} status {target_status}",  data=item.file_metadata)
