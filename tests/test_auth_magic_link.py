@@ -9,11 +9,11 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.core.err import BizError
-from app.modules.auth.errors import AuthErr
-from app.db.models import Base, User
 import app.modules.auth.models  # noqa: F401
-from app.modules.auth.models import MagicLink, TOTP
+from app.core.err import BizError
+from app.db.models import Base, User
+from app.modules.auth.errors import AuthErr
+from app.modules.auth.models import TOTP, MagicLink
 from app.modules.auth.providers.console import ConsoleEmailProvider
 
 
@@ -41,8 +41,8 @@ def _service():
 def _create_user(db, username="alice", email="alice@example.com",
                  password="secret123456", account_level="normal"):
     """Create a user with the given parameters and return it."""
-    from app.modules.auth.security import hashpwd
     from app.db.models import Profile
+    from app.modules.auth.security import hashpwd
 
     user = User(
         username=username,
@@ -63,9 +63,9 @@ def _make_magic_link(db, email, purpose="login", used=False, expired=False):
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
 
     if expired:
-        expires = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)).isoformat()
+        expires = (dt.datetime.now(dt.UTC) - dt.timedelta(minutes=1)).isoformat()
     else:
-        expires = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=15)).isoformat()
+        expires = (dt.datetime.now(dt.UTC) + dt.timedelta(minutes=15)).isoformat()
 
     record = MagicLink(
         email=email,

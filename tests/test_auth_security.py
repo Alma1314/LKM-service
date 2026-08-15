@@ -1,21 +1,21 @@
 import time
-import pytest
-import jwt
 
+import jwt
+import pytest
+
+from app.core.config import settings
 from app.modules.auth.security import (
     create_access_token,
-    decode_access_token,
     create_temp_token,
+    decode_access_token,
     decode_temp_token,
+    decrypt_secret,
+    encrypt_secret,
+    generate_recovery_codes,
     generate_totp_secret,
     get_totp_uri,
     verify_totp,
-    generate_recovery_codes,
-    encrypt_secret,
-    decrypt_secret,
 )
-from app.core.config import settings
-
 
 # ---------------------------------------------------------------------------
 # JWT – access token
@@ -97,9 +97,9 @@ class TestTOTP:
         secret = generate_totp_secret()
         # Generate a valid TOTP code from secret for time step now
         import base64
+        import hashlib
         import hmac
         import struct
-        import hashlib
 
         now = int(time.time()) // 30
         key = base64.b32decode(secret, casefold=True)
@@ -118,9 +118,9 @@ class TestTOTP:
     def should_accept_code_within_window(self):
         secret = generate_totp_secret()
         import base64
+        import hashlib
         import hmac
         import struct
-        import hashlib
 
         # Generate code for previous time step (now - 30)
         prev_time = int(time.time()) // 30 - 1

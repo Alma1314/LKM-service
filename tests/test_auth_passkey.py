@@ -1,22 +1,21 @@
 """Tests for the Passkey service (service_passkey.py) with real WebAuthn crypto."""
 
+import base64
 import hashlib
 import json
-import base64
-import struct
 import os
+import struct
 
 import pytest
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec
-
-from app.core.err import BizError
-from app.modules.auth.errors import AuthErr
-from app.db.models import Base
 import app.modules.auth.models  # noqa: F401
+from app.core.err import BizError
+from app.db.models import Base
+from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import PasskeyCredential
 
 
@@ -332,7 +331,6 @@ class TestCompletePasskeyLogin:
             })
             assert result["user_id"] == user.id
 
-        from sqlalchemy.orm import Session
         pk = db.query(PasskeyCredential).filter(PasskeyCredential.credential_id == cred_id).first()
         assert pk.sign_count == 2
 

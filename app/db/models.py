@@ -5,15 +5,20 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
 from app.modules.blog.models import BlogSeriesStatus
-from app.modules.columns.models import ColumnApplicationStatus, ColumnPostStatus, ColumnStatus
+from app.modules.columns.models import (
+    ColumnApplicationStatus,
+    ColumnPostStatus,
+    ColumnStatus,
+)
 
 if TYPE_CHECKING:
     from app.modules.auth.models import (
+        TOTP,
         PasskeyCredential,
         RecoveryCode,
         RefreshToken,
-        TOTP,
         UserOAuth,
     )
 
@@ -24,13 +29,13 @@ class Base(DeclarativeBase):
 
 
 def now_iso() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+    return datetime.datetime.now(datetime.UTC).isoformat()
 
 
 def expires_at(days: float = 0, minutes: float = 0) -> str:
     """从现在起 days/minutes 后的 ISO 时间戳。"""
     return (
-        datetime.datetime.now(datetime.timezone.utc)
+        datetime.datetime.now(datetime.UTC)
         + datetime.timedelta(days=days, minutes=minutes)
     ).isoformat()
 
@@ -51,23 +56,23 @@ class User(Base):
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
-    profile: Mapped["Profile"] = relationship(
+    profile: Mapped[Profile] = relationship(
         back_populates="user", uselist=False, cascade="all, delete-orphan"
     )
-    column_applications: Mapped[list["ColumnApplication"]] = relationship(
+    column_applications: Mapped[list[ColumnApplication]] = relationship(
         back_populates="user", foreign_keys="ColumnApplication.user_id"
     )
-    owned_columns: Mapped[list["Column"]] = relationship(back_populates="owner")
-    posts: Mapped[list["ColumnPost"]] = relationship(back_populates="author")
-    refresh_tokens: Mapped[list["RefreshToken"]] = relationship(back_populates="user")
-    oauth_bindings: Mapped[list["UserOAuth"]] = relationship(back_populates="user")
-    totp: Mapped["TOTP | None"] = relationship(back_populates="user", uselist=False)
-    recovery_codes: Mapped[list["RecoveryCode"]] = relationship(back_populates="user")
-    passkey_credentials: Mapped[list["PasskeyCredential"]] = relationship(back_populates="user")
-    blog_series: Mapped[list["BlogSeries"]] = relationship(back_populates="owner")
-    forum_posts: Mapped[list["ForumPost"]] = relationship(back_populates="author")
-    forum_comments: Mapped[list["ForumComment"]] = relationship(back_populates="user")
-    uploaded_files: Mapped[list["LibraryFile"]] = relationship(back_populates="uploader")
+    owned_columns: Mapped[list[Column]] = relationship(back_populates="owner")
+    posts: Mapped[list[ColumnPost]] = relationship(back_populates="author")
+    refresh_tokens: Mapped[list[RefreshToken]] = relationship(back_populates="user")
+    oauth_bindings: Mapped[list[UserOAuth]] = relationship(back_populates="user")
+    totp: Mapped[TOTP | None] = relationship(back_populates="user", uselist=False)
+    recovery_codes: Mapped[list[RecoveryCode]] = relationship(back_populates="user")
+    passkey_credentials: Mapped[list[PasskeyCredential]] = relationship(back_populates="user")
+    blog_series: Mapped[list[BlogSeries]] = relationship(back_populates="owner")
+    forum_comments: Mapped[list[ForumComment]] = relationship(back_populates="user")
+    forum_posts: Mapped[list[ForumPost]] = relationship(back_populates="author")
+    uploaded_files: Mapped[list[LibraryFile]] = relationship(back_populates="uploader")
 
 
 class Profile(Base):
@@ -80,7 +85,7 @@ class Profile(Base):
     avatar: Mapped[str | None] = mapped_column(Text, nullable=True)
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="member")
 
-    user: Mapped["User"] = relationship(back_populates="profile")
+    user: Mapped[User] = relationship(back_populates="profile")
 
 
 class ColumnApplication(Base):
@@ -98,11 +103,11 @@ class ColumnApplication(Base):
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
     reviewed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
-    user: Mapped["User"] = relationship(
+    user: Mapped[User] = relationship(
         foreign_keys=[user_id], back_populates="column_applications"
     )
-    reviewer: Mapped["User | None"] = relationship(foreign_keys=[reviewer_id])
-    column: Mapped["Column | None"] = relationship(
+    reviewer: Mapped[User | None] = relationship(foreign_keys=[reviewer_id])
+    column: Mapped[Column | None] = relationship(
         back_populates="application", uselist=False
     )
 
@@ -126,9 +131,9 @@ class Column(Base):
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
-    owner: Mapped["User"] = relationship(back_populates="owned_columns")
-    application: Mapped["ColumnApplication | None"] = relationship(back_populates="column")
-    posts: Mapped[list["ColumnPost"]] = relationship(
+    owner: Mapped[User] = relationship(back_populates="owned_columns")
+    application: Mapped[ColumnApplication | None] = relationship(back_populates="column")
+    posts: Mapped[list[ColumnPost]] = relationship(
         back_populates="column", cascade="all, delete-orphan"
     )
 
@@ -149,8 +154,8 @@ class ColumnPost(Base):
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
     published_at: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    column: Mapped["Column"] = relationship(back_populates="posts")
-    author: Mapped["User"] = relationship(back_populates="posts")
+    column: Mapped[Column] = relationship(back_populates="posts")
+    author: Mapped[User] = relationship(back_populates="posts")
 
 
 class ForumPost(Base):
@@ -172,8 +177,8 @@ class ForumPost(Base):
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
-    author: Mapped["User"] = relationship(back_populates="forum_posts")
-    comments: Mapped[list["ForumComment"]] = relationship(
+    author: Mapped[User] = relationship(back_populates="forum_posts")
+    comments: Mapped[list[ForumComment]] = relationship(
         back_populates="post", cascade="all, delete-orphan"
     )
 
@@ -192,12 +197,12 @@ class ForumComment(Base):
     like_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
-    post: Mapped["ForumPost"] = relationship(back_populates="comments")
-    user: Mapped["User"] = relationship(back_populates="forum_comments")
-    parent: Mapped["ForumComment | None"] = relationship(
+    post: Mapped[ForumPost] = relationship(back_populates="comments")
+    user: Mapped[User] = relationship(back_populates="forum_comments")
+    parent: Mapped[ForumComment | None] = relationship(
         remote_side=[id], back_populates="replies"
     )
-    replies: Mapped[list["ForumComment"]] = relationship(
+    replies: Mapped[list[ForumComment]] = relationship(
         back_populates="parent", cascade="all, delete-orphan"
     )
 
@@ -207,8 +212,8 @@ class LibraryFile(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     uploader_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    stored_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    original_path: Mapped[str] = mapped_column(String(255), nullable=False)
+    stored_path: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False, default="application/octet-stream")
     size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     category_id: Mapped[str] = mapped_column(String(50), nullable=False, default="")
@@ -220,7 +225,7 @@ class LibraryFile(Base):
     view_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
-    uploader: Mapped["User"] = relationship(back_populates="uploaded_files")
+    uploader: Mapped[User] = relationship(back_populates="uploaded_files")
 
 
 class BlogSeries(Base):
@@ -238,11 +243,11 @@ class BlogSeries(Base):
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
-    owner: Mapped["User"] = relationship(back_populates="blog_series")
-    comments: Mapped[list["BlogComment"]] = relationship(
+    owner: Mapped[User] = relationship(back_populates="blog_series")
+    comments: Mapped[list[BlogComment]] = relationship(
         back_populates="series", cascade="all, delete-orphan"
     )
-    stars: Mapped[list["BlogStar"]] = relationship(
+    stars: Mapped[list[BlogStar]] = relationship(
         back_populates="series", cascade="all, delete-orphan"
     )
 
@@ -254,8 +259,8 @@ class BlogStar(Base):
     series_id: Mapped[int] = mapped_column(ForeignKey("blog_series.id"), primary_key=True)
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
-    user: Mapped["User"] = relationship()
-    series: Mapped["BlogSeries"] = relationship(back_populates="stars")
+    user: Mapped[User] = relationship()
+    series: Mapped[BlogSeries] = relationship(back_populates="stars")
 
 
 class BlogComment(Base):
@@ -269,11 +274,11 @@ class BlogComment(Base):
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
 
-    user: Mapped["User"] = relationship()
-    series: Mapped["BlogSeries"] = relationship(back_populates="comments")
-    parent: Mapped["BlogComment | None"] = relationship(
+    user: Mapped[User] = relationship()
+    series: Mapped[BlogSeries] = relationship(back_populates="comments")
+    parent: Mapped[BlogComment | None] = relationship(
         remote_side=[id], back_populates="replies"
     )
-    replies: Mapped[list["BlogComment"]] = relationship(
+    replies: Mapped[list[BlogComment]] = relationship(
         back_populates="parent", cascade="all, delete-orphan"
     )

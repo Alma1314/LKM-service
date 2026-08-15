@@ -12,8 +12,8 @@ POST /auth/recover/magic-link/verify  – 通过魔法链接令牌重置
 """
 
 from fastapi import APIRouter, BackgroundTasks, Depends
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field, EmailStr
 
 from app.core.config import settings
 from app.core.err import respond
@@ -21,12 +21,6 @@ from app.db.session import get_session
 from app.modules.auth import service_recovery
 from app.modules.auth.deps import get_email_provider, get_sms_provider
 from app.modules.auth.providers.base import EmailProvider
-from app.modules.auth.service_auth import request_magic_link
-from app.modules.auth.service_verify import (
-    check_code_rate_limit,
-    create_email_verification,
-    create_phone_verification,
-)
 from app.modules.auth.schemas import (
     AdminRecoverBeginResponse,
     AdminRecoverVerifyContactResponse,
@@ -34,6 +28,12 @@ from app.modules.auth.schemas import (
     MessageResponse,
     RecoverCheckResponse,
     RecoverRequires2FAResponse,
+)
+from app.modules.auth.service_auth import request_magic_link
+from app.modules.auth.service_verify import (
+    check_code_rate_limit,
+    create_email_verification,
+    create_phone_verification,
 )
 from app.modules.common import ApiResp
 

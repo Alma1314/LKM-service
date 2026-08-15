@@ -15,20 +15,17 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+# Re-import the settings so that get_totp_uri uses the same app_name
 from app.core.err import BizError
-from app.modules.auth.errors import AuthErr
 from app.db.models import Base, User
-from app.modules.auth.models import RecoveryCode, TOTP
+from app.modules.auth.errors import AuthErr
+from app.modules.auth.models import TOTP, RecoveryCode
 from app.modules.auth.security import (
     create_temp_token,
     encrypt_secret,
     generate_totp_secret,
     hashpwd,
 )
-
-# Re-import the settings so that get_totp_uri uses the same app_name
-from app.core.config import settings
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -294,7 +291,7 @@ class TestDisable2FA:
         secret = _enable_totp_for_user(db, user.id)
 
         # Add a recovery code
-        code_hash = hashlib.sha256("dummy-recovery".encode()).hexdigest()
+        code_hash = hashlib.sha256(b"dummy-recovery").hexdigest()
         db.add(RecoveryCode(user_id=user.id, code_hash=code_hash, used=False))
         db.flush()
 

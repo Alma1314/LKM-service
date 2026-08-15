@@ -4,13 +4,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-import app.modules.auth.models  # noqa: F401 ensure auth tables registered
+import app.modules.auth.models
 from app.core.err import BizError, CommonErr
-from app.modules.forum.errors import ForumErr
 from app.db.models import Base, Profile, User
 from app.db.session import get_session
 from app.main import app
 from app.modules.auth.security import create_access_token, hashpwd
+from app.modules.forum.errors import ForumErr
 from app.modules.forum.schemas import CommentCreate, PostCreate
 from app.modules.forum.service import (
     create_comment,

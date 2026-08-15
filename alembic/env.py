@@ -11,9 +11,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from alembic import context
 from app.core.config import settings
 
 # Alembic Config object
@@ -27,9 +27,9 @@ if config.config_file_name is not None:
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
 # Import all models so metadata is fully populated for autogenerate
-from app.db.models import Base  # noqa: E402
-import app.modules.auth.models  # noqa: E402, F401
-import app.modules.columns.models  # noqa: E402, F401
+import app.modules.auth.models
+import app.modules.columns.models  # noqa: F401
+from app.db.models import Base
 
 target_metadata = Base.metadata
 

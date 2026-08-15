@@ -6,9 +6,13 @@ from sqlalchemy.orm import Session
 
 from app.core.err import respond
 from app.db.session import get_session
-from app.modules.auth.deps import CurrentUser, get_current_user
 from app.modules.auth import service_oauth
-from app.modules.auth.schemas import AuthTokenData, MessageResponse, OAuthRedirectResponse
+from app.modules.auth.deps import CurrentUser, get_current_user
+from app.modules.auth.schemas import (
+    AuthTokenData,
+    MessageResponse,
+    OAuthRedirectResponse,
+)
 from app.modules.common import ApiResp
 
 router = APIRouter(prefix="/auth/oauth", tags=["oauth"])

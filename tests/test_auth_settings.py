@@ -6,18 +6,16 @@ Covers:
 - Error cases: duplicate email/phone, wrong code
 """
 
-import asyncio
 import json
-from unittest.mock import patch
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.core.err import BizError
-from app.modules.auth.errors import AuthErr
-from app.db.models import Base
 import app.modules.auth.models  # noqa: F401 — ensure auth tables (refresh_tokens, etc.) are created
+from app.core.err import BizError
+from app.db.models import Base
+from app.modules.auth.errors import AuthErr
 
 
 def _unwrap(response):
@@ -81,7 +79,6 @@ class TestBindEmail:
     def should_bind_email_and_upgrade_local_to_normal(self, db):
         """Full happy path: request code, verify, email bound, account upgraded."""
         # Arrange: create a local user
-        from app.db.models import User
 
         reg_result = _reg_local(db, username="alice")
         user_id = reg_result["user_id"]
@@ -128,7 +125,9 @@ class TestBindEmail:
         reg1 = _reg_local(db, username="alice")
         reg2 = _reg_local(db, username="bob")
 
-        from app.modules.auth.service_verify import create_email_verification, consume_email_code
+        from app.modules.auth.service_verify import (
+            create_email_verification,
+        )
 
         # Bind email to alice directly
         user1 = _get_user(db, reg1["user_id"])
@@ -297,7 +296,7 @@ class TestBindEmailUpgrade:
 
     def should_not_downgrade_normal_user(self, db):
         """Binding email to an already-normal user: should stay normal."""
-        from app.db.models import User, Profile
+        from app.db.models import Profile, User
 
         # Create an already-normal user
         user = User(

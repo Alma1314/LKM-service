@@ -84,7 +84,6 @@ def delete_blog_series(
     db: Session = Depends(get_session),
 ):
     delete_series(db, series_id, cur.id)
-    return None
 
 
 # ---- Files ----
@@ -154,4 +153,3 @@ def delete_blog_comment(
     db: Session = Depends(get_session),
 ):
     delete_comment(db, series_id, comment_id, cur.id)
-    return None

@@ -6,9 +6,11 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+# Import auth models so tables get registered
+import app.modules.auth.models  # noqa: F401
 from app.core.err import BizError
-from app.modules.auth.errors import AuthErr
 from app.db.models import Base
+from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import EmailVerification, PhoneVerification
 from app.modules.auth.service_verify import (
     check_code_rate_limit,
@@ -19,9 +21,6 @@ from app.modules.auth.service_verify import (
     generate_code,
     hash_code,
 )
-
-# Import auth models so tables get registered
-import app.modules.auth.models  # noqa: F401
 
 
 @pytest.fixture

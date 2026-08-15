@@ -6,13 +6,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-import app.modules.auth.models  # noqa: F401 ensure auth tables registered
+import app.modules.auth.models
 from app.core.err import BizError, CommonErr
-from app.modules.files.errors import FileErr
 from app.db.models import Base, LibraryFile, Profile, User
 from app.db.session import get_session
 from app.main import app
 from app.modules.auth.security import create_access_token, hashpwd
+from app.modules.files.errors import FileErr
 from app.modules.files.schemas import FileCreate
 from app.modules.files.service import (
     bump_download,

@@ -1,16 +1,15 @@
 """Tests for password recovery (service_recovery)."""
 
 import hashlib
-import re
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.core.err import BizError
-from app.modules.auth.errors import AuthErr
-from app.db.models import Base, User, Profile
 import app.modules.auth.models  # noqa: F401
+from app.core.err import BizError
+from app.db.models import Base, Profile, User
+from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import MagicLink, RefreshToken
 
 
@@ -262,7 +261,7 @@ class TestRecoverByPhone:
         tok = RefreshToken(
             user_id=user.id,
             token_hash="abc123",
-            expires_at=(dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=7)).isoformat(),
+            expires_at=(dt.datetime.now(dt.UTC) + dt.timedelta(days=7)).isoformat(),
         )
         db.add(tok)
         db.flush()
@@ -338,7 +337,7 @@ class TestRecoverByEmailCode:
         tok = RefreshToken(
             user_id=user.id,
             token_hash="def456",
-            expires_at=(dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=7)).isoformat(),
+            expires_at=(dt.datetime.now(dt.UTC) + dt.timedelta(days=7)).isoformat(),
         )
         db.add(tok)
         db.flush()
@@ -426,7 +425,7 @@ class TestRecoverByMagicLink:
         tok = RefreshToken(
             user_id=user.id,
             token_hash="ghi789",
-            expires_at=(dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=7)).isoformat(),
+            expires_at=(dt.datetime.now(dt.UTC) + dt.timedelta(days=7)).isoformat(),
         )
         db.add(tok)
         db.flush()
@@ -446,7 +445,7 @@ class TestRecoverByMagicLink:
 
         raw = secrets.token_hex(32)
         token_hash = hashlib.sha256(raw.encode()).hexdigest()
-        expires = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)).isoformat()
+        expires = (dt.datetime.now(dt.UTC) - dt.timedelta(minutes=1)).isoformat()
         link = MagicLink(email="bob@example.com", token_hash=token_hash, purpose="reset", expires_at=expires)
         db.add(link)
         db.flush()

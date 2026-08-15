@@ -1,15 +1,13 @@
-import datetime
 import hashlib
-import time
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.core.err import BizError, CommonErr
-from app.modules.auth.errors import AuthErr
-from app.db.models import Base
 import app.modules.auth.models  # noqa: F401
+from app.core.err import BizError, CommonErr
+from app.db.models import Base
+from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import RefreshToken
 
 
@@ -68,7 +66,7 @@ def _service():
 
 class TestRegisterLocal:
     def should_create_local_user_and_profile(self, db):
-        from app.db.models import User, Profile
+        from app.db.models import Profile, User
 
         result = _reg_local(db, username="alice", password="secret123456")
         assert result["access_token"]
@@ -386,11 +384,11 @@ class TestRefresh:
 
         # manually expire the token in DB
         tok_hash = hashlib.sha256(raw.encode()).hexdigest()
-        from app.db.models import now_iso as _now
         import datetime as dt
 
+
         tok = db.query(RefreshToken).filter(RefreshToken.token_hash == tok_hash).first()
-        tok.expires_at = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).isoformat()
+        tok.expires_at = (dt.datetime.now(dt.UTC) - dt.timedelta(days=1)).isoformat()
         db.flush()
 
         svc = _service()

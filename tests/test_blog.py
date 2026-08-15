@@ -9,13 +9,13 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
 from app.core.err import BizError, CommonErr
-from app.modules.blog.errors import BlogErr
 from app.db.models import Base
 from app.db.session import get_session
 from app.main import app
 from app.modules.auth.schemas import ProfileUpdate
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.auth.service import update_profile
+from app.modules.blog.errors import BlogErr
 from app.modules.blog.models import BlogSeriesStatus
 from app.modules.blog.schemas import (
     BlogCommentCreate,
@@ -34,7 +34,6 @@ from app.modules.blog.service import (
     toggle_star,
     update_series,
 )
-
 
 # ---- fixtures ----
 
@@ -85,7 +84,7 @@ def client(db):
 
 
 def _user(db, username="alice", email="alice@example.com"):
-    from app.db.models import User, Profile
+    from app.db.models import Profile, User
     user = User(
         username=username, email=email,
         hashed_password=hashpwd("secret123456"), account_level="normal",

@@ -1,11 +1,17 @@
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
+#以下是为user请求头校验新增的导入
+import app.modules.auth.models
 from app.core.err import BizError, CommonErr
+from app.db.models import Base, User
+from app.db.session import get_session
+from app.main import app
+from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.columns.errors import ColumnErr
-from app.db.models import Base
-from app.db.models import User
 from app.modules.columns.models import ColumnApplicationStatus
 from app.modules.columns.schemas import (
     ColumnApplicationCreate,
@@ -23,14 +29,6 @@ from app.modules.columns.service import (
     list_posts,
     review_application,
 )
-#以下是为user请求头校验新增的导入
-import app.modules.auth.models  # noqa: F401 ensure auth tables registered
-from fastapi.testclient import TestClient
-from app.main import app
-from app.db.models import User
-from app.db.session import get_session
-from app.modules.auth.security import create_access_token, hashpwd
-from sqlalchemy.pool import StaticPool
 
 
 @pytest.fixture
@@ -66,7 +64,7 @@ def client(db):
 
 
 def _user(db, username="alice", email="alice@example.com"):
-    from app.db.models import User, Profile
+    from app.db.models import Profile
     user = User(
         username=username, email=email,
         hashed_password=hashpwd("secret123456"), account_level="normal",

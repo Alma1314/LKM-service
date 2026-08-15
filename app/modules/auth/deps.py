@@ -6,10 +6,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.err import BizError, CommonErr
-from app.modules.auth.errors import AuthErr
 from app.db.models import User, now_iso
 from app.db.repo import get_or_raise
 from app.db.session import get_session
+from app.modules.auth.errors import AuthErr
 from app.modules.auth.providers.base import EmailProvider, SmsProvider
 from app.modules.auth.providers.console import ConsoleEmailProvider, ConsoleSmsProvider
 from app.modules.auth.security import decode_access_token
@@ -67,7 +67,7 @@ def _resolve_current_user(token: str, db: Session) -> CurrentUser:
                 updated_at: str = user.updated_at  # type: ignore[assignment]
                 updated = _dt.datetime.fromisoformat(updated_at)
                 iat = float(token_iat)  # type: ignore[arg-type]
-                token_time = _dt.datetime.fromtimestamp(iat, tz=_dt.timezone.utc)
+                token_time = _dt.datetime.fromtimestamp(iat, tz=_dt.UTC)
                 if updated - token_time > _dt.timedelta(seconds=5):
                     raise BizError(AuthErr.TOKEN_EXPIRED, "Password changed – please login again")
         except ValueError:

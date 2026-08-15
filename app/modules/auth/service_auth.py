@@ -13,10 +13,11 @@ class BackgroundTasksLike(Protocol):
 
 from app.core.config import settings
 from app.core.err import BizError, CommonErr
-from app.modules.auth.errors import AuthErr
-from app.db.models import User, Profile, expires_at, now_iso
+from app.db.models import Profile, User, expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise, isolated_update
-from app.modules.auth.models import AuditLog, MagicLink, RefreshToken, TOTP
+from app.modules.auth.errors import AuthErr
+from app.modules.auth.models import TOTP, AuditLog, MagicLink, RefreshToken
+from app.modules.auth.providers.base import EmailProvider
 from app.modules.auth.schemas import (
     UserLoginPassword,
     UserRegLocal,
@@ -29,7 +30,6 @@ from app.modules.auth.security import (
     verifypwd,
 )
 from app.modules.auth.service_verify import check_code_rate_limit
-from app.modules.auth.providers.base import EmailProvider
 
 _FAIL_LOCK_THRESHOLD = 5
 _FAIL_LOCK_MINUTES = 15
@@ -295,8 +295,9 @@ def _store_pending_normal_registration(
     email: str | None,
     phone: str | None,
 ) -> str:
-    from app.modules.auth.models import PendingRegistration
     import secrets as _s
+
+    from app.modules.auth.models import PendingRegistration
 
     txn_id = _s.token_hex(32)
     expiry = expires_at(minutes=15)

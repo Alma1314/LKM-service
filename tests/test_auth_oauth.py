@@ -3,9 +3,9 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+import app.modules.auth.models  # noqa: F401
 from app.core.config import settings
 from app.db.models import Base
-import app.modules.auth.models  # noqa: F401
 from app.modules.auth.models import OAuthState
 
 
@@ -67,7 +67,10 @@ class TestGithubAuthUrl:
 
 class TestOAuthState:
     def should_store_and_consume_state(self, db):
-        from app.modules.auth.service_oauth import _generate_oauth_state, _consume_oauth_state
+        from app.modules.auth.service_oauth import (
+            _consume_oauth_state,
+            _generate_oauth_state,
+        )
 
         state = _generate_oauth_state(db, "login")
         assert len(state) > 0
@@ -81,8 +84,11 @@ class TestOAuthState:
         assert records[0].consumed
 
     def should_reject_already_consumed_state(self, db):
-        from app.modules.auth.service_oauth import _generate_oauth_state, _consume_oauth_state
         from app.core.err import BizError
+        from app.modules.auth.service_oauth import (
+            _consume_oauth_state,
+            _generate_oauth_state,
+        )
 
         state = _generate_oauth_state(db, "login")
         _consume_oauth_state(db, state, "login")
@@ -91,8 +97,11 @@ class TestOAuthState:
             _consume_oauth_state(db, state, "login")
 
     def should_reject_wrong_purpose(self, db):
-        from app.modules.auth.service_oauth import _generate_oauth_state, _consume_oauth_state
         from app.core.err import BizError
+        from app.modules.auth.service_oauth import (
+            _consume_oauth_state,
+            _generate_oauth_state,
+        )
 
         state = _generate_oauth_state(db, "login")
         with pytest.raises(BizError):

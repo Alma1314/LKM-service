@@ -13,7 +13,6 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from app.core.err import BizError, respond
-from app.modules.auth.errors import AuthErr
 from app.db.models import User
 from app.db.repo import get_or_raise
 from app.db.session import get_session
@@ -24,6 +23,7 @@ from app.modules.auth.deps import (
     get_email_provider,
     get_sms_provider,
 )
+from app.modules.auth.errors import AuthErr
 from app.modules.auth.providers.base import EmailProvider, SmsProvider
 from app.modules.auth.schemas import BindCodeRequestResponse, BindCodeVerifyResponse
 from app.modules.auth.service_verify import (
