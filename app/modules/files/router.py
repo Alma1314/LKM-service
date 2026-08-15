@@ -45,7 +45,7 @@ def upload_files(
         sha3_hash.update(chunk)
         file_size += len(chunk)
         if file_size > FILE_MAX_SIZE:
-            raise HTTPException(status_code=413, detail="File Exceed MAX File size 20GB")
+            raise HTTPException(status_code=413, detail="File Exceed MAX File size")
     hash_string = sha3_hash.hexdigest()
     file_storage_path = Path(settings.files_store_dir) / hash_string[0:4] / hash_string
     file_storage_path.parent.mkdir(parents=True, exist_ok=True)
