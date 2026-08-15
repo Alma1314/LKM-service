@@ -89,13 +89,18 @@ def get_file_under_folder(
     """
     获取文件夹下的所有文件
     """
-    items = db.query(UserStorageItem).filter(
-        UserStorageItem.owner_id == cur.id,
-        UserStorageItem.showed_path.startswith(target_path),
-    ).all()
+    items = (
+        db.query(UserStorageItem)
+        .filter(
+            UserStorageItem.owner_id == cur.id,
+            UserStorageItem.showed_path.startswith(target_path),
+        )
+        .all()
+    )
     return ApiResp[ListData[FileInfo]](
         code=200, msg="success", data=ListData[FileInfo](items=[item.file_metadata for item in items])
     )
+
 
 @router.get("/review")
 def review_file(
@@ -119,4 +124,9 @@ def review_file(
         item.file_metadata.status = target_status
         db.commit()
         db.refresh(item.file_metadata)
-        return ApiResp[FileInfo](code=200, msg=f"Item {target_item_id} status {target_status}",  data=item.file_metadata)
+
+        # 如果不通过就给文件删了，节省空间
+        if target_status == FileStatus.REJECTED:
+            Path(item.actual_path).unlink()
+
+        return ApiResp[FileInfo](code=200, msg=f"Item {target_item_id} status {target_status}", data=item.file_metadata)
