@@ -52,6 +52,7 @@ async def test_get_article_detail(db, client):
     assert data["slug"] == "a-1"
     assert data["content"] == "# 标题\n\n正文内容"
     assert data["keywords"] == ["公告", "上线"]
+    assert data["reading_time"] >= 1
 
 
 async def test_get_article_not_found(db, client):

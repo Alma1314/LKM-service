@@ -23,6 +23,7 @@ class ArticleDetail(ArticleListItem):
     department: str | None = None
     publisher: str | None = None
     content: str
+    reading_time: int = 0
     keywords: list[str] = []
 
     @field_validator("keywords", mode="before")

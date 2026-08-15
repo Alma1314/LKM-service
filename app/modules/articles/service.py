@@ -24,6 +24,17 @@ ARTICLE_CATEGORY_NAMES: dict[str, str] = {
     "science": "科普相关",
 }
 
+# 默认阅读速度：中文约 300 字/分钟
+READING_SPEED_CPS = 300
+
+
+def estimate_reading_time(content: str) -> int:
+    """按中文字符数估算阅读分钟数（不足 1 分钟计 1；空内容为 0）。"""
+    text_length = len(content)
+    if not text_length:
+        return 0
+    return max(1, round(text_length / READING_SPEED_CPS))
+
 
 async def list_articles(
     db: AsyncSession, page: int = 1, page_size: int = 50
@@ -46,7 +57,9 @@ async def get_article(db: AsyncSession, slug: str) -> ArticleDetail:
     article = await get_or_raise(
         db, Article, ArticleErr.NOT_FOUND, Article.slug == slug
     )
-    return ArticleDetail.model_validate(article)
+    detail = ArticleDetail.model_validate(article)
+    detail.reading_time = estimate_reading_time(article.content)
+    return detail
 
 
 async def list_categories(db: AsyncSession) -> list[ArticleCategory]:
