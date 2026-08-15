@@ -77,26 +77,26 @@ def upload_files(
     db.add(item)
     db.commit()
     db.refresh(item)
+
+    metadata.item_id = item.id
     return ApiResp[FileInfo](code=200, msg="success", data=metadata)
 
 
 @router.get("/ls")
-def get_file_under_folder(
+def get_file_under_user(
     cur: Annotated[CurrentUser, Depends(get_current_user)],
-    db: Annotated[Session, Depends(get_session)],
-    target_path: Annotated[str, Form()] = "",
+    db: Annotated[Session, Depends(get_session)]
 ) -> ApiResp[ListData[FileInfo]]:
     """
-    获取文件夹下的所有文件
+    获取特定用户下的所有文件
     """
     items = (
         db.query(UserStorageItem)
         .filter(
             UserStorageItem.owner_id == cur.id,
-            UserStorageItem.showed_path.startswith(target_path),
         )
         .all()
-    )
+     )
     return ApiResp[ListData[FileInfo]](
         code=200, msg="success", data=ListData[FileInfo](items=[item.file_metadata for item in items])
     )

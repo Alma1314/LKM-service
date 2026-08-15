@@ -20,6 +20,7 @@ class FileCreate(BaseModel):
 class FileInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    item_id: int = -1
     original_name: str
     uploader_id: int
     uploader_name: str = ""
