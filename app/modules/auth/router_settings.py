@@ -11,7 +11,7 @@ POST /auth/settings/bind-phone/verify   {phone, code} -> 绑定 + 如果是本�
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +35,7 @@ from app.modules.auth.schemas import (
     BindCodeRequestResponse,
     BindCodeVerifyResponse,
     MessageResponse,
+    RawEmail,
     SettingsInfo,
     UnbindRequest,
 )
@@ -53,11 +54,11 @@ _BIND_PURPOSE = "bind"
 
 
 class BindEmailRequest(BaseModel):
-    email: EmailStr
+    email: RawEmail
 
 
 class BindEmailVerify(BaseModel):
-    email: EmailStr
+    email: RawEmail
     code: str = Field(..., min_length=6, max_length=6)
 
 

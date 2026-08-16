@@ -516,3 +516,67 @@ class TestRefreshKindIsolation:
 
         with pytest.raises(BizError):
             await refresh_access_token(db, "raw-admin-refresh")
+
+
+class TestEmailCase:
+    """邮箱大小写绝对敏感回归测试：存储保留原值，大小写不同是独立账号。"""
+
+    async def should_store_and_match_exact_email_case(self, db: AsyncSession):
+        from app.db.models import User
+        from app.modules.auth.channels import EMAIL_CHANNEL
+        from app.modules.auth.service_auth import _normalize_email
+
+        # 邮箱存储保留原值大小写
+        await _reg_normal(
+            db, username="bob", email="Mixed.Case@Example.com", phone="13800001111"
+        )
+        await db.flush()
+        stored = (
+            (await db.execute(select(User).where(User.username == "bob")))
+            .scalars()
+            .one()
+        )
+        assert stored.email == "Mixed.Case@Example.com"
+
+        # 大小写完全一致才查到；不同大小写查不到（严格区分）
+        exact = await EMAIL_CHANNEL.find_user(db, "Mixed.Case@Example.com")
+        assert exact is not None and exact.id == stored.id
+        other_case = await EMAIL_CHANNEL.find_user(db, "MIXED.CASE@EXAMPLE.COM")
+        assert other_case is None
+
+        # _normalize_email 只去空白、保留大小写
+        assert _normalize_email("  Alice@Ex.Com ") == "Alice@Ex.Com"
+
+    async def should_treat_different_case_as_separate_accounts(self, db: AsyncSession):
+        """大小写不同的邮箱是两个独立、互不混淆的账号。"""
+        from app.db.models import User
+        from app.modules.auth.channels import EMAIL_CHANNEL
+
+        await _reg_normal(
+            db, username="bob", email="Bob@Example.com", phone="13800001111"
+        )
+        await _reg_normal(
+            db,
+            username="carol",
+            email="bob@example.com",
+            phone="13800002222",
+        )
+        await db.flush()
+
+        bob = (
+            (await db.execute(select(User).where(User.username == "bob")))
+            .scalars()
+            .one()
+        )
+        carol = (
+            (await db.execute(select(User).where(User.username == "carol")))
+            .scalars()
+            .one()
+        )
+        assert bob.email == "Bob@Example.com"
+        assert carol.email == "bob@example.com"
+        assert bob.id != carol.id
+
+        # 精确邮箱只命中对应账号
+        assert (await EMAIL_CHANNEL.find_user(db, "Bob@Example.com")).id == bob.id
+        assert (await EMAIL_CHANNEL.find_user(db, "bob@example.com")).id == carol.id

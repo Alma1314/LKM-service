@@ -69,7 +69,8 @@ async def _find_phone_user(db: AsyncSession, value: str) -> User | None:
 
 
 def _email_normalize(value: str) -> str:
-    return value.strip().lower()
+    """邮箱规范化：仅去首尾空白，大小写原样保留（大小写绝对敏感）。"""
+    return value.strip()
 
 
 def _phone_normalize(value: str) -> str:

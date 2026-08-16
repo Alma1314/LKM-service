@@ -57,13 +57,13 @@ class BackgroundTasksLike(Protocol):
 
 
 def _normalize_username(username: str) -> str:
-    """规范化用户名：去除空白字符并转为小写。"""
-    return username.strip().lower()
+    """规范化用户名：仅去除首尾空白，大小写原样保留（大小写绝对敏感）。"""
+    return username.strip()
 
 
 def _normalize_email(email: str) -> str:
-    """规范化邮箱：去除空白字符并转为小写。"""
-    return email.strip().lower()
+    """规范化邮箱：仅去除首尾空白，大小写原样保留（大小写绝对敏感）。"""
+    return email.strip()
 
 
 def generate_refresh_token() -> str:

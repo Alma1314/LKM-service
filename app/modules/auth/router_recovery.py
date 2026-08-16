@@ -14,7 +14,7 @@ POST /auth/recover/magic-link/verify  – 通过魔法链接令牌重置
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -28,6 +28,7 @@ from app.modules.auth.schemas import (
     AdminRecoverVerifyContactResponse,
     AdminRecoverVerifyTOTPResponse,
     MessageResponse,
+    RawEmail,
     RecoverCheckResponse,
     RecoverRequires2FAResponse,
 )
@@ -61,11 +62,11 @@ class RecoverPhoneVerifyRequest(BaseModel):
 
 
 class RecoverEmailRequest(BaseModel):
-    email: EmailStr
+    email: RawEmail
 
 
 class RecoverEmailVerifyRequest(BaseModel):
-    email: EmailStr
+    email: RawEmail
     code: str = Field(..., min_length=6, max_length=6)
     # 此处不接受 new_password — recover_user_complete 步骤
     # 在 2FA 验证通过后才接收密码
@@ -73,7 +74,7 @@ class RecoverEmailVerifyRequest(BaseModel):
 
 
 class RecoverMagicLinkRequest(BaseModel):
-    email: EmailStr
+    email: RawEmail
 
 
 class RecoverMagicLinkVerifyRequest(BaseModel):
