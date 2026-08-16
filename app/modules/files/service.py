@@ -22,7 +22,7 @@ def build_refer_cache(db: Session) -> None:
     )
     for file in all_files:
         full_path = str(file)
-        hash_value = full_path.split("/")[-1]
+        hash_value = file.name
         stmt = select(func.count()).where(UserStorageItem.actual_path == full_path)
         count = db.scalar(stmt) or 0
         if not count:
