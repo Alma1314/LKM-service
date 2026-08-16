@@ -1,19 +1,22 @@
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.err import BizError, CommonErr, respond
-from app.db.models import User as UserModel
 from app.db.session import get_session
 from app.modules.auth import service_auth
+from app.modules.auth.channels import (
+    EMAIL_CHANNEL,
+    PHONE_CHANNEL,
+    ContactChannel,
+    channel_for,
+)
 from app.modules.auth.deps import (
     CurrentUser,
     get_current_user,
     get_email_provider,
-    get_sms_provider,
 )
 from app.modules.auth.providers.base import EmailProvider
 from app.modules.auth.schemas import (
@@ -37,16 +40,31 @@ from app.modules.auth.service_auth import (
     consume_pending_normal_registration,
     store_pending_normal_registration,
 )
-from app.modules.auth.service_verify import (
-    check_code_rate_limit,
-    consume_email_code,
-    consume_phone_code,
-    create_email_verification,
-    create_phone_verification,
-)
+from app.modules.auth.service_verify import check_code_rate_limit
 from app.modules.common import ApiResp
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+async def _send_reg_code(
+    channel: ContactChannel,
+    contact: str,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession,
+) -> None:
+    check_code_rate_limit(f"reg:{channel.name}:{contact}", max_count=5, window=3600)
+    code, _ = await channel.create_verification(db, contact, "register")
+    background_tasks.add_task(channel.send_code, contact, code)
+
+
+async def _complete_reg_verify(
+    db: AsyncSession, channel: ContactChannel, contact: str, code: str
+) -> dict[str, Any]:
+    check_code_rate_limit(
+        f"reg:{channel.name}:verify:{contact}", max_count=5, window=3600
+    )
+    await channel.consume_code(db, contact, code, "register")
+    return await service_auth.register_by_verify(db, channel.name, contact)
 
 
 @router.get("/me", response_model=ApiResp[CurrentUser])
@@ -114,17 +132,11 @@ async def register_normal_with_password_route(
     }
 
     if info.email:
-        check_code_rate_limit(f"reg:email:{info.email}", max_count=5, window=3600)
-        email_code, _ = await create_email_verification(db, info.email, "register")
-        background_tasks.add_task(
-            get_email_provider().send_code, info.email, email_code
-        )
+        await _send_reg_code(EMAIL_CHANNEL, info.email, background_tasks, db)
         result["email_sent"] = True
 
     if info.phone:
-        check_code_rate_limit(f"reg:phone:{info.phone}", max_count=5, window=3600)
-        phone_code, _ = await create_phone_verification(db, info.phone, "register")
-        background_tasks.add_task(get_sms_provider().send_code, info.phone, phone_code)
+        await _send_reg_code(PHONE_CHANNEL, info.phone, background_tasks, db)
         result["phone_sent"] = True
 
     return result
@@ -152,9 +164,7 @@ async def register_phone(
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """发起仅手机号的注册。发送短信验证码。"""
-    check_code_rate_limit(f"reg:phone:{info.phone}", max_count=5, window=3600)
-    code, _ = await create_phone_verification(db, info.phone, "register")
-    background_tasks.add_task(get_sms_provider().send_code, info.phone, code)
+    await _send_reg_code(PHONE_CHANNEL, info.phone, background_tasks, db)
     return {"phone": info.phone, "message": "SMS verification code sent"}
 
 
@@ -164,9 +174,7 @@ async def register_phone_verify(
     phone: str, code: str, db: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
     """完成仅手机号的注册 — 创建一个普通账号（无密码）。"""
-    check_code_rate_limit(f"reg:phone:verify:{phone}", max_count=5, window=3600)
-    await consume_phone_code(db, phone, code, "register")
-    return await service_auth.register_by_verify(db, "phone", phone)
+    return await _complete_reg_verify(db, PHONE_CHANNEL, phone, code)
 
 
 @router.post("/reg/email", response_model=ApiResp[RegByEmailResponse])
@@ -177,9 +185,7 @@ async def register_email(
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """发起仅邮箱的注册。发送邮箱验证码。"""
-    check_code_rate_limit(f"reg:email:{info.email}", max_count=5, window=3600)
-    code, _ = await create_email_verification(db, info.email, "register")
-    background_tasks.add_task(get_email_provider().send_code, info.email, code)
+    await _send_reg_code(EMAIL_CHANNEL, info.email, background_tasks, db)
     return {"email": info.email, "message": "Email verification code sent"}
 
 
@@ -189,9 +195,7 @@ async def register_email_verify(
     email: str, code: str, db: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
     """完成仅邮箱的注册 — 创建一个普通账号（无密码）。"""
-    check_code_rate_limit(f"reg:email:verify:{email}", max_count=5, window=3600)
-    await consume_email_code(db, email, code, "register")
-    return await service_auth.register_by_verify(db, "email", email)
+    return await _complete_reg_verify(db, EMAIL_CHANNEL, email, code)
 
 
 @router.post("/login/code/request", response_model=ApiResp[MessageResponse])
@@ -207,30 +211,16 @@ async def login_code_request(
     check_code_rate_limit(f"login:code:{contact}", max_count=5, window=3600)
 
     # 检查用户是否存在且符合条件
-    if "@" in contact:
-        user = (
-            (await db.execute(select(UserModel).where(UserModel.email == contact)))
-            .scalars()
-            .first()
-        )
-    else:
-        user = (
-            (await db.execute(select(UserModel).where(UserModel.phone == contact)))
-            .scalars()
-            .first()
-        )
+    channel = channel_for(contact)
+    user = await channel.find_user(db, contact)
 
     if not user or user.account_level == "local":
         # 统一响应 — 不泄露用户是否存在
         return {"message": "If account exists, verification code sent"}
 
     # 用户存在 — 创建并发送验证码
-    if "@" in contact:
-        code, _ = await create_email_verification(db, contact, "login")
-        background_tasks.add_task(get_email_provider().send_code, contact, code)
-    else:
-        code, _ = await create_phone_verification(db, contact, "login")
-        background_tasks.add_task(get_sms_provider().send_code, contact, code)
+    code, _ = await channel.create_verification(db, contact, "login")
+    background_tasks.add_task(channel.send_code, contact, code)
 
     return {"message": "Verification code sent"}
 

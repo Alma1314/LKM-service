@@ -58,6 +58,25 @@ async def _reset_totp_failures(db: AsyncSession, totp_record: TOTP | None) -> No
         await db.flush()
 
 
+async def _verify_totp_guarded(
+    db: AsyncSession, totp_record: TOTP, code: str
+) -> int | None:
+    """校验 TOTP 并管理失败计数。
+
+    失败次数超限抛 TOTP_CODE_INVALID；校验失败记录一次并抛 TOTP_CODE_INVALID；
+    成功清零失败计数并返回匹配的计数器（供重放保护）。
+    """
+    _check_totp_failed(totp_record)
+
+    plain_secret = decrypt_secret(str(totp_record.secret))
+    counter = verify_totp(plain_secret, code)
+    if counter is None:
+        await _record_totp_failure(db, totp_record)
+        raise BizError(AuthErr.TOTP_CODE_INVALID)
+    await _reset_totp_failures(db, totp_record)
+    return counter
+
+
 def _decode_temp_token(raw_token: str) -> dict[str, Any]:
     """解码并验证临时令牌 JWT，但不消费它。"""
     try:
@@ -176,13 +195,7 @@ async def setup_2fa_complete(
     if not totp_record or totp_record.enabled:
         raise BizError(AuthErr.TOTP_NOT_ENABLED)
 
-    _check_totp_failed(totp_record)
-
-    plain_secret = decrypt_secret(str(totp_record.secret))
-    if verify_totp(plain_secret, code) is None:
-        await _record_totp_failure(db, totp_record)
-        raise BizError(AuthErr.TOTP_CODE_INVALID)
-    await _reset_totp_failures(db, totp_record)
+    await _verify_totp_guarded(db, totp_record, code)
 
     totp_record.enabled = True
     totp_record.confirmed_saved = False
@@ -266,15 +279,7 @@ async def verify_2fa(
         if not totp_record:
             raise BizError(AuthErr.TOTP_NOT_ENABLED)
 
-        _check_totp_failed(totp_record)
-
-        plain_secret = decrypt_secret(str(totp_record.secret))
-        actual_counter = verify_totp(plain_secret, code)
-        if actual_counter is None:
-            await _record_totp_failure(db, totp_record)
-            raise BizError(AuthErr.TOTP_CODE_INVALID)
-
-        await _reset_totp_failures(db, totp_record)
+        actual_counter = await _verify_totp_guarded(db, totp_record, code)
 
         # 重放保护：原子地存储匹配的计数器
         if not await consume_once(
@@ -329,13 +334,7 @@ async def disable_2fa(db: AsyncSession, user_id: int, code: str) -> dict[str, An
     if not totp_record or not totp_record.enabled:
         raise BizError(AuthErr.TOTP_NOT_ENABLED)
 
-    _check_totp_failed(totp_record)
-
-    plain_secret = decrypt_secret(str(totp_record.secret))
-    if verify_totp(plain_secret, code) is None:
-        await _record_totp_failure(db, totp_record)
-        raise BizError(AuthErr.TOTP_CODE_INVALID)
-    await _reset_totp_failures(db, totp_record)
+    await _verify_totp_guarded(db, totp_record, code)
 
     totp_record.enabled = False
     totp_record.secret = ""
@@ -377,10 +376,4 @@ async def verify_user_totp(db: AsyncSession, user_id: int, code: str) -> None:
     if not totp_record:
         raise BizError(AuthErr.TOTP_NOT_ENABLED)
 
-    _check_totp_failed(totp_record)
-
-    plain_secret = decrypt_secret(str(totp_record.secret))
-    if verify_totp(plain_secret, code) is None:
-        await _record_totp_failure(db, totp_record)
-        raise BizError(AuthErr.TOTP_CODE_INVALID)
-    await _reset_totp_failures(db, totp_record)
+    await _verify_totp_guarded(db, totp_record, code)

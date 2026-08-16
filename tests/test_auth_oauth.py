@@ -213,8 +213,9 @@ class TestOAuthEmailAutoBind:
 
         from app.core.err import BizError
         from app.db.models import User
-        from app.modules.auth import service_oauth
         from app.modules.auth.errors import AuthErr
+        from app.modules.auth.providers.github import GithubOAuth
+        from app.modules.auth.providers.oauth import OAuthUserInfo
         from app.modules.auth.security import hashpwd
         from app.modules.auth.service_oauth import (
             generate_oauth_state,
@@ -235,19 +236,19 @@ class TestOAuthEmailAutoBind:
 
         with (
             patch.object(
-                service_oauth,
-                "_exchange_github_token",
+                GithubOAuth,
+                "exchange_code",
                 new=AsyncMock(return_value="tok"),
             ),
             patch.object(
-                service_oauth,
-                "_get_github_user",
+                GithubOAuth,
+                "fetch_user",
                 new=AsyncMock(
-                    return_value={
-                        "provider_user_id": "123",
-                        "provider_email": "alice@example.com",
-                        "login": "alice",
-                    }
+                    return_value=OAuthUserInfo(
+                        provider_user_id="123",
+                        provider_email="alice@example.com",
+                        username="alice",
+                    )
                 ),
             ),
             pytest.raises(BizError) as exc,
