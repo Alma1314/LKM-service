@@ -1,3 +1,4 @@
+from sqlalchemy import select
 import shutil
 from datetime import datetime
 from hashlib import sha3_256
@@ -128,7 +129,17 @@ def review_file(
 
         # 如果不通过就给文件删了，节省空间
         if target_status == FileStatus.REJECTED:
-            pass
+            item_hash = item.actual_path.split("/")[-1]
+            stmt = select(UserStorageItem).where(UserStorageItem.actual_path == item.actual_path)
+
+            # 给其他人的同一份文件也标记为不通过
+            others = db.execute(stmt).scalars().all()
+            for other_item in others:
+                other_item.file_metadata.status = FileStatus.REJECTED
+
+            del REFER_CACHE[item_hash]
+            Path(item.actual_path).unlink(missing_ok=True)
+
 
         return ApiResp[FileInfo](code=200, msg=f"Item {target_item_id} status {target_status}", data=item.file_metadata)
 
