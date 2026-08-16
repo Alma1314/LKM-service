@@ -1,6 +1,6 @@
 import sys
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -9,6 +9,7 @@ from app.api.router import api_router
 from app.core.config import settings
 from app.core.err import BizError, map_err, resp_json
 from app.db.init_db import init_db
+from app.db.session import get_session
 
 
 def _verify_production_secrets() -> None:
@@ -55,16 +56,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _verify_production_secrets()
     init_db()
 
+    from app.modules.files.service import build_refer_cache
+    build_refer_cache(get_session())
+
     from app.modules.auth.service_passkey import cleanup_expired_challenges
     cleanup_task = asyncio.create_task(cleanup_expired_challenges())
 
     yield  # type: ignore[redefined-outer-name]
 
     cleanup_task.cancel()
-    try:
+    with suppress(asyncio.CancelledError):
         await cleanup_task
-    except asyncio.CancelledError:
-        pass
 
     from app.db.session import dispose_engine
     dispose_engine()

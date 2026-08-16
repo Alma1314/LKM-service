@@ -5,4 +5,5 @@ class FileStatus(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+    DELETED = "deleted"
 

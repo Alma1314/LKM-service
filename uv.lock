@@ -60,6 +60,7 @@ dependencies = [
     { name = "fastapi", extra = ["standard"] },
     { name = "httpx" },
     { name = "httpx2" },
+    { name = "linqex" },
     { name = "psycopg2-binary" },
     { name = "pydantic", extra = ["email"] },
     { name = "pydantic-settings" },
@@ -82,6 +83,7 @@ requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.139.2" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "httpx2", specifier = ">=2.7.0" },
+    { name = "linqex", specifier = ">=2.0" },
     { name = "psycopg2-binary", specifier = ">=2.9.0" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.13.4" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
@@ -618,6 +620,15 @@ dependencies = [
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/df/bf/f7da0350254c0ed7c72f3e33cef02e048281fec7ecec5f032d4aac52226b/jinja2-3.1.6.tar.gz", hash = "sha256:0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d" }
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl", hash = "sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67" },
+]
+
+[[package]]
+name = "linqex"
+version = "2.0"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/2f/af/b89fc86c1fbb7aeb0b75fe1ceda17296e362e8e136d277f0e9422c490f68/linqex-2.0.tar.gz", hash = "sha256:c38c103461bfe1f74e3dff4204c9e0c63b1a0de0c6b3eb217c35f6ece09bfccd" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/90/be/21f16edd3b7027fc13ff1b6438898f9aa4881b7234b19a2c054393e49a00/linqex-2.0-py3-none-any.whl", hash = "sha256:653d8effd913ea76170880688b43e3f1e0d81fece838f452f3a269b4da440ebf" },
 ]
 
 [[package]]

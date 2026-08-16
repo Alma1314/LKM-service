@@ -15,6 +15,7 @@ from app.modules.auth.deps import CurrentUser, get_current_user
 from app.modules.common import ApiResp, ListData
 from app.modules.files.models import FileStatus
 from app.modules.files.schemas import FileInfo
+from app.modules.files.service import REFER_CACHE
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -79,13 +80,13 @@ def upload_files(
     db.refresh(item)
 
     metadata.item_id = item.id
+    REFER_CACHE[hash_string] += 1
     return ApiResp[FileInfo](code=200, msg="success", data=metadata)
 
 
 @router.get("/ls")
 def get_file_under_user(
-    cur: Annotated[CurrentUser, Depends(get_current_user)],
-    db: Annotated[Session, Depends(get_session)]
+    cur: Annotated[CurrentUser, Depends(get_current_user)], db: Annotated[Session, Depends(get_session)]
 ) -> ApiResp[ListData[FileInfo]]:
     """
     获取特定用户下的所有文件
@@ -96,7 +97,7 @@ def get_file_under_user(
             UserStorageItem.owner_id == cur.id,
         )
         .all()
-     )
+    )
     return ApiResp[ListData[FileInfo]](
         code=200, msg="success", data=ListData[FileInfo](items=[item.file_metadata for item in items])
     )
@@ -127,6 +128,32 @@ def review_file(
 
         # 如果不通过就给文件删了，节省空间
         if target_status == FileStatus.REJECTED:
-            Path(item.actual_path).unlink()
+            pass
 
         return ApiResp[FileInfo](code=200, msg=f"Item {target_item_id} status {target_status}", data=item.file_metadata)
+
+
+@router.post("/remove")
+def remove_file(
+    cur: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_session)],
+    target_item_id: Annotated[int, Form()] = -1,
+):
+    # 管理员或用户自己才能拥有删除的权限
+    item = db.query(UserStorageItem).filter(UserStorageItem.id == target_item_id).first()
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    if cur.account_level != "admin" and cur.id != item.owner_id:
+        raise HTTPException(status_code=403, detail="You are not the owner of this file")
+
+    # 从缓存中减去引用计数
+    if item.actual_path.split("/")[-1] in REFER_CACHE:
+        REFER_CACHE[item.actual_path.split("/")[-1]] -= 1
+        if REFER_CACHE[item.actual_path.split("/")[-1]] == 0:
+            del REFER_CACHE[item.actual_path.split("/")[-1]]
+            Path(item.actual_path).unlink(missing_ok=True)
+
+    item.file_metadata.status = FileStatus.DELETED
+    db.commit()
+    db.refresh(item.file_metadata)
+    return ApiResp[FileInfo](code=200, msg=f"Item {target_item_id} deleted", data=item.file_metadata)

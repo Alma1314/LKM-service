@@ -16,6 +16,7 @@ dependencies = [
     "httpx>=0.28.0",
     "cbor2>=5.6.0",
     "httpx2>=2.7.0",
+    "linqex>=2.0",
 ]
 
 [tool.pytest.ini_options]
@@ -29,6 +30,10 @@ filterwarnings = [
 [tool.ruff]
 line-length = 120
 target-version = "py313"
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
 
 [tool.ruff.lint]
 # ── 基础层：一定要开的 ──
