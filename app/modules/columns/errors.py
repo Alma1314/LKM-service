@@ -10,7 +10,7 @@ class ColumnErr(ErrCode):
 register(
     {
         ColumnErr.APPLICATION_NOT_FOUND: (404, "Column application not found"),
-        ColumnErr.NOT_FOUND:             (404, "Column not found"),
-        ColumnErr.POST_NOT_FOUND:        (404, "Column post not found"),
+        ColumnErr.NOT_FOUND: (404, "Column not found"),
+        ColumnErr.POST_NOT_FOUND: (404, "Column post not found"),
     }
 )

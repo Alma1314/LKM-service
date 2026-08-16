@@ -1,5 +1,7 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
 from app.db.session import get_session
@@ -33,7 +35,7 @@ router = APIRouter(prefix="/forum", tags=["forum"])
 
 
 @router.get("/status", response_model=ModuleStatus)
-def forum_status() -> ModuleStatus:
+async def forum_status() -> ModuleStatus:
     return ModuleStatus(
         module="forum",
         status="implemented_minimal",
@@ -44,69 +46,71 @@ def forum_status() -> ModuleStatus:
 
 @router.get("/posts", response_model=ApiResp[PageData[PostInfo]])
 @respond
-def get_posts(
+async def get_posts(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     category_id: str | None = Query(default=None, max_length=50),
-    db: Session = Depends(get_session),
-):
-    return list_posts(db, page=page, limit=limit, category_id=category_id)
+    db: AsyncSession = Depends(get_session),
+) -> PageData[PostInfo]:
+    return await list_posts(db, page=page, limit=limit, category_id=category_id)
 
 
 @router.post("/posts", response_model=ApiResp[PostInfo])
 @respond
-def create_forum_post(
+async def create_forum_post(
     info: PostCreate,
     cur: CurrentUser = Depends(get_current_user),
-    db: Session = Depends(get_session),
-):
-    return create_post_service(db, cur.id, info)
+    db: AsyncSession = Depends(get_session),
+) -> PostInfo:
+    return await create_post_service(db, cur.id, info)
 
 
 @router.get("/posts/{post_id}", response_model=ApiResp[PostInfo])
 @respond
-def get_post_detail(post_id: int, db: Session = Depends(get_session)):
-    return get_post(db, post_id, bump_view=True)
+async def get_post_detail(
+    post_id: int, db: AsyncSession = Depends(get_session)
+) -> PostInfo:
+    return await get_post(db, post_id, bump_view=True)
 
 
-@router.post("/posts/{post_id}/like", response_model=ApiResp[dict])
+@router.post("/posts/{post_id}/like", response_model=ApiResp[dict[str, Any]])
 @respond
-def like_forum_post(
+async def like_forum_post(
     post_id: int,
     cur: CurrentUser = Depends(get_current_user),
-    db: Session = Depends(get_session),
-):
-    return {"like_count": like_post_service(db, post_id)}
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    return {"like_count": await like_post_service(db, post_id)}
 
 
-@router.delete("/posts/{post_id}", response_model=ApiResp[dict])
+@router.delete("/posts/{post_id}", response_model=ApiResp[dict[str, Any]])
 @respond
-def delete_forum_post(
+async def delete_forum_post(
     post_id: int,
     cur: CurrentUser = Depends(get_current_user),
-    db: Session = Depends(get_session),
-):
-    delete_post_service(db, post_id, cur.id)
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    await delete_post_service(db, post_id, cur.id)
     return {"ok": True}
 
 
 @router.get("/posts/{post_id}/comments", response_model=ApiResp[PageData[CommentInfo]])
 @respond
-def get_post_comments(
+async def get_post_comments(
     post_id: int,
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    db: Session = Depends(get_session),
-):
-    return list_comments(db, post_id, page=page, limit=limit)
+    db: AsyncSession = Depends(get_session),
+) -> PageData[CommentInfo]:
+    return await list_comments(db, post_id, page=page, limit=limit)
 
 
 @router.post("/posts/{post_id}/comments", response_model=ApiResp[CommentInfo])
 @respond
-def create_post_comment(
+async def create_post_comment(
     post_id: int,
     info: CommentCreate,
     cur: CurrentUser = Depends(get_current_user),
-    db: Session = Depends(get_session),
-):
-    return create_comment(db, post_id, cur.id, info)
+    db: AsyncSession = Depends(get_session),
+) -> CommentInfo:
+    return await create_comment(db, post_id, cur.id, info)

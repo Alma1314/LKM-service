@@ -1,6 +1,6 @@
-import enum
+import datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Any, ClassVar
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field
 
@@ -11,8 +11,8 @@ class ProfileRole(StrEnum):
 
 
 def _validate_password(v: str) -> str:
-    if len(v) < 12:
-        raise ValueError("Password must be at least 12 characters")
+    if len(v) < 6:
+        raise ValueError("Password must be at least 6 characters")
     return v
 
 
@@ -20,7 +20,7 @@ Password = Annotated[str, AfterValidator(_validate_password)]
 
 
 class ProfileInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     nickname: str | None = None
     avatar: str | None = None
@@ -32,7 +32,7 @@ class ProfileUpdate(BaseModel):
     avatar: str | None = None
 
 
-class AccountLevel(str, enum.Enum):
+class AccountLevel(StrEnum):
     LOCAL = "local"
     NORMAL = "normal"
     ADMIN = "admin"
@@ -81,6 +81,7 @@ class TokenPair(BaseModel):
     access_token: str
     refresh_token: str
 
+
 class TOTPSetupBeginData(BaseModel):
     secret: str
     qr_code_uri: str
@@ -97,6 +98,7 @@ class TOTPSetupCompleteData(BaseModel):
 
 class TOTPSetupCompleteTempData(BaseModel):
     """管理员强制设置的响应 — 包含认证令牌。"""
+
     recovery_codes: list[str]
     confirmed_saved_required: bool
     access_token: str | None = None
@@ -183,27 +185,29 @@ class OAuthRedirectResponse(BaseModel):
 
 class PasskeyRegistrationOptionsResponse(BaseModel):
     challenge_id: str
-    public_key: dict
+    public_key: dict[str, Any]
 
 
 class PasskeyLoginOptionsResponse(BaseModel):
     challenge_id: str
-    public_key: dict
+    public_key: dict[str, Any]
 
 
 class PasskeyRegisterCompleteRequest(BaseModel):
     """WebAuthn 注册完成请求体。"""
+
     rawId: str
     challenge_id: str
-    response: dict = Field(default_factory=dict)
+    response: dict[str, Any] = Field(default_factory=dict)
     device_name: str | None = None
 
 
 class PasskeyLoginCompleteRequest(BaseModel):
     """WebAuthn 登录完成请求体。"""
+
     rawId: str
     challenge_id: str
-    response: dict = Field(default_factory=dict)
+    response: dict[str, Any] = Field(default_factory=dict)
 
 
 class PasskeyRegisterCompleteResponse(BaseModel):
@@ -215,7 +219,7 @@ class PasskeyCredentialItem(BaseModel):
     id: int
     credential_id: str
     device_name: str
-    created_at: str  # ISO datetime
+    created_at: datetime.datetime  # UTC 时间
 
 
 # ── TOTP 验证响应 ─────────────────────────────────────────────
@@ -249,3 +253,24 @@ class TOTPVerifyResponse(BaseModel):
 
 class TOTPDisableResponse(BaseModel):
     message: str
+
+
+class TOTPStatusData(BaseModel):
+    """GET /auth/2fa/status —— 2FA 是否已开启。"""
+
+    enabled: bool
+
+
+class SettingsInfo(BaseModel):
+    """GET /auth/settings —— 当前绑定状态。"""
+
+    email: str | None = None
+    phone: str | None = None
+    github: str | None = None
+    has_2fa: bool = False
+
+
+class UnbindRequest(BaseModel):
+    """DELETE /auth/settings/{type} —— 解绑请求体；已开启 2FA 时 code 必填。"""
+
+    code: str | None = Field(default=None, min_length=6, max_length=6)

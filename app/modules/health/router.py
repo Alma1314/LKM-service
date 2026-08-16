@@ -13,5 +13,5 @@ class HealthData(BaseModel):
 
 @router.get("/health", response_model=ApiResp[HealthData])
 @respond
-async def health_check():
+async def health_check() -> dict[str, str]:
     return {"status": "ok"}

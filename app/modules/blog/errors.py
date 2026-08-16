@@ -9,8 +9,8 @@ class BlogErr(ErrCode):
 
 register(
     {
-        BlogErr.SERIES_NOT_FOUND:  (404, "Blog series not found"),
+        BlogErr.SERIES_NOT_FOUND: (404, "Blog series not found"),
         BlogErr.COMMENT_NOT_FOUND: (404, "Comment not found"),
-        BlogErr.GIT_ERROR:         (500, "Git operation failed"),
+        BlogErr.GIT_ERROR: (500, "Git operation failed"),
     }
 )

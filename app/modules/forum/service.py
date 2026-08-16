@@ -1,7 +1,10 @@
 import json
 import re
+from typing import Any
 
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.err import BizError, CommonErr
 from app.db.models import ForumComment, ForumPost, User
@@ -39,14 +42,19 @@ def _comment_to_schema(c: ForumComment, author_name: str) -> CommentInfo:
     return CommentInfo.model_validate(c).model_copy(update={"author_name": author_name})
 
 
-def _author_map(db: Session, user_ids: list[int]) -> dict[int, str]:
+async def _author_map(db: AsyncSession, user_ids: list[int]) -> dict[int, str]:
     if not user_ids:
         return {}
-    users = db.query(User).filter(User.id.in_(set(user_ids))).all()
+    result = await db.execute(
+        select(User)
+        .where(User.id.in_(set(user_ids)))
+        .options(selectinload(User.profile))
+    )
+    users = result.scalars().all()
     return {u.id: _author_name(u) for u in users}
 
 
-def get_forum_plan() -> dict:
+def get_forum_plan() -> dict[str, Any]:
     return {
         "status": "implemented_minimal",
         "tables": FORUM_TABLE_PLAN,
@@ -58,41 +66,51 @@ def get_forum_plan() -> dict:
     }
 
 
-def list_posts(
-    db: Session,
+async def list_posts(
+    db: AsyncSession,
     page: int = 1,
     limit: int = 20,
     category_id: str | None = None,
 ) -> PageData[PostInfo]:
-    query = db.query(ForumPost)
+    base = select(ForumPost)
     if category_id:
-        query = query.filter(ForumPost.category_id == category_id)
+        base = base.where(ForumPost.category_id == category_id)
 
-    total = query.count()
-    posts = (
-        query.order_by(ForumPost.is_pinned.desc(), ForumPost.id.desc())
+    count_stmt = select(func.count()).select_from(base.subquery())
+    total_count = await db.scalar(count_stmt) or 0
+
+    stmt = (
+        base.order_by(ForumPost.is_pinned.desc(), ForumPost.id.desc())
         .offset((page - 1) * limit)
         .limit(limit)
-        .all()
+    )
+    result = await db.execute(stmt)
+    posts = result.scalars().all()
+
+    names = await _author_map(db, [p.author_id for p in posts])
+    items = [_post_to_schema(p, names.get(p.author_id, "")) for p in posts]
+    return PageData(
+        items=items,
+        total=total_count,
+        page=page,
+        pages=(total_count + limit - 1) // limit,
     )
 
-    names = _author_map(db, [p.author_id for p in posts])
-    items = [_post_to_schema(p, names.get(p.author_id, "")) for p in posts]
-    return PageData(items=items, total=total, page=page, pages=(total + limit - 1) // limit)
 
-
-def get_post(db: Session, post_id: int, bump_view: bool = False) -> PostInfo:
-    post = get_or_raise(db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id)
+async def get_post(db: AsyncSession, post_id: int, bump_view: bool = False) -> PostInfo:
+    post = await get_or_raise(
+        db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id
+    )
 
     if bump_view:
         post.view_count += 1
-        db.flush()
+        await db.flush()
 
-    names = _author_map(db, [post.author_id])
+    names = await _author_map(db, [post.author_id])
     return _post_to_schema(post, names.get(post.author_id, ""))
 
 
-def create_post(db: Session, author_id: int, info: PostCreate) -> PostInfo:
+async def create_post(db: AsyncSession, author_id: int, info: PostCreate) -> PostInfo:
     post = ForumPost(
         author_id=author_id,
         category_id=info.category_id,
@@ -102,71 +120,88 @@ def create_post(db: Session, author_id: int, info: PostCreate) -> PostInfo:
         tags=json.dumps(info.tags, ensure_ascii=False),
     )
     db.add(post)
-    db.flush()
-    db.refresh(post)
+    await db.flush()
 
-    names = _author_map(db, [post.author_id])
+    names = await _author_map(db, [post.author_id])
     return _post_to_schema(post, names.get(post.author_id, ""))
 
 
-def delete_post(db: Session, post_id: int, current_user_id: int) -> None:
-    post = get_or_raise(db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id)
+async def delete_post(db: AsyncSession, post_id: int, current_user_id: int) -> None:
+    post = await get_or_raise(
+        db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id
+    )
     if post.author_id != current_user_id:
         raise BizError(CommonErr.FORBIDDEN)
-    db.delete(post)
-    db.flush()
+    await db.delete(post)
+    await db.flush()
 
 
-def like_post(db: Session, post_id: int) -> int:
-    post = get_or_raise(db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id)
+async def like_post(db: AsyncSession, post_id: int) -> int:
+    post = await get_or_raise(
+        db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id
+    )
     post.like_count += 1
-    db.flush()
+    await db.flush()
     return post.like_count
 
 
-def list_comments(
-    db: Session,
+async def list_comments(
+    db: AsyncSession,
     post_id: int,
     page: int = 1,
     limit: int = 20,
 ) -> PageData[CommentInfo]:
-    get_or_raise(db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id)
+    await get_or_raise(db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id)
 
-    query = db.query(ForumComment).filter(ForumComment.post_id == post_id)
-    total = query.count()
-    comments = (
-        query.order_by(ForumComment.floor_number.asc())
+    total = (
+        await db.scalar(
+            select(func.count(ForumComment.id)).where(ForumComment.post_id == post_id)
+        )
+        or 0
+    )
+    stmt = (
+        select(ForumComment)
+        .where(ForumComment.post_id == post_id)
+        .order_by(ForumComment.floor_number.asc())
         .offset((page - 1) * limit)
         .limit(limit)
-        .all()
+    )
+    result = await db.execute(stmt)
+    comments = result.scalars().all()
+
+    names = await _author_map(db, [c.user_id for c in comments])
+    items = [_comment_to_schema(c, names.get(c.user_id, "")) for c in comments]
+    return PageData(
+        items=items, total=total, page=page, pages=(total + limit - 1) // limit
     )
 
-    names = _author_map(db, [c.user_id for c in comments])
-    items = [_comment_to_schema(c, names.get(c.user_id, "")) for c in comments]
-    return PageData(items=items, total=total, page=page, pages=(total + limit - 1) // limit)
 
-
-def create_comment(
-    db: Session,
+async def create_comment(
+    db: AsyncSession,
     post_id: int,
     user_id: int,
     info: CommentCreate,
 ) -> CommentInfo:
-    post = get_or_raise(db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id)
+    post = await get_or_raise(
+        db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id
+    )
 
     if info.parent_id is not None:
-        get_or_raise(
-            db, ForumComment, ForumErr.COMMENT_NOT_FOUND,
+        await get_or_raise(
+            db,
+            ForumComment,
+            ForumErr.COMMENT_NOT_FOUND,
             ForumComment.id == info.parent_id,
             ForumComment.post_id == post_id,
         )
 
-    floor = (
-        db.query(ForumComment)
-        .filter(ForumComment.post_id == post_id)
+    result = await db.execute(
+        select(ForumComment)
+        .where(ForumComment.post_id == post_id)
         .order_by(ForumComment.floor_number.desc())
-        .first()
+        .limit(1)
     )
+    floor = result.scalars().first()
     next_floor = floor.floor_number + 1 if floor else 1
 
     comment = ForumComment(
@@ -178,8 +213,7 @@ def create_comment(
     )
     db.add(comment)
     post.comment_count += 1
-    db.flush()
-    db.refresh(comment)
+    await db.flush()
 
-    names = _author_map(db, [comment.user_id])
+    names = await _author_map(db, [comment.user_id])
     return _comment_to_schema(comment, names.get(comment.user_id, ""))

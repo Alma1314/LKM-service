@@ -1,9 +1,8 @@
+import datetime
 import json
-from typing import Generic, TypeVar
+from typing import Any, ClassVar, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-
-T = TypeVar("T")
 
 
 class PostCreate(BaseModel):
@@ -14,7 +13,7 @@ class PostCreate(BaseModel):
 
 
 class PostInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     id: int
     title: str
@@ -30,13 +29,14 @@ class PostInfo(BaseModel):
     like_count: int
     comment_count: int
     bookmark_count: int
-    created_at: str
+    forward_count: int = 0
+    created_at: datetime.datetime
 
     @field_validator("tags", mode="before")
     @classmethod
-    def _parse_tags(cls, v):
+    def _parse_tags(cls, v: Any) -> list[Any]:
         if isinstance(v, list):
-            return v
+            return cast(list[Any], v)
         try:
             return json.loads(v)
         except (json.JSONDecodeError, TypeError):
@@ -49,7 +49,7 @@ class CommentCreate(BaseModel):
 
 
 class CommentInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
     id: int
     post_id: int
@@ -59,10 +59,10 @@ class CommentInfo(BaseModel):
     floor_number: int
     parent_id: int | None = None
     like_count: int
-    created_at: str
+    created_at: datetime.datetime
 
 
-class PageData(BaseModel, Generic[T]):
+class PageData[T](BaseModel):
     items: list[T]
     total: int
     page: int
