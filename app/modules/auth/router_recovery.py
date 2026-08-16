@@ -87,7 +87,7 @@ class RecoverMagicLinkVerifyRequest(BaseModel):
 async def recover_check(
     info: RecoverCheckRequest, db: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
-    return service_recovery.check_recovery_methods(db, info.account)
+    return await service_recovery.check_recovery_methods(db, info.account)
 
 
 @router.post("/phone", response_model=ApiResp[MessageResponse])

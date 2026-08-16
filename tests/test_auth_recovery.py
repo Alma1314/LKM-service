@@ -25,7 +25,7 @@ async def _mk_local(
 
     user = User(
         username=username,
-        hashed_password=hashpwd(password),
+        hashed_password=await hashpwd(password),
         account_level="local",
     )
     db.add(user)
@@ -48,7 +48,7 @@ async def _mk_normal(
         username=username,
         email=email,
         phone=phone,
-        hashed_password=hashpwd(password),
+        hashed_password=await hashpwd(password),
         account_level="normal",
     )
     db.add(user)
@@ -71,7 +71,7 @@ async def _mk_admin(
         username=username,
         email=email,
         phone=phone,
-        hashed_password=hashpwd(password),
+        hashed_password=await hashpwd(password),
         account_level="admin",
     )
     db.add(user)
@@ -161,33 +161,33 @@ class TestCheckRecoveryMethods:
 
     async def should_return_uniform_false_for_local_user(self, db: AsyncSession):
         await _mk_local(db, username="alice")
-        result = _svc().check_recovery_methods(db, "alice")
+        result = await _svc().check_recovery_methods(db, "alice")
         assert result["recoverable"] is False
 
     async def should_return_uniform_false_for_normal_user(self, db: AsyncSession):
         await _mk_normal(
             db, username="bob", email="bob@example.com", phone="13800001111"
         )
-        result = _svc().check_recovery_methods(db, "bob")
+        result = await _svc().check_recovery_methods(db, "bob")
         assert result["recoverable"] is False
 
     async def should_return_uniform_false_for_nonexistent(self, db: AsyncSession):
-        result = _svc().check_recovery_methods(db, "nobody")
+        result = await _svc().check_recovery_methods(db, "nobody")
         assert result["recoverable"] is False
 
     async def should_return_uniform_false_when_lookup_by_email(self, db: AsyncSession):
         await _mk_normal(db, username="bob", email="bob@example.com")
-        result = _svc().check_recovery_methods(db, "bob@example.com")
+        result = await _svc().check_recovery_methods(db, "bob@example.com")
         assert result["recoverable"] is False
 
     async def should_return_uniform_false_when_lookup_by_phone(self, db: AsyncSession):
         await _mk_normal(db, username="bob", phone="13800001111")
-        result = _svc().check_recovery_methods(db, "13800001111")
+        result = await _svc().check_recovery_methods(db, "13800001111")
         assert result["recoverable"] is False
 
     async def should_return_uniform_false_for_admin(self, db: AsyncSession):
         await _mk_admin(db, username="admin", email="admin@example.com")
-        result = _svc().check_recovery_methods(db, "admin")
+        result = await _svc().check_recovery_methods(db, "admin")
         assert result["recoverable"] is False
 
     async def should_show_recoverable_for_normal_with_totp_enabled(
@@ -200,13 +200,13 @@ class TestCheckRecoveryMethods:
         db.add(totp)
         await db.flush()
 
-        result = _svc().check_recovery_methods(db, "secure")
+        result = await _svc().check_recovery_methods(db, "secure")
         assert result["recoverable"] is False
         # No MFA/method leakage (R2-018)
 
     async def should_show_recoverable_for_normal_without_totp(self, db: AsyncSession):
         await _mk_normal(db, username="bob", email="bob@example.com")
-        result = _svc().check_recovery_methods(db, "bob")
+        result = await _svc().check_recovery_methods(db, "bob")
         assert result["recoverable"] is False
 
 
@@ -233,7 +233,7 @@ class TestRecoverByPhone:
         # New password works
         from app.modules.auth.security import verifypwd
 
-        assert verifypwd("newpwd456", user.hashed_password)
+        assert await verifypwd("newpwd456", user.hashed_password)
 
     async def should_reject_wrong_code(self, db: AsyncSession):
         await _mk_normal(db, username="bob", password="old123", phone="13800001111")
@@ -324,7 +324,7 @@ class TestRecoverByEmailCode:
 
         from app.modules.auth.security import verifypwd
 
-        assert verifypwd("newpwd456", user.hashed_password)
+        assert await verifypwd("newpwd456", user.hashed_password)
 
     async def should_reject_wrong_code(self, db: AsyncSession):
         await _mk_normal(db, username="bob", password="old123", email="bob@example.com")
@@ -415,7 +415,7 @@ class TestRecoverByMagicLink:
 
         from app.modules.auth.security import verifypwd
 
-        assert verifypwd("newpwd456", user.hashed_password)
+        assert await verifypwd("newpwd456", user.hashed_password)
 
     async def should_reject_wrong_purpose(self, db: AsyncSession):
         await _mk_normal(db, username="bob", password="old123", email="bob@example.com")

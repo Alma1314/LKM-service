@@ -1,9 +1,9 @@
 import asyncio
 import base64
+import binascii
 import contextlib
 import logging
 import os
-import subprocess
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
@@ -19,30 +19,24 @@ logger = logging.getLogger(__name__)
 git_router = APIRouter(prefix="/blog/git", tags=["blog-git"])
 
 
-def _run_git_http_backend(env: dict[str, str], body: bytes) -> Response:
-    """
-    同步运行 git http-backend 并解析其输出。
-    在 async 端点内通过 asyncio.to_thread 调度，避免长 git 传输（clone/push）阻塞事件循环。
-    """
-    try:
-        proc = subprocess.Popen(
-            ["git", "http-backend"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env,
-        )
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=500, detail="git executable not found"
-        ) from None
+def _decode_basic_auth(header: str) -> tuple[str, str] | None:
+    """解析 Basic Authorization 头为 (username, password)。
 
+    仅当 header 为合法 Basic 凭据时返回元组；base64 解码失败、非 UTF-8、
+    缺少冒号等格式错误返回 None，由调用方回退匿名读。
+    """
+    if not header.startswith("Basic "):
+        return None
     try:
-        stdout, _ = proc.communicate(input=body, timeout=120)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        raise HTTPException(status_code=504, detail="Git operation timed out") from None
+        decoded = base64.b64decode(header[6:]).decode("utf-8")
+        username, password = decoded.split(":", 1)
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return None
+    return username, password
 
+
+def _parse_git_response(stdout: bytes) -> Response:
+    """解析 git http-backend 的 CGI 输出为 HTTP Response。"""
     header_end = stdout.find(b"\r\n\r\n")
     if header_end != -1:
         header_section = stdout[:header_end].decode("utf-8", errors="replace")
@@ -73,6 +67,21 @@ def _run_git_http_backend(env: dict[str, str], body: bytes) -> Response:
     )
 
 
+async def _stream_to_stdin(proc: asyncio.subprocess.Process, request: Request) -> None:
+    """把请求体流式写入 git http-backend 的 stdin，写完关闭 stdin。"""
+    assert proc.stdin is not None
+    try:
+        async for chunk in request.stream():
+            proc.stdin.write(chunk)
+            await proc.stdin.drain()
+    except (BrokenPipeError, ConnectionResetError):
+        # 进程可能已提前退出（如 push 被拒），写失败可忽略
+        pass
+    finally:
+        with contextlib.suppress(Exception):
+            proc.stdin.close()
+
+
 @git_router.api_route("/{repo_name}.git/{rest:path}", methods=["GET", "POST"])
 async def git_http_backend(
     repo_name: str,
@@ -98,21 +107,42 @@ async def git_http_backend(
 
     # Basic Auth 校验（读权限门槛；会话由 FastAPI 依赖注入统一管理）
     auth = request.headers.get("Authorization", "")
-    if auth.startswith("Basic "):
-        try:
-            decoded = base64.b64decode(auth[6:]).decode("utf-8")
-            username, password = decoded.split(":", 1)
-            user = (
-                (await db.execute(select(User).where(User.username == username)))
-                .scalars()
-                .first()
-            )
-            if user and verifypwd(password, user.hashed_password):
-                env["REMOTE_USER"] = username
-        except Exception as exc:
-            logger.warning("git Basic Auth 校验失败，回退为匿名（读公开）: %s", exc)
+    creds = _decode_basic_auth(auth)
+    if creds is not None:
+        username, password = creds
+        user = (
+            (await db.execute(select(User).where(User.username == username)))
+            .scalars()
+            .first()
+        )
+        if user and await verifypwd(password, user.hashed_password):
+            env["REMOTE_USER"] = username
+    elif auth.startswith("Basic "):
+        # 仅格式错误（非 base64/缺冒号/非 UTF-8）回退匿名读；DB/内部错误不在此捕获，正常传播
+        logger.warning("git Basic Auth 格式无效，回退为匿名（读公开）")
 
-    body = await request.body()
+    # 用 asyncio 子进程 + request.stream() 流式喂入请求体，避免 request.body() 全量缓冲
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "http-backend",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=500, detail="git executable not found"
+        ) from None
 
-    # 长 git 传输（clone/push）是在线程中运行，避免阻塞事件循环
-    return await asyncio.to_thread(_run_git_http_backend, env, body)
+    try:
+        async with asyncio.timeout(120):
+            await _stream_to_stdin(proc, request)
+            stdout, _ = await proc.communicate()
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise HTTPException(status_code=504, detail="Git operation timed out") from None
+
+    return _parse_git_response(stdout)

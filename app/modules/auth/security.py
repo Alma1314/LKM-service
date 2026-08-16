@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import binascii
 import hashlib
@@ -21,23 +22,31 @@ _ph = PasswordHasher()
 _DUMMY_HASH = _ph.hash("dummy-timing-equalizer")
 
 
-def hashpwd(raw: str) -> str:
-    """返回 Argon2id 密码哈希（argon2-cffi 默认参数）。"""
-    return _ph.hash(raw)
+async def hashpwd(raw: str) -> str:
+    """返回 Argon2id 密码哈希（argon2-cffi 默认参数）。
+
+    argon2 是 CPU/内存密集操作，经 asyncio.to_thread 下放到线程池，
+    避免在事件循环内同步执行阻塞所有并发请求。
+    """
+    return await asyncio.to_thread(_ph.hash, raw)
 
 
-def verifypwd(raw: str, stored: str) -> bool:
+async def verifypwd(raw: str, stored: str) -> bool:
     """验证密码。哈希格式无效或密码不匹配时返回 False，不抛异常。"""
-    try:
-        _ph.verify(stored, raw)
-        return True
-    except (VerificationError, ValueError):
-        return False
+
+    def _verify() -> bool:
+        try:
+            _ph.verify(stored, raw)
+            return True
+        except (VerificationError, ValueError):
+            return False
+
+    return await asyncio.to_thread(_verify)
 
 
-def dummy_verify() -> None:
+async def dummy_verify() -> None:
     """执行一次与真实验证等成本的虚拟验证，保持时序一致。"""
-    verifypwd("dummy", _DUMMY_HASH)
+    await verifypwd("dummy", _DUMMY_HASH)
 
 
 _ACCESS_TYPE = "access"

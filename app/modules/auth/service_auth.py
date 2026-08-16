@@ -151,7 +151,7 @@ async def _check_account_locked(user: User) -> None:
     if user.locked_until:
         if user.locked_until > now_iso():
             # 执行虚拟哈希以保持时序一致
-            dummy_verify()
+            await dummy_verify()
             raise BizError(AuthErr.INVALID_CREDENTIALS)
         # 锁定已过期 —— 自动解锁
         user.is_locked = False
@@ -218,7 +218,7 @@ async def register_local(db: AsyncSession, info: UserRegLocal) -> dict[str, Any]
     existing = result.scalars().first()
     if existing:
         hashed: str = existing.hashed_password
-        if not hashed or not verifypwd(info.password, hashed):
+        if not hashed or not await verifypwd(info.password, hashed):
             raise BizError(
                 AuthErr.ALREADY_REGISTERED, "Account exists but password is incorrect"
             )
@@ -228,7 +228,7 @@ async def register_local(db: AsyncSession, info: UserRegLocal) -> dict[str, Any]
     user = await create_user_with_profile(
         db,
         username=username,
-        hashed_password=hashpwd(info.password),
+        hashed_password=await hashpwd(info.password),
         account_level="local",
     )
 
@@ -278,7 +278,7 @@ async def register_normal_with_password(
     )
     if existing:
         hashed: str = existing.hashed_password
-        if not hashed or not verifypwd(info.password, hashed):
+        if not hashed or not await verifypwd(info.password, hashed):
             raise BizError(
                 AuthErr.ALREADY_REGISTERED, "Account exists but password is incorrect"
             )
@@ -293,7 +293,7 @@ async def register_normal_with_password(
     user = await create_user_with_profile(
         db,
         username=username,
-        hashed_password=hashpwd(info.password),
+        hashed_password=await hashpwd(info.password),
         email=email_normalized,
         phone=info.phone,
         account_level="normal",
@@ -344,7 +344,7 @@ async def store_pending_normal_registration(
     record = PendingRegistration(
         txn_id=txn_id,
         username=_normalize_username(username),
-        hashed_password=hashpwd(password),
+        hashed_password=await hashpwd(password),
         email=_normalize_email(email) if email else None,
         phone=phone,
         consumed=False,
@@ -409,7 +409,7 @@ async def consume_pending_normal_registration(
     if existing:
         hashed: str = existing.hashed_password
         pending_hashed: str = pending.hashed_password
-        if not hashed or not verifypwd(pending_hashed, hashed):
+        if not hashed or not await verifypwd(pending_hashed, hashed):
             raise BizError(
                 AuthErr.ALREADY_REGISTERED, "Account exists but password is incorrect"
             )
@@ -514,13 +514,13 @@ async def login_password(
 
     if not user:
         # 防御用户枚举：执行一个相同成本的虚拟哈希，
-        dummy_verify()
+        await dummy_verify()
         raise BizError(AuthErr.INVALID_CREDENTIALS)
 
     await _check_account_locked(user)
 
     try:
-        ok = verifypwd(info.password, str(user.hashed_password))
+        ok = await verifypwd(info.password, str(user.hashed_password))
     except Exception:
         logger.exception(
             "verifypwd raised exception for user_id=%s (possible corrupted hash)",

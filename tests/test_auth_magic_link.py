@@ -36,7 +36,7 @@ async def _create_user(
     user = User(
         username=username,
         email=email,
-        hashed_password=hashpwd(password),
+        hashed_password=await hashpwd(password),
         account_level=account_level,
     )
     db.add(user)

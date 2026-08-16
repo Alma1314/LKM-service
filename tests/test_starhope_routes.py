@@ -7,7 +7,7 @@ async def _setup_user(db, username="tester") -> tuple[int, str]:
     user = User(
         username=username,
         email=f"{username}@x.com",
-        hashed_password=hashpwd("secret123456"),
+        hashed_password=await hashpwd("secret123456"),
         account_level="normal",
     )
     db.add(user)

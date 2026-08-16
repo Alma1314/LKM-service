@@ -69,7 +69,7 @@ async def _user_requires_mfa(db: AsyncSession, user: User) -> bool:
 
 async def _reset_password(db: AsyncSession, user: User, new_password: str) -> None:
     """哈希新密码、设置它、解锁账户、撤销所有令牌，并记录审计日志。"""
-    user.hashed_password = hashpwd(new_password)
+    user.hashed_password = await hashpwd(new_password)
     user.is_locked = False
     user.locked_until = None
     user.failed_login_attempts = 0
@@ -81,7 +81,7 @@ async def _reset_password(db: AsyncSession, user: User, new_password: str) -> No
     await log_audit(db, user.id, "password_reset", detail="recovery")
 
 
-def check_recovery_methods(_db: AsyncSession, _account: str) -> dict[str, Any]:
+async def check_recovery_methods(_db: AsyncSession, _account: str) -> dict[str, Any]:
     """检查账户可用的恢复方法。"""
     # 始终统一 —— 不泄露账户是否存在、是否为 local 或 admin
     return {"recoverable": False}
@@ -232,7 +232,7 @@ async def recover_admin_begin(
         }
 
     check_code_rate_limit(f"recover:admin:{contact}", max_count=3, window=3600)
-    dummy_verify()
+    await dummy_verify()
     return {
         "message": "If the account is eligible, recovery instructions will be sent to the registered contact."
     }

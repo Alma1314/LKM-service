@@ -226,7 +226,7 @@ class TestOAuthEmailAutoBind:
             User(
                 username="alice",
                 email="alice@example.com",
-                hashed_password=hashpwd("secret123456"),
+                hashed_password=await hashpwd("secret123456"),
                 account_level="normal",
             )
         )

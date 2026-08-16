@@ -241,7 +241,7 @@ class TestLoginPassword:
         await db.flush()
         from app.modules.auth.security import hashpwd
 
-        user.hashed_password = hashpwd("admin123")
+        user.hashed_password = await hashpwd("admin123")
         await db.flush()
 
         result = await _login(db, "admin", "admin123")
@@ -264,7 +264,7 @@ class TestLoginPassword:
         await db.flush()
         from app.modules.auth.security import hashpwd
 
-        user.hashed_password = hashpwd("secret123456")
+        user.hashed_password = await hashpwd("secret123456")
 
         # enable TOTP
         totp = TOTP(user_id=user.id, secret="MZXW6YTBOJQXI33F", enabled=True)

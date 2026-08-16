@@ -104,6 +104,18 @@ async def get_current_admin(
     if int(payload.get("token_version", 0)) != int(user.token_version):
         raise BizError(CommonErr.FORBIDDEN, "Admin session invalidated")
 
+    # 改密撤销：JWT iat 必须 >= user.updated_at（允许 5 秒时钟偏差容差），与前台一致
+    if user.updated_at:
+        token_iat = payload.get("iat")
+        if token_iat is not None:
+            token_time = datetime.datetime.fromtimestamp(
+                float(token_iat), tz=datetime.UTC
+            )
+            if user.updated_at - token_time > datetime.timedelta(seconds=5):
+                raise BizError(
+                    CommonErr.FORBIDDEN, "Admin session invalidated – password changed"
+                )
+
     # 强制管理员级别（唯一进后台门槛）
     if user.account_level != "admin":
         raise BizError(CommonErr.FORBIDDEN, "Insufficient admin privilege")

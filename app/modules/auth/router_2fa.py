@@ -143,10 +143,15 @@ async def setup_2fa_complete_temp(
 
 
 async def _issue_admin_setup_tokens(db: AsyncSession, user: User) -> tuple[str, str]:
+    # 与 issue_session_tokens 一致：role 从 profile 读取，不硬编码
+    if "profile" not in user.__dict__:
+        await db.refresh(user, attribute_names=["profile"])
+    profile = user.profile
+    role = profile.role if profile else "member"
     access_token = security.create_access_token(
         user_id=user.id,
         account_level=user.account_level,
-        role="admin",
+        role=role,
         token_version=user.token_version,
     )
     raw_refresh = generate_refresh_token()

@@ -88,7 +88,7 @@ async def admin_login(
     user = result.scalars().first()
 
     # 统一 401：不区分"用户不存在"与"密码错"，避免枚举账号
-    if not user or not verifypwd(body.password, user.hashed_password):
+    if not user or not await verifypwd(body.password, user.hashed_password):
         return resp_json(CommonErr.FORBIDDEN, detail="用户名或密码错误")
 
     if user.account_level != "admin":

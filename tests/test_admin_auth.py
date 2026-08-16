@@ -25,7 +25,7 @@ async def _create_user(
     user = User(
         username=username,
         email=f"{username}@example.com",
-        hashed_password=hashpwd(password),
+        hashed_password=await hashpwd(password),
         account_level=account_level,
     )
     db.add(user)
@@ -119,7 +119,7 @@ class TestAdminLogin:
         db.add(
             RefreshToken(
                 user_id=kind2.id,
-                token_hash=hashpwd("not-a-real-token")[0:64],
+                token_hash=(await hashpwd("not-a-real-token"))[0:64],
                 kind="web",
                 mfa_verified=False,
                 expires_at=datetime.datetime.now(datetime.UTC)
@@ -321,3 +321,33 @@ class TestGetRealClientIp:
         from app.modules.admin.deps import get_real_client_ip
 
         assert get_real_client_ip(req) == "unknown"
+
+
+# ===================================================================
+# 改密撤销：updated_at 晚于 token iat 时旧 admin cookie 应失效（与前台一致）
+# ===================================================================
+
+
+class TestAdminPasswordChangeInvalidation:
+    async def should_invalidate_old_cookie_after_password_change(
+        self, db: AsyncSession, client: AsyncClient
+    ):
+        await _create_user(db, username="root_pwd", account_level="admin")
+        login = await _login(client, "root_pwd")
+        assert login.status_code == 200
+        assert client.cookies.get("admin_session")
+
+        user = (
+            (await db.execute(select(User).where(User.username == "root_pwd")))
+            .scalars()
+            .first()
+        )
+        assert user is not None
+        # 模拟改密：updated_at 晚于 token 签发时间（iat）超过 5 秒容差
+        user.updated_at = datetime.datetime.now(datetime.UTC) + datetime.timedelta(
+            seconds=10
+        )
+        await db.commit()
+
+        resp = await client.get("/api/v1/admin/auth/me")
+        assert resp.status_code == 403

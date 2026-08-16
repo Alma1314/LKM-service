@@ -40,7 +40,7 @@ async def _user(
     user = User(
         username=username,
         email=email,
-        hashed_password=hashpwd("secret123456"),
+        hashed_password=await hashpwd("secret123456"),
         account_level="normal",
     )
     db.add(user)
