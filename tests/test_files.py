@@ -452,9 +452,10 @@ class TestFilesDedupAndReview:
 
     @staticmethod
     def _physical_files(tmp_path: pathlib.Path) -> list[pathlib.Path]:
+        # 分桶后文件在 <hash[:2]>/ 子目录，需递归查找
         return [
             p
-            for p in tmp_path.iterdir()
+            for p in tmp_path.rglob("*")
             if p.is_file() and not p.name.startswith(".tmp")
         ]
 
@@ -584,3 +585,18 @@ class TestFilesDedupAndReview:
         with pytest.raises(BizError) as exc:
             await review_file(db, f.id, FileStatus.REJECTED, is_admin=True)
         assert exc.value.errcode == FileErr.NOT_PENDING
+
+
+class TestContentPath:
+    def should_bucket_by_hash_prefix(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """落盘路径应一层分桶：files_store_dir/<hash[:2]>/<hash>。"""
+        from app.core.config import settings
+        from app.modules.files.service import _content_path
+
+        monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
+        h = "ab" + "c" * 62
+        p = _content_path(h)
+        assert p == tmp_path / "ab" / h
+        assert p.parent == tmp_path / "ab"

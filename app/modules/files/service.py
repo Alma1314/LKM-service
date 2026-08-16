@@ -148,8 +148,8 @@ async def _write_upload(stream: _Readable, dest: Path, limit: int) -> tuple[int,
 
 
 def _content_path(sha3_hash: str) -> Path:
-    """内容寻址落盘路径：``files_store_dir/<hash>``，同内容同路径，天然去重。"""
-    return Path(settings.files_store_dir) / sha3_hash
+    """内容寻址落盘路径：``files_store_dir/<hash[:2]>/<hash>``，一层分桶，同内容同路径，天然去重。"""
+    return Path(settings.files_store_dir) / sha3_hash[:2] / sha3_hash
 
 
 def _make_stored_name(original_name: str) -> str:

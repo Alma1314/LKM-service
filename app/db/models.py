@@ -288,7 +288,7 @@ class LibraryFile(Base):
     sha3_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 引用计数：同一物理文件被多少条目引用，归零时清理磁盘文件。DB 持久化，替代内存 cache。
     ref_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    # 物理文件落盘路径（内容寻址：``files_store_dir/<hash>``）。同一内容条目共享同一
+    # 物理文件落盘路径（内容寻址：``files_store_dir/<hash[:2]>/<hash>``）。同一内容条目共享同一
     # ``storage_path``（不唯一），去重共享物理文件的关键；``stored_name`` 保持唯一作展示/定位。
     storage_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
     mime_type: Mapped[str] = mapped_column(
