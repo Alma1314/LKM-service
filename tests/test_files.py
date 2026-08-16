@@ -21,12 +21,15 @@ from app.db.session import get_session
 from app.main import app as fastapi_app
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.files.errors import FileErr
+from app.modules.files.models import FileStatus
 from app.modules.files.schemas import FileCreate, FileInfo
 from app.modules.files.service import (
     bump_download,
     create_file,
+    delete_file,
     get_file,
     list_files,
+    review_file,
 )
 
 
@@ -131,7 +134,12 @@ class TestFilesService:
             .scalars()
             .one()
         )
-        assert (tmp_path / stored.stored_name).read_bytes() == b"%PDF-1.4 fake content"
+        physical = await asyncio.to_thread(
+            pathlib.Path(
+                stored.storage_path or (tmp_path / stored.stored_name)
+            ).read_bytes
+        )
+        assert physical == b"%PDF-1.4 fake content"
 
     async def should_use_username_when_no_nickname(
         self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
@@ -418,3 +426,161 @@ class TestFilesRoutes:
 
         assert exc.value.errcode == FileErr.STORE_ERROR
         assert len((await db.execute(select(LibraryFile))).scalars().all()) == 0
+
+
+class TestFilesDedupAndReview:
+    async def _upload_raw(
+        self,
+        db: AsyncSession,
+        uploader_id: int,
+        content: bytes,
+        original_name: str = "资料.pdf",
+        category_id: str = "math",
+    ) -> FileInfo:
+        return await create_file(
+            db,
+            uploader_id,
+            FileCreate(
+                original_name=original_name,
+                mime_type="application/pdf",
+                category_id=category_id,
+                description="",
+                tags=[],
+            ),
+            stream=io.BytesIO(content),
+        )
+
+    @staticmethod
+    def _physical_files(tmp_path: pathlib.Path) -> list[pathlib.Path]:
+        return [
+            p
+            for p in tmp_path.iterdir()
+            if p.is_file() and not p.name.startswith(".tmp")
+        ]
+
+    async def _list_physical(self, tmp_path: pathlib.Path) -> list[pathlib.Path]:
+        return await asyncio.to_thread(self._physical_files, tmp_path)
+
+    async def should_dedup_same_content(
+        self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
+        user_id = await _user(db)
+        content = b"same-content-bytes"
+
+        _ = await self._upload_raw(db, user_id, content, original_name="a.pdf")
+        _ = await self._upload_raw(db, user_id, content, original_name="b.pdf")
+
+        # 同一物理文件只落盘一份
+        physical_files = await self._list_physical(tmp_path)
+        assert len(physical_files) == 1
+        # 元数据条目是两个（两次上传各一条），引用计数为 2
+        rows = (await db.execute(select(LibraryFile))).scalars().all()
+        assert len(rows) == 2
+        assert all(r.ref_count == 2 for r in rows)
+        # 两条目共享同一内容哈希（SHA3-256 恒为 64 位 16 进制）
+        assert rows[0].sha3_hash == rows[1].sha3_hash
+        assert len(rows[0].sha3_hash) == 64
+
+    async def should_not_persist_physical_when_only_error(
+        self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """两次相同内容上传后删除其一，物理文件因仍被引用而保留。"""
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
+        user_id = await _user(db)
+        content = b"shared-bytes"
+        f1 = await self._upload_raw(db, user_id, content, original_name="a.pdf")
+        await self._upload_raw(db, user_id, content, original_name="b.pdf")
+
+        await delete_file(db, f1.id, actor_id=user_id)
+
+        rows = (
+            (await db.execute(select(LibraryFile).where(LibraryFile.id == f1.id)))
+            .scalars()
+            .one()
+        )
+        assert rows.status == "deleted"
+        # 还有另一个引用，物理文件保留
+        physical = await self._list_physical(tmp_path)
+        assert len(physical) == 1
+
+    async def should_purge_physical_when_last_reference_deleted(
+        self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
+        user_id = await _user(db)
+        content = b"unique-bytes"
+        f1 = await self._upload_raw(db, user_id, content, original_name="a.pdf")
+        f2 = await self._upload_raw(db, user_id, content, original_name="b.pdf")
+
+        await delete_file(db, f1.id, actor_id=user_id)
+        await delete_file(db, f2.id, actor_id=user_id)
+
+        physical = await self._list_physical(tmp_path)
+        assert physical == []
+
+    async def should_reject_non_admin_review(
+        self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
+        user_id = await _user(db)
+        f = await self._upload_raw(db, user_id, b"x")
+
+        with pytest.raises(BizError) as exc:
+            await review_file(db, f.id, FileStatus.APPROVED, is_admin=False)
+        assert exc.value.errcode == FileErr.STORE_ERROR
+
+    async def should_approve_file(
+        self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
+        user_id = await _user(db)
+        f = await self._upload_raw(db, user_id, b"approve-me")
+
+        reviewed = await review_file(
+            db, f.id, FileStatus.APPROVED, review_comment="ok", is_admin=True
+        )
+
+        assert reviewed.status == "approved"
+        assert reviewed.review_comment == "ok"
+
+    async def should_reject_review_removing_physical(
+        self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
+        user_id = await _user(db)
+        f = await self._upload_raw(db, user_id, b"reject-me")
+
+        reviewed = await review_file(
+            db, f.id, FileStatus.REJECTED, review_comment="copyright", is_admin=True
+        )
+
+        assert reviewed.status == "rejected"
+        physical = await self._list_physical(tmp_path)
+        assert physical == []
+
+    async def should_reject_review_when_not_pending(
+        self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "files_store_dir", str(tmp_path))
+        user_id = await _user(db)
+        f = await self._upload_raw(db, user_id, b"already-done")
+        await review_file(db, f.id, FileStatus.APPROVED, is_admin=True)
+
+        with pytest.raises(BizError) as exc:
+            await review_file(db, f.id, FileStatus.REJECTED, is_admin=True)
+        assert exc.value.errcode == FileErr.NOT_PENDING

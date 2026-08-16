@@ -8,12 +8,15 @@ from app.core.err import respond
 from app.db.session import get_session
 from app.modules.auth.deps import CurrentUser, get_current_user
 from app.modules.common import ApiResp, ModuleStatus
+from app.modules.files.models import FileStatus
 from app.modules.files.schemas import FileCreate, FileInfo, PageData
 from app.modules.files.service import (
     bump_download,
+    delete_file,
     get_file,
     get_files_plan,
     list_files,
+    review_file,
 )
 from app.modules.files.service import (
     create_file as create_file_service,
@@ -88,3 +91,38 @@ async def download_file(
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     return {"download_count": await bump_download(db, file_id)}
+
+
+@router.post("/{file_id}/review", response_model=ApiResp[FileInfo])
+@respond
+async def review_uploaded_file(
+    file_id: int,
+    status: FileStatus = Form(...),
+    review_comment: str | None = Form(default=None),
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> FileInfo:
+    """管理员审核文件：通过 / 驳回（驳回时删除物理文件并联动同 hash 条目）。"""
+    return await review_file(
+        db,
+        file_id,
+        target_status=status,
+        review_comment=review_comment,
+        is_admin=cur.account_level == "admin",
+    )
+
+
+@router.post("/{file_id}/delete", response_model=ApiResp[FileInfo])
+@respond
+async def delete_uploaded_file(
+    file_id: int,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> FileInfo:
+    """软删除文件：管理员或文件所有者可操作，引用归零时清理磁盘。"""
+    return await delete_file(
+        db,
+        file_id,
+        actor_id=cur.id,
+        is_admin=cur.account_level == "admin",
+    )

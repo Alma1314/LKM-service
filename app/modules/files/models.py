@@ -5,6 +5,7 @@ class FileStatus(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+    DELETED = "deleted"
 
 
 FILES_TABLE_PLAN = {
