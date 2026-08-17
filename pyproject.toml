@@ -19,6 +19,7 @@ dependencies = [
     "asyncpg>=0.31.0",
     "webauthn>=2,<3",
     "argon2-cffi>=23.1.0",
+    "redis>=5.0.0",
 ]
 
 [tool.pytest.ini_options]
@@ -54,6 +55,7 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "ruff>=0.16",
     "ty>=0.0.70",
+    "fakeredis>=2.22.0",
 ]
 
 [tool.ruff]

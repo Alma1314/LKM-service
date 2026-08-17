@@ -60,6 +60,9 @@ class Settings(BaseSettings):
 
     blog_repo_dir: str = "blog_repos"
     files_store_dir: str = "files_store"
+    avatars_dir: str = (
+        "static/avatars"  # 成员头像(webp)静态目录，经 /static/avatars/* 提供
+    )
     max_upload_bytes: int = 100 * 1024 * 1024  # 单文件上传上限 100MB
 
     @model_validator(mode="after")

@@ -28,6 +28,10 @@ COPY . .
 # 数据持久化目录(由 backend_data 卷挂载到 /data);先创建,保证无卷场景也能启动
 RUN mkdir -p /data
 
+# 成员头像(webp)打进镜像的 /app/static/avatars —— 不能在 /data(backend_data 卷会遮蔽镜像内内容);
+# 头像属只读烘焙资产,不随卷覆盖,部署后如要更新重构建镜像即可。
+ENV LKM_AVATARS_DIR=/app/static/avatars
+
 ENV LKM_DB_PATH=/data/lkm.db \
     LKM_BLOG_REPO_DIR=/data/blog_repos \
     LKM_FILES_STORE_DIR=/data/files_store
