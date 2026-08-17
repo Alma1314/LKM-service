@@ -3,6 +3,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import jobs
 from app.core.config import settings
 from app.core.err import BizError, CommonErr, respond
 from app.db.session import get_session
@@ -56,7 +57,7 @@ async def _send_reg_code(
         f"reg:{channel.name}:{contact}", max_count=5, window=3600
     )
     code, _ = await channel.create_verification(db, contact, "register")
-    background_tasks.add_task(channel.send_code, contact, code)
+    await jobs.send_code(channel.name, contact, code)
 
 
 async def _complete_reg_verify(

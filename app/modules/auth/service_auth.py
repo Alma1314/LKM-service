@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import jobs
 from app.core.config import settings
 from app.core.err import BizError, CommonErr
 from app.core.throttle import check_password_login_rate_limit
@@ -607,8 +608,7 @@ async def request_magic_link(
     base_url = frontend_url or settings.api_prefix
     link = f"{base_url}/auth/login/magic-link/verify?token={raw_token}"
 
-    if background_tasks is not None:
-        background_tasks.add_task(email_provider.send_magic_link, email, link)
+    await jobs.send_magic_link(email, link)
 
 
 async def verify_magic_link(

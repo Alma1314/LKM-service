@@ -5,6 +5,8 @@
 
 import time
 import uuid
+from collections.abc import Awaitable
+from typing import cast
 
 from redis.asyncio import Redis
 
@@ -47,16 +49,21 @@ class RedisRateLimiter:
         try:
             now = time.time()
             sha = await _ensure_script(redis)
-            result = redis.evalsha(
-                sha,
-                1,
-                key,
-                now,
-                float(window_seconds),
-                int(max_count),
-                uuid.uuid4().hex,
+            # 数字参数转 str 传入(redis 5.x stub 仅收 str)；Lua 内用 tonumber 还原。
+            # 返回值 cast 成 Awaitable[int] 以符合 5.x 的 `Awaitable[str]|str` 存根。
+            awaitable = cast(
+                Awaitable[int],
+                redis.evalsha(
+                    sha,
+                    1,
+                    key,
+                    str(now),
+                    str(float(window_seconds)),
+                    str(int(max_count)),
+                    uuid.uuid4().hex,
+                ),
             )
-            return await result == 1
+            return await awaitable == 1
         except Exception:
             return True  # 运行期异常同样 fail-open
 

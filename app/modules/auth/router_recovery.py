@@ -17,11 +17,12 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import jobs
 from app.core.config import settings
 from app.core.err import respond
 from app.db.session import get_session
 from app.modules.auth import service_recovery
-from app.modules.auth.deps import get_email_provider, get_sms_provider
+from app.modules.auth.deps import get_email_provider
 from app.modules.auth.providers.base import EmailProvider
 from app.modules.auth.schemas import (
     AdminRecoverBeginResponse,
@@ -99,7 +100,7 @@ async def recover_phone(
 ) -> dict[str, Any]:
     await check_code_rate_limit(f"recover:phone:{info.phone}", max_count=5, window=3600)
     code, _ = await create_phone_verification(db, info.phone, "reset")
-    background_tasks.add_task(get_sms_provider().send_code, info.phone, code)
+    await jobs.send_code("phone", info.phone, code)
     return {"message": "Verification code sent"}
 
 
@@ -125,7 +126,7 @@ async def recover_email(
 ) -> dict[str, Any]:
     await check_code_rate_limit(f"recover:email:{info.email}", max_count=5, window=3600)
     code, _ = await create_email_verification(db, info.email, "reset")
-    background_tasks.add_task(get_email_provider().send_code, info.email, code)
+    await jobs.send_code("email", info.email, code)
     return {"message": "Verification code sent"}
 
 
