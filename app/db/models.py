@@ -520,11 +520,44 @@ class Article(Base):
     likes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     comments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     bookmarks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tags: Mapped[list["Tag"]] = relationship(
+        secondary="article_tag", back_populates="articles", lazy="selectin"
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
+    )
+
+
+class Tag(Base):
+    """文章标签。多对多关联到文章。"""
+
+    __tablename__: str = "tags"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+
+    articles: Mapped[list["Article"]] = relationship(
+        secondary="article_tag", back_populates="tags"
+    )
+
+
+class ArticleTag(Base):
+    """文章-标签复合主键关联表（同 ForumPostLike 的幂等写法）。"""
+
+    __tablename__: str = "article_tag"
+
+    article_id: Mapped[int] = mapped_column(
+        ForeignKey("articles.id"), primary_key=True
+    )
+    tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id"), primary_key=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
     )
 
 

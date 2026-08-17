@@ -25,6 +25,7 @@ class ArticleDetail(ArticleListItem):
     content: str
     reading_time: int = 0
     keywords: list[str] = []
+    tags: list[str] = []
 
     @field_validator("keywords", mode="before")
     @classmethod
@@ -34,6 +35,17 @@ class ArticleDetail(ArticleListItem):
         if isinstance(v, list):
             return cast(list[str], v)
         return []
+
+
+class TagItem(BaseModel):
+    name: str
+    article_count: int
+
+
+class AboutItem(BaseModel):
+    title: str
+    description: str
+    maintainer: str
 
 
 class ArticleCategory(BaseModel):

@@ -81,3 +81,34 @@ async def test_categories_route_not_swallowed_by_slug(db, client):
     # 若被 /{slug} 吞掉，会返回 404（slug=categories 不存在）；正确应是分类列表
     assert resp.status_code == 200
     assert resp.json()["code"] == 0
+
+
+async def test_list_tags(db, client):
+    await _make_article(db, "a-1", "news")
+    resp = await client.get("/api/v1/articles/tags")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["code"] == 0
+    # 只读测试；无 tag 也会返回 items 列表（可能为空），端点结构正确即可
+    assert "items" in body["data"]
+
+
+async def test_search_articles_sqlite(db, client):
+    await _make_article(db, "a-1", "news", title="机器学习入门")
+    resp = await client.get("/api/v1/articles/search", params={"q": "机器"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["code"] == 0
+    assert body["data"]["total"] >= 1
+
+
+async def test_search_requires_q(db, client):
+    resp = await client.get("/api/v1/articles/search")
+    assert resp.status_code == 422
+
+
+async def test_about(db, client):
+    resp = await client.get("/api/v1/articles/about")
+    assert resp.status_code == 200
+    assert resp.json()["code"] == 0
+    assert "title" in resp.json()["data"]
