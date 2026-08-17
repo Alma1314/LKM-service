@@ -126,6 +126,17 @@ async def get_column(db: AsyncSession, column_id: int) -> ColumnInfo:
     )
 
 
+async def get_column_by_slug(db: AsyncSession, slug: str) -> ColumnInfo:
+    return ColumnInfo.model_validate(
+        await get_or_raise(
+            db,
+            Column,
+            ColumnErr.NOT_FOUND,
+            Column.slug == slug,
+        )
+    )
+
+
 async def create_post(
     db: AsyncSession, column_id: int, info: ColumnPostCreate, author_id: int
 ) -> ColumnPostInfo:

@@ -21,6 +21,7 @@ from app.modules.columns.service import (
     create_post,
     get_application,
     get_column,
+    get_column_by_slug,
     get_column_plan,
     get_post,
     list_applications,
@@ -110,6 +111,14 @@ async def get_columns(
     limit: int | None = Query(default=None, ge=1, le=200),
 ) -> dict[str, Any]:
     return {"items": await list_columns(db, page=page, limit=limit)}
+
+
+@router.get("/by-slug/{slug}", response_model=ApiResp[ColumnInfo])
+@respond
+async def get_column_detail_by_slug(
+    slug: str, db: AsyncSession = Depends(get_session)
+) -> ColumnInfo:
+    return await get_column_by_slug(db, slug)
 
 
 @router.get("/{column_id}", response_model=ApiResp[ColumnInfo])

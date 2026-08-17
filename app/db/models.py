@@ -163,7 +163,21 @@ class Column(Base):
     )
     title: Mapped[str] = mapped_column(String(80), nullable=False)
     description: Mapped[str] = mapped_column(String(300), nullable=False)
+    slug: Mapped[str | None] = mapped_column(String(120), unique=True, nullable=True)
     cover_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # —— 栏目展示字段（供前端社区「专栏」页富展示，见 docs 方案）——
+    author_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    author_title: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    author_bio: Mapped[str | None] = mapped_column(Text, nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    follower_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    like_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    subscribe_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    article_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tags: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    badges: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    board_tag: Mapped[str | None] = mapped_column(String(50), nullable=True)
     status: Mapped[ColumnStatus] = mapped_column(
         String(20), nullable=False, default=ColumnStatus.ACTIVE
     )
@@ -195,6 +209,10 @@ class ColumnPost(Base):
     status: Mapped[ColumnPostStatus] = mapped_column(
         String(20), nullable=False, default=ColumnPostStatus.PUBLISHED
     )
+    cover_image: Mapped[str | None] = mapped_column(Text, nullable=True)
+    view_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    like_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    comment_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
     )
@@ -508,3 +526,26 @@ class Article(Base):
     updated_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
     )
+
+
+class Report(Base):
+    """后台举报记录：用户对帖子/评论/文件等目标发起的举报，供后台审核。"""
+
+    __tablename__: str = "reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    type: Mapped[str] = mapped_column(String(20), nullable=False)  # post/comment/file
+    target_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    reporter_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reporter_name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    reason: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    handled_at: Mapped[datetime.datetime | None] = mapped_column(
+        UTCDateTime, nullable=True
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+
+    reporter: Mapped[User | None] = relationship(foreign_keys=[reporter_id])

@@ -44,3 +44,17 @@ class AdminStats(BaseModel):
     post_count: int
     file_count: int
     file_pending_count: int
+
+
+class AdminReportListItem(BaseModel):
+    """后台举报列表项。type: post/comment/file；status: pending/resolved/dismissed。"""
+
+    id: int
+    type: str
+    target_id: str
+    target_title: str
+    reporter_name: str
+    reason: str
+    status: str
+    created_at: datetime.datetime
+    handled_at: datetime.datetime | None = None
