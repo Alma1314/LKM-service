@@ -3,6 +3,8 @@ from typing import ClassVar, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from app.modules.auth.schemas import ProfileInfo
+
 
 class ArticleListItem(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
@@ -57,3 +59,25 @@ class ArticleCategory(BaseModel):
 class ArticleListData(BaseModel):
     items: list[ArticleListItem]
     total: int
+
+
+class ArticleLikeStatus(BaseModel):
+    liked: bool
+    like_count: int
+
+
+class ArticleCommentCreate(BaseModel):
+    content: str
+    parent_id: int | None = None
+
+
+class ArticleCommentOut(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
+
+    id: int
+    article_id: int
+    user_id: int
+    content: str
+    parent_id: int | None = None
+    created_at: datetime.datetime
+    profile: ProfileInfo | None = None

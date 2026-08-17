@@ -523,12 +523,66 @@ class Article(Base):
     tags: Mapped[list["Tag"]] = relationship(
         secondary="article_tag", back_populates="articles", lazy="selectin"
     )
+    comment_records: Mapped[list["ArticleComment"]] = relationship(
+        back_populates="article",
+        cascade="all, delete-orphan",
+        order_by="ArticleComment.created_at",
+    )
+    like_records: Mapped[list["ArticleLike"]] = relationship(
+        back_populates="article", cascade="all, delete-orphan"
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
     )
+
+
+class ArticleComment(Base):
+    """文章评论。``parent_id`` 自引用支持一级回复（同 BlogComment 的写法）。"""
+
+    __tablename__: str = "article_comments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    article_id: Mapped[int] = mapped_column(ForeignKey("articles.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("article_comments.id"), nullable=True
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
+    )
+
+    article: Mapped[Article] = relationship(back_populates="comment_records")
+    user: Mapped[User] = relationship()
+    parent: Mapped[ArticleComment | None] = relationship(
+        remote_side=[id], back_populates="replies"
+    )
+    replies: Mapped[list[ArticleComment]] = relationship(
+        back_populates="parent", cascade="all, delete-orphan"
+    )
+
+
+class ArticleLike(Base):
+    """文章点赞记录，复合主键保证同一用户对同一文章最多一条（点赞幂等）。"""
+
+    __tablename__: str = "article_likes"
+
+    article_id: Mapped[int] = mapped_column(
+        ForeignKey("articles.id"), primary_key=True
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+
+    article: Mapped[Article] = relationship(back_populates="like_records")
+    user: Mapped[User] = relationship()
 
 
 class Tag(Base):

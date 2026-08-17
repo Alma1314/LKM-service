@@ -1,6 +1,7 @@
 import datetime
 
-from app.db.models import Article
+from app.db.models import Article, Profile, User
+from app.modules.auth.security import create_access_token, hashpwd
 
 
 async def _make_article(
@@ -24,6 +25,38 @@ async def _make_article(
     db.add(article)
     await db.commit()
     return article
+
+
+async def _make_user(
+    db,
+    username: str = "cu",
+    email: str = "cu@x.com",
+) -> int:
+    user = User(
+        username=username,
+        email=email,
+        hashed_password=await hashpwd("secret123456"),
+        account_level="normal",
+    )
+    db.add(user)
+    await db.flush()
+    db.add(Profile(user_id=user.id))
+    await db.flush()
+    return user.id
+
+
+def _auth(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def _login_token(
+    db,
+    username: str = "cu",
+    email: str = "cu@x.com",
+) -> tuple[int, str]:
+    uid = await _make_user(db, username, email)
+    token = create_access_token(user_id=uid, account_level="normal", role="member")
+    return uid, token
 
 
 async def test_list_articles_pagination(db, client):
@@ -112,3 +145,90 @@ async def test_about(db, client):
     assert resp.status_code == 200
     assert resp.json()["code"] == 0
     assert "title" in resp.json()["data"]
+
+
+async def test_like_toggle(db, client):
+    await _make_article(db, "a-1", "news")
+    _, token = await _login_token(db)
+    h = _auth(token)
+    r1 = await client.post("/api/v1/articles/a-1/like", headers=h)
+    assert r1.status_code == 200
+    d1 = r1.json()["data"]
+    assert d1["liked"] is True and d1["like_count"] == 1
+    r2 = await client.post("/api/v1/articles/a-1/like", headers=h)
+    d2 = r2.json()["data"]
+    assert d2["liked"] is False and d2["like_count"] == 0
+
+
+async def test_like_requires_auth(db, client):
+    await _make_article(db, "a-1", "news")
+    resp = await client.post("/api/v1/articles/a-1/like")
+    assert resp.status_code == 403
+
+
+async def test_comment_create_and_count(db, client):
+    await _make_article(db, "a-1", "news")
+    _, token = await _login_token(db)
+    r = await client.post(
+        "/api/v1/articles/a-1/comments",
+        headers=_auth(token),
+        json={"content": "好文！"},
+    )
+    assert r.status_code == 200
+    assert r.json()["data"]["content"] == "好文！"
+    detail = (await client.get("/api/v1/articles/a-1")).json()["data"]
+    assert detail["comments"] == 1
+
+
+async def test_comment_reply(db, client):
+    await _make_article(db, "a-1", "news")
+    _, token = await _login_token(db)
+    h = _auth(token)
+    parent = (
+        await client.post(
+            "/api/v1/articles/a-1/comments",
+            headers=h,
+            json={"content": "父评论"},
+        )
+    ).json()["data"]
+    child = await client.post(
+        "/api/v1/articles/a-1/comments",
+        headers=h,
+        json={"content": "子回复", "parent_id": parent["id"]},
+    )
+    assert child.status_code == 200
+    assert child.json()["data"]["parent_id"] == parent["id"]
+    listed = (await client.get("/api/v1/articles/a-1/comments")).json()["data"]["items"]
+    assert len(listed) == 2
+
+
+async def test_comment_requires_auth(db, client):
+    await _make_article(db, "a-1", "news")
+    resp = await client.post("/api/v1/articles/a-1/comments", json={"content": "x"})
+    assert resp.status_code == 403
+
+
+async def test_delete_comment_owner_only(db, client):
+    await _make_article(db, "a-1", "news")
+    _, token = await _login_token(db, username="owner")
+    cmt_id = (
+        await client.post(
+            "/api/v1/articles/a-1/comments",
+            headers=_auth(token),
+            json={"content": "x"},
+        )
+    ).json()["data"]["id"]
+    other_id = await _make_user(db, username="other", email="other@x.com")
+    other_token = create_access_token(
+        user_id=other_id, account_level="normal", role="member"
+    )
+    forbid = await client.delete(
+        f"/api/v1/articles/comments/{cmt_id}", headers=_auth(other_token)
+    )
+    assert forbid.status_code == 403
+    ok = await client.delete(
+        f"/api/v1/articles/comments/{cmt_id}", headers=_auth(token)
+    )
+    assert ok.status_code == 200
+    detail = (await client.get("/api/v1/articles/a-1")).json()["data"]
+    assert detail["comments"] == 0
