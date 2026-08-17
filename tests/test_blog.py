@@ -1,6 +1,7 @@
 import asyncio
 import os
 import subprocess
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -762,4 +763,63 @@ class TestBlogRoutes:
 
     async def should_require_auth_for_star(self, client: AsyncClient) -> None:
         resp = await client.post("/api/v1/blog/series/1/star")
+        assert resp.status_code == 403
+
+
+class TestBlogWriteFiles:
+    """PUT /blog/series/{id}/files/{path} 写 Git 文件端点测试。"""
+
+    async def _owner_token(
+        self, db: AsyncSession, username: str, email: str
+    ) -> str:
+        user_id = await _user(db, username=username, email=email)
+        return create_access_token(
+            user_id=user_id, account_level="normal", role="member"
+        )
+
+    async def _create_series(self, client: AsyncClient, token: str, repo_name: str) -> int:
+        unique_repo = f"{repo_name}_{uuid.uuid4().hex[:8]}"
+        resp = await client.post(
+            "/api/v1/blog/series",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"title": "Write Test", "repo_name": unique_repo},
+        )
+        assert resp.status_code == 200
+        return resp.json()["data"]["id"]
+
+    async def should_write_and_read_back_file(self, client: AsyncClient, db: AsyncSession) -> None:
+        token = await self._owner_token(db, "writeowner", "write@example.com")
+        sid = await self._create_series(client, token, "w_owner")
+        _auth = {"Authorization": f"Bearer {token}"}
+
+        put = await client.put(
+            f"/api/v1/blog/series/{sid}/files/posts/a.mdx",
+            headers=_auth,
+            json={"content": "# 标题\n正文", "message": "save"},
+        )
+        assert put.status_code == 200
+
+        got = await client.get(f"/api/v1/blog/series/{sid}/files/posts/a.mdx")
+        assert got.status_code == 200
+        assert got.json()["data"]["content"].strip() == "# 标题\n正文"
+
+    async def should_reject_non_owner_write(self, client: AsyncClient, db: AsyncSession) -> None:
+        owner_token = await self._owner_token(db, "ownera", "ownera@example.com")
+        sid = await self._create_series(client, owner_token, "w_nonowner")
+
+        other_token = await self._owner_token(db, "otherb", "otherb@example.com")
+        resp = await client.put(
+            f"/api/v1/blog/series/{sid}/files/posts/a.mdx",
+            headers={"Authorization": f"Bearer {other_token}"},
+            json={"content": "x"},
+        )
+        assert resp.status_code == 403
+
+    async def should_require_auth_for_write(self, client: AsyncClient, db: AsyncSession) -> None:
+        owner_token = await self._owner_token(db, "ownerc", "ownerc@example.com")
+        sid = await self._create_series(client, owner_token, "w_noauth")
+
+        resp = await client.put(
+            f"/api/v1/blog/series/{sid}/files/posts/a.mdx", json={"content": "x"}
+        )
         assert resp.status_code == 403

@@ -386,3 +386,30 @@ async def get_file_content(
     )
     content = await asyncio.to_thread(git_svc.read_file, series.repo_name, filepath)
     return {"filepath": filepath, "content": content}
+
+
+async def write_series_file(
+    db: AsyncSession,
+    series_id: int,
+    user_id: int,
+    filepath: str,
+    content: str,
+    message: str | None = None,
+) -> None:
+    series = await get_or_raise(
+        db,
+        BlogSeries,
+        BlogErr.SERIES_NOT_FOUND,
+        BlogSeries.id == series_id,
+    )
+    if series.owner_id != user_id:
+        raise BizError(CommonErr.FORBIDDEN)
+    await asyncio.to_thread(
+        git_svc.write_file,
+        series.repo_name,
+        filepath,
+        content,
+        message or "update via editor",
+    )
+    series.updated_at = now_iso()
+    await db.flush()

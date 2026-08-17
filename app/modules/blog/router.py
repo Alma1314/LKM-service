@@ -15,6 +15,7 @@ from app.modules.blog.schemas import (
     BlogSeriesUpdate,
     BlogStarStatus,
     GitFileContent,
+    SeriesFileWrite,
 )
 from app.modules.blog.service import (
     create_comment,
@@ -27,6 +28,7 @@ from app.modules.blog.service import (
     list_series,
     toggle_star,
     update_series,
+    write_series_file,
 )
 from app.modules.common import ApiResp, ListData
 
@@ -107,6 +109,24 @@ async def get_blog_file(
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     return await get_file_content(db, series_id, filepath)
+
+
+@router.put(
+    "/series/{series_id}/files/{filepath:path}",
+    response_model=ApiResp[None],
+)
+@respond
+async def put_blog_file(
+    series_id: int,
+    filepath: str,
+    body: SeriesFileWrite,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    await write_series_file(
+        db, series_id, cur.id, filepath, body.content, body.message
+    )
+    return None
 
 
 # ---- Stars ----

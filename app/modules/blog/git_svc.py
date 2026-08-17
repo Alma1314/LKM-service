@@ -1,6 +1,7 @@
 import os
 import shutil
 import subprocess
+import tempfile
 from typing import Any
 
 from app.core.config import settings
@@ -123,3 +124,84 @@ def get_readme(repo_name: str) -> str | None:
         return read_file(repo_name, "README.md")
     except BizError:
         return None
+
+
+def _run_bare_check(repo_name: str, input_data: bytes | None, *args: str, env: dict[str, str] | None = None) -> str:
+    """跑裸仓库 git 命令，失败时像 _run_git 一样抛出 BizError(GIT_ERROR)。"""
+    path = _repo_path(repo_name)
+    cmd = ["git", "--git-dir", path, *list(args)]
+    try:
+        result = subprocess.run(
+            cmd,
+            input=input_data,
+            capture_output=True,
+            timeout=30,
+            check=True,
+            env=env,
+        )
+        return result.stdout.decode("utf-8", errors="replace").strip()
+    except subprocess.CalledProcessError as e:
+        detail = e.stderr.decode("utf-8", errors="replace").strip() or str(e)
+        raise BizError(BlogErr.GIT_ERROR, detail) from e
+    except FileNotFoundError:
+        raise BizError(BlogErr.GIT_ERROR, "git executable not found") from None
+
+
+def write_file(
+    repo_name: str,
+    filepath: str,
+    content: str,
+    message: str = "update via editor",
+    author: str = "LKM",
+) -> None:
+    """把 content 写入 series 仓库的 filepath 并提交（纯 bare 命令，无 worktree）。
+
+    用临时 GIT_INDEX_FILE 做 add+commit，不触碰裸仓库真实 index。
+    """
+    filepath = filepath.lstrip("/")
+
+    def _run(*args: str) -> str:
+        return _run_git(repo_name, *args)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        index_path = os.path.join(tmp, "index")
+        env = dict(os.environ)
+        env["GIT_INDEX_FILE"] = index_path
+        # commit-tree 不接受 --author 参数，作者需通过环境变量传入
+        env["GIT_AUTHOR_NAME"] = author
+        env["GIT_AUTHOR_EMAIL"] = f"{author}@series.local"
+        env["GIT_COMMITTER_NAME"] = author
+        env["GIT_COMMITTER_EMAIL"] = f"{author}@series.local"
+
+        # 写 blob
+        blob = _run_bare_check(
+            repo_name,
+            content.encode("utf-8"),
+            "hash-object", "-w", "--stdin",
+            env=env,
+        )
+
+        # 更新临时 index
+        _run_bare_check(
+            repo_name, None,
+            "update-index", "--add", "--cacheinfo", "100644", blob, filepath,
+            env=env,
+        )
+        tree = _run_bare_check(repo_name, None, "write-tree", env=env)
+
+        # 若已有 HEAD，作父提交；否则 root commit
+        parent_args: list[str] = []
+        try:
+            parent = _run("rev-parse", "--verify", "HEAD").strip()
+            if parent:
+                parent_args = ["-p", parent]
+        except BizError:
+            pass
+
+        commit = _run_bare_check(
+            repo_name, None,
+            "commit-tree", tree, *parent_args, "-m", message,
+            env=env,
+        )
+
+        _run("update-ref", "refs/heads/master", commit)
