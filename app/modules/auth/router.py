@@ -52,7 +52,9 @@ async def _send_reg_code(
     background_tasks: BackgroundTasks,
     db: AsyncSession,
 ) -> None:
-    check_code_rate_limit(f"reg:{channel.name}:{contact}", max_count=5, window=3600)
+    await check_code_rate_limit(
+        f"reg:{channel.name}:{contact}", max_count=5, window=3600
+    )
     code, _ = await channel.create_verification(db, contact, "register")
     background_tasks.add_task(channel.send_code, contact, code)
 
@@ -60,7 +62,7 @@ async def _send_reg_code(
 async def _complete_reg_verify(
     db: AsyncSession, channel: ContactChannel, contact: str, code: str
 ) -> dict[str, Any]:
-    check_code_rate_limit(
+    await check_code_rate_limit(
         f"reg:{channel.name}:verify:{contact}", max_count=5, window=3600
     )
     await channel.consume_code(db, contact, code, "register")
@@ -208,7 +210,7 @@ async def login_code_request(
     """请求登录验证码。自动检测邮箱还是手机号。"""
 
     # 无论用户是否存在，都进行速率限制
-    check_code_rate_limit(f"login:code:{contact}", max_count=5, window=3600)
+    await check_code_rate_limit(f"login:code:{contact}", max_count=5, window=3600)
 
     # 检查用户是否存在且符合条件
     channel = channel_for(contact)
@@ -233,7 +235,9 @@ async def login_code(
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """使用验证码登录。仅限普通/管理员用户。"""
-    check_code_rate_limit(f"login:code:verify:{contact}", max_count=5, window=3600)
+    await check_code_rate_limit(
+        f"login:code:verify:{contact}", max_count=5, window=3600
+    )
     return await service_auth.login_code(db, contact, code)
 
 
@@ -250,7 +254,7 @@ async def login_password_route(
 async def refresh_access_token_route(
     info: RefreshRequest, db: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
-    check_code_rate_limit("token:refresh:global", max_count=30, window=60)
+    await check_code_rate_limit("token:refresh:global", max_count=30, window=60)
     return await service_auth.refresh_access_token(db, info.refresh_token)
 
 
@@ -289,5 +293,5 @@ async def magic_link_verify(
     token: str,
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    check_code_rate_limit("magic-link:verify:global", max_count=10, window=3600)
+    await check_code_rate_limit("magic-link:verify:global", max_count=10, window=3600)
     return await service_auth.verify_magic_link(db, token, purpose="login")

@@ -188,7 +188,7 @@ async def verify_2fa(
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """在登录时使用临时令牌和 TOTP / 恢复码验证 2FA。"""
-    check_code_rate_limit("2fa:verify:global", max_count=10, window=3600)
+    await check_code_rate_limit("2fa:verify:global", max_count=10, window=3600)
     result = await service_2fa.verify_2fa(
         db,
         temp_token=body.temp_token,

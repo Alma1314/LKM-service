@@ -12,6 +12,7 @@ from starlette.types import Scope
 from strawberry.fastapi import GraphQLRouter
 
 from app.api.router import api_router
+from app.core import redis as redis_client
 from app.core.config import settings
 from app.core.err import BizError, map_err, resp_json
 from app.db.init_db import init_db
@@ -48,6 +49,9 @@ class _ImmutableStaticFiles(StaticFiles):
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     await init_db()
 
+    # 启动即探测 Redis，便于日志暴露其状态（未配置/不可用时静默降级为 None）
+    await redis_client.get_redis()
+
     # 确保成员头像静态目录存在（WebP 由运维/部署脚本放入）
     # mkdir 同步，放 to_thread 避免阻塞事件循环（ASYNC240）
     await asyncio.to_thread(
@@ -62,6 +66,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     with suppress(asyncio.CancelledError):
         await cleanup_task
 
+    await redis_client.close_redis()
     await dispose_engine()
 
 

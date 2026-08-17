@@ -97,7 +97,7 @@ async def recover_phone(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    check_code_rate_limit(f"recover:phone:{info.phone}", max_count=5, window=3600)
+    await check_code_rate_limit(f"recover:phone:{info.phone}", max_count=5, window=3600)
     code, _ = await create_phone_verification(db, info.phone, "reset")
     background_tasks.add_task(get_sms_provider().send_code, info.phone, code)
     return {"message": "Verification code sent"}
@@ -108,7 +108,7 @@ async def recover_phone(
 async def recover_phone_verify(
     info: RecoverPhoneVerifyRequest, db: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
-    check_code_rate_limit(
+    await check_code_rate_limit(
         f"recover:phone:verify:{info.phone}", max_count=5, window=3600
     )
     return await service_recovery.recover_by_contact(
@@ -123,7 +123,7 @@ async def recover_email(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    check_code_rate_limit(f"recover:email:{info.email}", max_count=5, window=3600)
+    await check_code_rate_limit(f"recover:email:{info.email}", max_count=5, window=3600)
     code, _ = await create_email_verification(db, info.email, "reset")
     background_tasks.add_task(get_email_provider().send_code, info.email, code)
     return {"message": "Verification code sent"}
@@ -134,7 +134,7 @@ async def recover_email(
 async def recover_email_verify(
     info: RecoverEmailVerifyRequest, db: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
-    check_code_rate_limit(
+    await check_code_rate_limit(
         f"recover:email:verify:{info.email}", max_count=5, window=3600
     )
     return await service_recovery.recover_by_contact(
@@ -166,7 +166,9 @@ async def recover_magic_link(
 async def recover_magic_link_verify(
     info: RecoverMagicLinkVerifyRequest, db: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
-    check_code_rate_limit("recover:magic-link:verify:global", max_count=10, window=3600)
+    await check_code_rate_limit(
+        "recover:magic-link:verify:global", max_count=10, window=3600
+    )
     return await service_recovery.recover_by_magic_link(
         db, info.token, info.new_password
     )
@@ -244,7 +246,7 @@ async def recover_admin_verify_contact(
     info: RecoverAdminVerifyContactRequest, db: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
     """第2步：验证联系方式验证码。返回用于 2FA 的 temp_token。"""
-    check_code_rate_limit(
+    await check_code_rate_limit(
         f"recover:admin:verify-contact:{info.txn_id}", max_count=3, window=600
     )
     return await service_recovery.recover_admin_verify_contact(

@@ -80,9 +80,11 @@ async def admin_login(
 
     频控两把锁（方案 §8.4）：用户名级 5/5min + 真实 IP 级 20/5min。
     """
-    check_code_rate_limit(f"admin:login:user:{body.username}", max_count=5, window=300)
+    await check_code_rate_limit(
+        f"admin:login:user:{body.username}", max_count=5, window=300
+    )
     ip = get_real_client_ip(request)
-    check_code_rate_limit(f"admin:login:ip:{ip}", max_count=20, window=300)
+    await check_code_rate_limit(f"admin:login:ip:{ip}", max_count=20, window=300)
 
     result = await db.execute(select(User).where(User.username == body.username))
     user = result.scalars().first()
@@ -131,7 +133,7 @@ async def admin_refresh(
 
     consume_once 原子撤销：并发下同一 refresh 只能被消费一次（复用检测）。
     """
-    check_code_rate_limit("admin:token:refresh:global", max_count=30, window=60)
+    await check_code_rate_limit("admin:token:refresh:global", max_count=30, window=60)
 
     raw_refresh = request.cookies.get(REFRESH_NAME)
     if not raw_refresh:

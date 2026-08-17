@@ -491,7 +491,7 @@ async def login_password(
 ) -> dict[str, Any]:
     """通过用户名、邮箱或手机号 + 密码进行认证。"""
     if ip_address:
-        check_password_login_rate_limit(ip_address)
+        await check_password_login_rate_limit(ip_address)
 
     account = _normalize_username(info.account)
     email_normalized = _normalize_email(info.account)
@@ -583,7 +583,7 @@ async def request_magic_link(
     —— 不会创建或发送链接，但仍会消耗速率限制配额。
     """
     rate_limit_key = f"magiclink:{email}"
-    check_code_rate_limit(rate_limit_key, max_count=5, window=3600)
+    await check_code_rate_limit(rate_limit_key, max_count=5, window=3600)
 
     user = (await db.execute(select(User).where(User.email == email))).scalars().first()
     if not user or user.account_level == "local":

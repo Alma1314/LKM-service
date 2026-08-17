@@ -26,6 +26,10 @@ dependencies = [
 pythonpath = ["."]
 python_functions = ["test_*", "should_*"]
 asyncio_mode = "auto"
+markers = [
+    "integration: 需真实 Redis 的集成测试，默认排除，用 `uv run pytest -m integration` 显式运行",
+]
+addopts = ["-m", "not integration"]
 filterwarnings = [
     "error",
     "ignore::ResourceWarning",

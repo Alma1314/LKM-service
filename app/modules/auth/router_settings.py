@@ -93,7 +93,7 @@ async def bind_email_request(
         )
 
     rate_limit_key = f"bind_email:{body.email}"
-    check_code_rate_limit(rate_limit_key)
+    await check_code_rate_limit(rate_limit_key)
 
     code, record_id = await create_email_verification(db, body.email, _BIND_PURPOSE)
     background_tasks.add_task(email_provider.send_code, body.email, code)
@@ -161,7 +161,7 @@ async def bind_phone_request(
         )
 
     rate_limit_key = f"bind_phone:{body.phone}"
-    check_code_rate_limit(rate_limit_key)
+    await check_code_rate_limit(rate_limit_key)
 
     code, record_id = await create_phone_verification(db, body.phone, _BIND_PURPOSE)
     background_tasks.add_task(sms_provider.send_code, body.phone, code)

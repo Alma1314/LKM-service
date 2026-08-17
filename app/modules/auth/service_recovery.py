@@ -221,7 +221,9 @@ async def recover_admin_begin(
         await db.flush()
 
         channel = channel_for(contact)
-        check_code_rate_limit(f"recover:admin:{contact}", max_count=3, window=3600)
+        await check_code_rate_limit(
+            f"recover:admin:{contact}", max_count=3, window=3600
+        )
         code, _ = await channel.create_verification(db, contact, "reset")
         if background_tasks is not None:
             cast(Any, background_tasks).add_task(channel.send_code, contact, code)
@@ -231,7 +233,7 @@ async def recover_admin_begin(
             "txn_id": txn_id,
         }
 
-    check_code_rate_limit(f"recover:admin:{contact}", max_count=3, window=3600)
+    await check_code_rate_limit(f"recover:admin:{contact}", max_count=3, window=3600)
     await dummy_verify()
     return {
         "message": "If the account is eligible, recovery instructions will be sent to the registered contact."

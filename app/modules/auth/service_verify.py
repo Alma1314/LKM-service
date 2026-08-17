@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.err import BizError
-from app.core.throttle import RateLimiter
+from app.core.redis_limiter import RedisRateLimiter
 from app.db.models import now_iso
 from app.db.repo import consume_once, isolated_update
 from app.modules.auth.errors import AuthErr
@@ -20,8 +20,6 @@ from app.modules.auth.models import EmailVerification, PhoneVerification
 
 _CODE_EXPIRE_MINUTES = 10
 _MAX_FAILED_ATTEMPTS = 3
-
-_rate_limiter = RateLimiter()
 
 
 def generate_code() -> str:
@@ -153,12 +151,14 @@ async def _consume(db: AsyncSession, record: Any, code: str) -> bool:
     return True
 
 
-def check_code_rate_limit(key: str, max_count: int = 5, window: float = 3600) -> None:
+async def check_code_rate_limit(
+    key: str, max_count: int = 5, window: float = 3600
+) -> None:
+    """如果 *key* 超过了限制，则抛出 ``BizError(VERIFICATION_CODE_RATE_LIMIT)``。
+
+    Redis 不可用时 fail-open（放行），避免限流成为单点故障。
     """
-    如果 *key* 超过了限制，则抛出 ``BizError(VERIFICATION_CODE_RATE_LIMIT)``。
-    使用全局内存中的滑动窗口速率限制器。
-    """
-    if not _rate_limiter.check(key, max_count, window):
+    if not await RedisRateLimiter().check(key, max_count, window):
         raise BizError(AuthErr.VERIFICATION_CODE_RATE_LIMIT)
 
 

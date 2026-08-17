@@ -1,59 +1,57 @@
-import time
+"""RedisRateLimiter 单元测试：不含 Lua 脚本的行为（fail-open、reset 静默）。
 
-from app.core.throttle import RateLimiter
+滑动窗口正确性（超限/隔离/窗口过期）依赖 Lua 脚本，fakeredis 无 Lua 引擎，
+由集成测试 tests/integration/test_redis_limiter_integration.py 用真实 Redis 覆盖。
+"""
+
+from collections.abc import AsyncIterator
+from typing import Any
+
+import pytest
+
+from app.core import redis as redis_core
+from app.core.redis_limiter import RedisRateLimiter
 
 
-class TestRateLimiter:
-    def should_allow_first_request(self):
-        """Allow the very first request for a key."""
-        limiter = RateLimiter()
-        assert limiter.check("alice", max_count=5, window_seconds=10) is True
+@pytest.fixture(autouse=True)
+async def isolated_get_redis() -> AsyncIterator[None]:
+    """每用例后恢复 get_redis 的原始注入，隔离测试。"""
+    original = redis_core.get_redis
+    yield
+    redis_core.get_redis = original  # type: ignore[assignment]
 
-    def should_allow_requests_within_limit(self):
-        """Allow requests as long as the count is within the limit."""
-        limiter = RateLimiter()
-        key = "bob"
-        for _ in range(5):
-            assert limiter.check(key, max_count=5, window_seconds=10) is True
 
-    def should_block_exceeding_requests(self):
-        """Block once the count exceeds the limit."""
-        limiter = RateLimiter()
-        key = "mallory"
-        for _ in range(5):
-            limiter.check(key, max_count=5, window_seconds=10)
-        assert limiter.check(key, max_count=5, window_seconds=10) is False
+class TestRedisRateLimiter:
+    async def should_fail_open_when_redis_unavailable(self) -> None:
+        """get_redis 返回 None（URL 未配置）时一律放行。"""
 
-    def should_allow_after_reset(self):
-        """Allow requests again after the key is reset."""
-        limiter = RateLimiter()
-        key = "trudy"
-        for _ in range(5):
-            limiter.check(key, max_count=5, window_seconds=10)
-        # blocked now
-        assert limiter.check(key, max_count=5, window_seconds=10) is False
-        limiter.reset(key)
-        # allowed after reset
-        assert limiter.check(key, max_count=5, window_seconds=10) is True
+        async def _none() -> Any:
+            return None
 
-    def should_isolate_different_keys(self):
-        """Rate limiting for one key should not affect another."""
-        limiter = RateLimiter()
-        key_a = "alice"
-        key_b = "bob"
-        for _ in range(5):
-            limiter.check(key_a, max_count=5, window_seconds=10)
-        # key_a is exhausted
-        assert limiter.check(key_a, max_count=5, window_seconds=10) is False
-        # key_b is unaffected
-        assert limiter.check(key_b, max_count=5, window_seconds=10) is True
+        redis_core.get_redis = _none  # type: ignore[assignment]
+        limiter = RedisRateLimiter()
+        assert await limiter.check("x", max_count=1, window_seconds=10) is True
 
-    def should_allow_after_window_expiry(self):
-        """Allow requests once the time window has elapsed."""
-        limiter = RateLimiter()
-        key = "carol"
-        for _ in range(5):
-            limiter.check(key, max_count=5, window_seconds=0.1)
-        assert limiter.check(key, max_count=5, window_seconds=0.1) is False
-        time.sleep(0.15)
-        assert limiter.check(key, max_count=5, window_seconds=0.1) is True
+    async def should_fail_open_when_script_fails(self) -> None:
+        """get_redis 返回的客户端在 Lua 脚本执行时抛异常 → 放行（fail-open）。"""
+
+        class _BrokenGetRedis:
+            async def evalsha(self, *args: Any, **kwargs: Any) -> Any:
+                raise RuntimeError("lua executor down")
+
+        async def _broken() -> Any:
+            return _BrokenGetRedis()
+
+        redis_core.get_redis = _broken  # type: ignore[assignment]
+        limiter = RedisRateLimiter()
+        assert await limiter.check("x", max_count=1, window_seconds=10) is True
+
+    async def should_reset_be_noop_when_redis_unavailable(self) -> None:
+        """get_redis 返回 None 时 reset 静默无操作、不抛异常。"""
+
+        async def _none() -> Any:
+            return None
+
+        redis_core.get_redis = _none  # type: ignore[assignment]
+        limiter = RedisRateLimiter()
+        await limiter.reset("x")  # 不应抛异常
