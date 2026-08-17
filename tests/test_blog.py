@@ -823,3 +823,193 @@ class TestBlogWriteFiles:
             f"/api/v1/blog/series/{sid}/files/posts/a.mdx", json={"content": "x"}
         )
         assert resp.status_code == 403
+
+
+class TestBlogPublish:
+    """POST /blog/series/{id}/publish 发布为文章端点测试。
+
+    发布链路：造 owner → 建 series（repo 名带 uuid 唯一后缀，防跨运行撞残留仓库）
+    → PUT 写带 frontmatter 的 MDX → POST publish → GET /articles/{slug} 读回。
+    """
+
+    MDX_TEMPLATE = """---
+title: {title}
+category: {category}
+tags: {tags}
+slug: {slug}
+---
+{body}"""
+
+    async def _owner_token(
+        self, db: AsyncSession, username: str, email: str
+    ) -> str:
+        user_id = await _user(db, username=username, email=email)
+        return create_access_token(
+            user_id=user_id, account_level="normal", role="member"
+        )
+
+    async def _make_series(self, client: AsyncClient, token: str) -> int:
+        """建一个 repo 名带 uuid 唯一后缀的系列，返回 id。"""
+        repo = f"pub_{uuid.uuid4().hex[:8]}"
+        resp = await client.post(
+            "/api/v1/blog/series",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"title": "Publish Series", "repo_name": repo},
+        )
+        assert resp.status_code == 200
+        return resp.json()["data"]["id"]
+
+    async def _write_file(
+        self, client: AsyncClient, token: str, sid: int, filepath: str, content: str
+    ) -> None:
+        resp = await client.put(
+            f"/api/v1/blog/series/{sid}/files/{filepath}",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"content": content, "message": "save"},
+        )
+        assert resp.status_code == 200
+
+    @staticmethod
+    def _mdx(
+        title: str = "Hello Pub",
+        category: str = "engineering",
+        tags: str = "['python', 'test']",
+        slug: str = "hello-pub",
+        body: str = "# Hello Pub\n正文内容",
+    ) -> str:
+        return TestBlogPublish.MDX_TEMPLATE.format(
+            title=title, category=category, tags=tags, slug=slug, body=body
+        )
+
+    async def should_publish_and_read_back(
+        self, client: AsyncClient, db: AsyncSession
+    ) -> None:
+        token = await self._owner_token(db, "pubowner1", "pubowner1@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+        sid = await self._make_series(client, token)
+
+        content = self._mdx(
+            title="Hello Pub",
+            category="engineering",
+            tags="['python', 'test']",
+            slug="hello-pub",
+            body="# Hello Pub\n正文内容",
+        )
+        await self._write_file(client, token, sid, "posts/a.mdx", content)
+
+        resp = await client.post(
+            f"/api/v1/blog/series/{sid}/publish",
+            headers=auth,
+            json={"filepath": "posts/a.mdx"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["slug"] == "hello-pub"
+        assert data["title"] == "Hello Pub"
+        assert data["category"] == "engineering"
+        assert data["tags"] == ["python", "test"]
+
+        # 发布后可从 articles 详情读回
+        got = await client.get(f"/api/v1/articles/{data['slug']}")
+        assert got.status_code == 200
+        gdata = got.json()["data"]
+        assert gdata["title"] == "Hello Pub"
+        assert gdata["content"] == content
+
+    async def should_be_idempotent_re_publish_updates(
+        self, client: AsyncClient, db: AsyncSession
+    ) -> None:
+        token = await self._owner_token(db, "pubowner2", "pubowner2@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+        sid = await self._make_series(client, token)
+
+        await self._write_file(
+            client, token, sid, "posts/a.mdx", self._mdx(body="# First\nv1")
+        )
+        r1 = await client.post(
+            f"/api/v1/blog/series/{sid}/publish",
+            headers=auth,
+            json={"filepath": "posts/a.mdx"},
+        )
+        assert r1.status_code == 200
+        slug = r1.json()["data"]["slug"]
+
+        # 改 series 文件内容再重发：读回新 content，且不重复建记录
+        new_content = self._mdx(body="# Second\nv2 更新")
+        await self._write_file(client, token, sid, "posts/a.mdx", new_content)
+        r2 = await client.post(
+            f"/api/v1/blog/series/{sid}/publish",
+            headers=auth,
+            json={"filepath": "posts/a.mdx"},
+        )
+        assert r2.status_code == 200
+        assert r2.json()["data"]["slug"] == slug
+
+        got = await client.get(f"/api/v1/articles/{slug}")
+        assert got.status_code == 200
+        gdata = got.json()["data"]
+        assert gdata["content"] == new_content
+
+        # 同一 slug 仍是唯一记录（列表里只有一条）
+        page = await client.get("/api/v1/articles")
+        items = page.json()["data"]["items"]
+        same_slug = [i for i in items if i["slug"] == slug]
+        assert len(same_slug) == 1
+
+    async def should_apply_override(
+        self, client: AsyncClient, db: AsyncSession
+    ) -> None:
+        token = await self._owner_token(db, "pubowner3", "pubowner3@example.com")
+        auth = {"Authorization": f"Bearer {token}"}
+        sid = await self._make_series(client, token)
+
+        # frontmatter 元数据，被 override 覆盖
+        await self._write_file(
+            client, token, sid, "posts/a.mdx", self._mdx(slug="from-fm", body="# x")
+        )
+
+        resp = await client.post(
+            f"/api/v1/blog/series/{sid}/publish",
+            headers=auth,
+            json={
+                "filepath": "posts/a.mdx",
+                "override": {
+                    "slug": "from-override",
+                    "category": "life",
+                    "tags": ["override-tag"],
+                },
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["slug"] == "from-override"
+        assert data["category"] == "life"
+        assert data["tags"] == ["override-tag"]
+
+    async def should_reject_publish_by_non_owner(
+        self, client: AsyncClient, db: AsyncSession
+    ) -> None:
+        owner_token = await self._owner_token(db, "pubowner4", "pubowner4@example.com")
+        sid = await self._make_series(client, owner_token)
+        await self._write_file(
+            client, owner_token, sid, "posts/a.mdx", self._mdx(body="# x")
+        )
+
+        other_token = await self._owner_token(db, "pubother4", "pubother4@example.com")
+        resp = await client.post(
+            f"/api/v1/blog/series/{sid}/publish",
+            headers={"Authorization": f"Bearer {other_token}"},
+            json={"filepath": "posts/a.mdx"},
+        )
+        assert resp.status_code == 403
+
+    async def should_require_auth_for_publish(
+        self, client: AsyncClient, db: AsyncSession
+    ) -> None:
+        token = await self._owner_token(db, "pubowner5", "pubowner5@example.com")
+        sid = await self._make_series(client, token)
+
+        resp = await client.post(
+            f"/api/v1/blog/series/{sid}/publish", json={"filepath": "posts/a.mdx"}
+        )
+        assert resp.status_code == 403

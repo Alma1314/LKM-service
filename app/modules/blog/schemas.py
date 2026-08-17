@@ -100,3 +100,8 @@ class GitFileContent(BaseModel):
 class SeriesFileWrite(BaseModel):
     content: str
     message: str | None = None
+
+
+class SeriesPublish(BaseModel):
+    filepath: str
+    override: dict[str, Any] | None = None

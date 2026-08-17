@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
 from app.db.session import get_session
+from app.modules.articles.schemas import ArticleDetail
 from app.modules.auth.deps import CurrentUser, get_current_user, get_optional_user
 from app.modules.blog.schemas import (
     BlogCommentCreate,
@@ -16,6 +17,7 @@ from app.modules.blog.schemas import (
     BlogStarStatus,
     GitFileContent,
     SeriesFileWrite,
+    SeriesPublish,
 )
 from app.modules.blog.service import (
     create_comment,
@@ -26,6 +28,7 @@ from app.modules.blog.service import (
     get_series,
     list_comments,
     list_series,
+    publish_series_file,
     toggle_star,
     update_series,
     write_series_file,
@@ -127,6 +130,32 @@ async def put_blog_file(
         db, series_id, cur.id, filepath, body.content, body.message
     )
     return None
+
+
+@router.post(
+    "/series/{series_id}/publish", response_model=ApiResp[ArticleDetail]
+)
+@respond
+async def publish_series_file_endpoint(
+    series_id: int,
+    body: SeriesPublish,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> ArticleDetail:
+    article = await publish_series_file(
+        db, series_id, cur.id, body.filepath, body.override
+    )
+    # article.tags 是 Tag 对象列表，ArticleDetail.tags 期望字符串 list。
+    # 不能直接 model_validate(article)：from_attributes 会读 article.tags 得到 Tag
+    # 对象而校验失败。故从标量属性构造 dict，tags 单独 map 成字符串。
+    return ArticleDetail(
+        **{
+            k: v
+            for k, v in article.__dict__.items()
+            if k in ArticleDetail.model_fields and k != "tags"
+        },
+        tags=[t.name for t in (article.tags or [])],
+    )
 
 
 # ---- Stars ----

@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, cast
 
 from sqlalchemy import func, or_, select, update
@@ -6,7 +7,15 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.err import BizError, CommonErr
-from app.db.models import Article, ArticleComment, ArticleLike, ArticleTag, Profile, Tag
+from app.db.models import (
+    Article,
+    ArticleComment,
+    ArticleLike,
+    ArticleTag,
+    Profile,
+    Tag,
+    now_iso,
+)
 from app.db.repo import get_or_raise
 from app.modules.articles.errors import ArticleErr
 from app.modules.articles.schemas import (
@@ -41,6 +50,67 @@ def estimate_reading_time(content: str) -> int:
     return max(1, round(text_length / READING_SPEED_CPS))
 
 
+async def _sync_article_tags(
+    db: AsyncSession, article_id: int, names: list[str]
+) -> None:
+    """按 name upsert Tag 并关联 ArticleTag（幂等）。"""
+    for n in set(names):
+        if not n:
+            continue
+        tag = (
+            await db.execute(select(Tag).where(Tag.name == n))
+        ).scalars().first()
+        if tag is None:
+            tag = Tag(name=n)
+            db.add(tag)
+            await db.flush()
+        existing = (
+            await db.execute(
+                select(ArticleTag).where(
+                    ArticleTag.article_id == article_id,
+                    ArticleTag.tag_id == tag.id,
+                )
+            )
+        ).scalars().first()
+        if existing is None:
+            db.add(ArticleTag(article_id=article_id, tag_id=tag.id))
+
+
+async def create_article(
+    db: AsyncSession,
+    slug: str,
+    title: str,
+    category: str,
+    content: str,
+    published: datetime | None = None,
+    description: str | None = None,
+    tags: list[str] | None = None,
+) -> Article:
+    # 幂等：同 slug 已存在则更新（重发 = 更新）
+    existing = (
+        await db.execute(select(Article).where(Article.slug == slug))
+    ).scalars().first()
+    if existing:
+        existing.title = title
+        existing.category = category
+        existing.content = content
+        if description is not None:
+            existing.description = description
+        await _sync_article_tags(db, existing.id, tags or [])
+        existing.updated_at = now_iso()
+        await db.flush()
+        return existing
+    article = Article(
+        slug=slug, title=title, category=category, content=content,
+        published=published or now_iso(), description=description,
+    )
+    db.add(article)
+    await db.flush()
+    if tags:
+        await _sync_article_tags(db, article.id, tags)
+    return article
+
+
 async def list_articles(
     db: AsyncSession, page: int = 1, page_size: int = 50
 ) -> dict[str, Any]:
@@ -62,9 +132,18 @@ async def get_article(db: AsyncSession, slug: str) -> ArticleDetail:
     article = await get_or_raise(
         db, Article, ArticleErr.NOT_FOUND, Article.slug == slug
     )
-    detail = ArticleDetail.model_validate(article)
+    # article.tags 是 Tag 对象列表，ArticleDetail.tags 期望字符串 list。
+    # 不能直接 model_validate(article)：from_attributes 会读 article.tags 得到
+    # Tag 对象而校验失败，故从标量属性构造 dict，tags 单独 map 成字符串。
+    detail = ArticleDetail(
+        **{
+            k: v
+            for k, v in article.__dict__.items()
+            if k in ArticleDetail.model_fields and k != "tags"
+        },
+        tags=[t.name for t in (article.tags or [])],
+    )
     detail.reading_time = estimate_reading_time(article.content)
-    detail.tags = [t.name for t in (article.tags or [])]
     return detail
 
 

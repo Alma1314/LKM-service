@@ -1,13 +1,14 @@
 import asyncio
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.err import BizError, CommonErr
-from app.db.models import BlogComment, BlogSeries, BlogStar, Profile, now_iso
+from app.db.models import Article, BlogComment, BlogSeries, BlogStar, Profile, now_iso
 from app.db.repo import get_or_raise
+from app.modules.articles.service import create_article as _create_article_alias
 from app.modules.auth.schemas import ProfileInfo
 from app.modules.blog import git_svc
 from app.modules.blog.errors import BlogErr
@@ -413,3 +414,60 @@ async def write_series_file(
     )
     series.updated_at = now_iso()
     await db.flush()
+
+
+# ---- publish ----
+
+
+async def publish_series_file(
+    db: AsyncSession,
+    series_id: int,
+    user_id: int,
+    filepath: str,
+    override: dict[str, Any] | None = None,
+) -> Article:
+    """把 series 指定 MDX 读出来、解析 frontmatter、落库为 Article（幂等更新）。"""
+    series = await get_or_raise(
+        db, BlogSeries, BlogErr.SERIES_NOT_FOUND, BlogSeries.id == series_id
+    )
+    if series.owner_id != user_id:
+        raise BizError(CommonErr.FORBIDDEN)
+
+    content = await asyncio.to_thread(git_svc.read_file, series.repo_name, filepath)
+    fm = git_svc.parse_frontmatter(content)
+    override = override or {}
+
+    raw_slug = override.get("slug") or fm.get("slug") or filepath.split("/")[-1]
+    slug = str(raw_slug).removesuffix(".mdx").removesuffix(".md")
+    first_line = content.split("\n", 1)[0].replace("# ", "").strip()
+    title = str(override.get("title") or fm.get("title") or first_line or slug)
+    category = str(override.get("category") or fm.get("category") or "engineering")
+    tags = [str(t) for t in cast("list[Any]", override.get("tags") or fm.get("tags") or [])]
+    description = override.get("description") or fm.get("description")
+
+    article = await _create_article_alias(
+        db,
+        slug=slug,
+        title=title,
+        category=category,
+        content=content,
+        tags=tags,
+        description=description,
+    )
+    # flush 后创建的 Article 未预载 tags 关系，返回前重新查询带上 tags，
+    # 避免 router 在 async 懒加载时触发 MissingGreenlet。
+    # 先显式 flush：_create_article_alias 仅 flush 了 Tag 行，ArticleTag 关联行
+    # 仍 pending（测试会话 autoflush=False），不 flush 则下面 selectinload 读不到。
+    await db.flush()
+    loaded = (
+        (
+            await db.execute(
+                select(Article)
+                .where(Article.id == article.id)
+                .options(selectinload(Article.tags))
+            )
+        )
+        .scalars()
+        .first()
+    )
+    return loaded or article

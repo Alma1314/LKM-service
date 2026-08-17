@@ -2,7 +2,9 @@ import os
 import shutil
 import subprocess
 import tempfile
-from typing import Any
+from typing import Any, cast
+
+import yaml
 
 from app.core.config import settings
 from app.core.err import BizError, CommonErr
@@ -117,6 +119,22 @@ def read_file(repo_name: str, filepath: str) -> str:
     if ".." in filepath.split("/"):
         raise BizError(CommonErr.INVALID_INPUT, "Invalid file path")
     return _run_git(repo_name, "show", f"HEAD:{filepath}")
+
+
+def parse_frontmatter(content: str) -> dict[str, Any]:
+    """从 MDX 首部 YAML 块提取元数据；无 frontmatter 返回 {}。"""
+    if not content.startswith("---"):
+        return {}
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return {}
+    try:
+        data = yaml.safe_load(parts[1])
+        if isinstance(data, dict):
+            return cast("dict[str, Any]", data)
+        return {}
+    except yaml.YAMLError:
+        return {}
 
 
 def get_readme(repo_name: str) -> str | None:
