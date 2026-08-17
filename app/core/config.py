@@ -59,7 +59,7 @@ class Settings(BaseSettings):
 
     blog_repo_dir: str = "blog_repos"
     files_store_dir: str = "files_store"
-    max_upload_bytes: int = 100 * 1024 * 1024  # 单文件上传上限 100MB
+    max_upload_bytes: int = 150 * 1024 * 1024  # 单文件上传上限 150MB
 
     @model_validator(mode="after")
     def _no_insecure_secrets_outside_dev(self) -> "Settings":

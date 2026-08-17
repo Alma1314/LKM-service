@@ -1,14 +1,10 @@
 import os
 import shutil
 import subprocess
-from typing import Any
 
 from app.core.config import settings
 from app.core.err import BizError, CommonErr
 from app.modules.blog.errors import BlogErr
-
-# 文件树节点：值为嵌套子树，或哨兵字符串 "__BLOB__"（表示文件）。
-TreeNode = dict[str, "TreeNode | str"]
 
 
 def _repo_path(repo_name: str) -> str:
@@ -19,7 +15,7 @@ def _repo_path(repo_name: str) -> str:
 
 def _run_git(repo_name: str, *args: str) -> str:
     path = _repo_path(repo_name)
-    cmd = ["git", "--git-dir", path, *list(args)]
+    cmd = ["git", "--git-dir", path] + list(args)
     try:
         result = subprocess.run(
             cmd,
@@ -30,9 +26,9 @@ def _run_git(repo_name: str, *args: str) -> str:
         return result.stdout.decode("utf-8", errors="replace")
     except subprocess.CalledProcessError as e:
         detail = e.stderr.decode("utf-8", errors="replace").strip() or str(e)
-        raise BizError(BlogErr.GIT_ERROR, detail) from e
+        raise BizError(BlogErr.GIT_ERROR, detail)
     except FileNotFoundError:
-        raise BizError(BlogErr.GIT_ERROR, "git executable not found") from None
+        raise BizError(BlogErr.GIT_ERROR, "git executable not found")
 
 
 def init_bare_repo(repo_name: str) -> str:
@@ -54,7 +50,7 @@ def init_bare_repo(repo_name: str) -> str:
         )
     except subprocess.CalledProcessError as e:
         detail = e.stderr.decode("utf-8", errors="replace").strip() or str(e)
-        raise BizError(BlogErr.GIT_ERROR, detail) from e
+        raise BizError(BlogErr.GIT_ERROR, detail)
     return path
 
 
@@ -72,16 +68,16 @@ def ensure_repo_has_commits(repo_name: str) -> bool:
         return False
 
 
-def get_file_tree(repo_name: str) -> list[dict[str, Any]]:
+def get_file_tree(repo_name: str) -> list[dict]:
     out = _run_git(repo_name, "ls-tree", "-r", "--name-only", "HEAD")
-    lines = [line.strip() for line in out.splitlines() if line.strip()]
+    lines = [l.strip() for l in out.splitlines() if l.strip()]
     if not lines:
         return []
 
-    root: TreeNode = {}
+    root: dict[str, dict | str] = {}
     for line in lines:
         parts = line.split("/")
-        cur: TreeNode = root
+        cur = root
         for i, part in enumerate(parts):
             if i == len(parts) - 1:
                 cur[part] = "__BLOB__"
@@ -92,13 +88,12 @@ def get_file_tree(repo_name: str) -> list[dict[str, Any]]:
                 if child == "__BLOB__":
                     cur[part] = {"__self__": "__BLOB__"}
                     child = cur[part]
-                if isinstance(child, dict):
-                    cur = child
+                cur = child
 
-    def _to_list(node: TreeNode | str) -> list[dict[str, Any]]:
-        if not isinstance(node, dict):
+    def _to_list(node: dict | str) -> list[dict]:
+        if node == "__BLOB__":
             return []
-        result: list[dict[str, Any]] = []
+        result = []
         for name, val in sorted(node.items()):
             if name == "__self__":
                 continue

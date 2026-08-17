@@ -1,8 +1,12 @@
-import datetime
+from __future__ import annotations
+
 import json
-from typing import ClassVar, cast
+from datetime import datetime
+from typing import Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+T = TypeVar("T")
 
 
 class FileCreate(BaseModel):
@@ -14,9 +18,9 @@ class FileCreate(BaseModel):
 
 
 class FileInfo(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    item_id: int = -1
     original_name: str
     uploader_id: int
     uploader_name: str = ""
@@ -25,27 +29,23 @@ class FileInfo(BaseModel):
     category_id: str
     category_name: str = ""
     description: str
-    tags: list[str]
+    tags: list[str] | str
     status: str
     review_comment: str | None = None
     download_count: int
     view_count: int
-    created_at: datetime.datetime
+    created_at: datetime
+    updated_at: datetime
 
     @field_validator("tags", mode="before")
     @classmethod
-    def _parse_tags(cls, v: object) -> list[str]:
+    def _parse_tags(cls, v):
         if isinstance(v, list):
-            return cast(list[str], v)
-        if not isinstance(v, str):
-            return []
+            return v
         try:
-            parsed = json.loads(v)
+            return json.loads(v)
         except (json.JSONDecodeError, TypeError):
             return []
-        if isinstance(parsed, list):
-            return cast(list[str], parsed)
-        return []
 
 
 class PageData[T](BaseModel):

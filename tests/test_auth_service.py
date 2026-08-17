@@ -1,53 +1,56 @@
-import datetime
 import hashlib
-from typing import Any, cast
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
+import app.modules.auth.models  # noqa: F401
 from app.core.err import BizError, CommonErr
+from app.db.models import Base
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import RefreshToken
+
+
+@pytest.fixture
+def db():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    SessionLocal: sessionmaker = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
 
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
 
 
-async def _reg_local(
-    db: AsyncSession, username: str = "alice", password: str = "secret123456"
-) -> dict[str, Any]:
+def _reg_local(db, username="alice", password="secret123456"):
     from app.modules.auth.schemas import UserRegLocal
 
-    return await _service().register_local(
-        db, UserRegLocal(username=username, password=password)
-    )
+    return _service().register_local(db, UserRegLocal(username=username, password=password))
 
 
-async def _reg_normal(
-    db: AsyncSession,
-    username: str = "bob",
-    password: str = "secret123456",
-    email: str = "bob@example.com",
-    phone: str = "13800001111",
-) -> dict[str, Any]:
+def _reg_normal(db, username="bob", password="secret123456", email="bob@example.com", phone="13800001111"):
     from app.modules.auth.schemas import UserRegNormal
 
-    return await _service().register_normal_with_password(
-        db,
-        UserRegNormal(username=username, password=password, email=email, phone=phone),
-        email_verified=True,
-        phone_verified=True,
+    return _service().register_normal_with_password(
+        db, UserRegNormal(username=username, password=password, email=email, phone=phone),
+        email_verified=True, phone_verified=True,
     )
 
 
-async def _login(db: AsyncSession, account: str, password: str) -> dict[str, Any]:
+def _login(db, account, password):
     from app.modules.auth.schemas import UserLoginPassword
 
-    return await _service().login_password(
-        db, UserLoginPassword(account=account, password=password)
-    )
+    return _service().login_password(db, UserLoginPassword(account=account, password=password))
 
 
 def _service():
@@ -56,39 +59,34 @@ def _service():
     return service_auth
 
 
-async def _get[T](db: AsyncSession, model: type[T], *where: Any) -> T:
-    # 测试均为“先建后查”，必然命中，返回类型直接按 _T 处理
-    return cast(T, (await db.execute(select(model).where(*where))).scalars().first())
-
-
 # ===================================================================
 # TestRegisterLocal
 # ===================================================================
 
 
 class TestRegisterLocal:
-    async def should_create_local_user_and_profile(self, db: AsyncSession):
+    def should_create_local_user_and_profile(self, db):
         from app.db.models import Profile, User
 
-        result = await _reg_local(db, username="alice", password="secret123456")
+        result = _reg_local(db, username="alice", password="secret123456")
         assert result["access_token"]
         assert result["refresh_token"]
         assert result["user_id"] == 1
         assert result["account_level"] == "local"
 
-        user = await _get(db, User, User.id == 1)
+        user = db.query(User).filter(User.id == 1).first()
         assert user.username == "alice"
         assert user.account_level == "local"
         assert "$" in user.hashed_password
 
-        profile = await _get(db, Profile, Profile.user_id == 1)
+        profile = db.query(Profile).filter(Profile.user_id == 1).first()
         assert profile is not None
         assert profile.role == "member"
 
-    async def should_reject_duplicate_username(self, db: AsyncSession):
-        await _reg_local(db, username="alice")
+    def should_reject_duplicate_username(self, db):
+        _reg_local(db, username="alice")
         with pytest.raises(BizError) as exc:
-            await _reg_local(db, username="alice", password="other1234567")
+            _reg_local(db, username="alice", password="other1234567")
         assert exc.value.errcode == AuthErr.ALREADY_REGISTERED
 
 
@@ -98,38 +96,27 @@ class TestRegisterLocal:
 
 
 class TestRegisterNormal:
-    async def should_create_normal_user_with_verified_email_and_phone(
-        self, db: AsyncSession
-    ):
+    def should_create_normal_user_with_verified_email_and_phone(self, db):
         from app.db.models import User
 
-        result = await _reg_normal(
-            db, username="bob", email="bob@example.com", phone="13800001111"
-        )
+        result = _reg_normal(db, username="bob", email="bob@example.com", phone="13800001111")
         assert result["user_id"] == 1
 
-        user = await _get(db, User, User.id == result["user_id"])
+        user = db.query(User).filter(User.id == result["user_id"]).first()
         assert user.username == "bob"
         assert user.email == "bob@example.com"
         assert user.phone == "13800001111"
         assert user.account_level == "normal"
         assert "$" in user.hashed_password
 
-    async def should_reject_if_email_and_phone_not_verified(self, db: AsyncSession):
+    def should_reject_if_email_and_phone_not_verified(self, db):
         from app.modules.auth.schemas import UserRegNormal
 
         svc = _service()
         with pytest.raises(BizError) as exc:
-            await svc.register_normal_with_password(
-                db,
-                UserRegNormal(
-                    username="bob",
-                    password="secret123456",
-                    email="bob@example.com",
-                    phone="13800001111",
-                ),
-                email_verified=False,
-                phone_verified=True,
+            svc.register_normal_with_password(
+                db, UserRegNormal(username="bob", password="secret123456", email="bob@example.com", phone="13800001111"),
+                email_verified=False, phone_verified=True,
             )
         assert exc.value.errcode == CommonErr.INVALID_INPUT
 
@@ -142,125 +129,117 @@ class TestRegisterNormal:
 class TestLoginPassword:
     # --- success paths ---
 
-    async def should_login_by_username(self, db: AsyncSession):
-        await _reg_local(db, username="alice", password="secret123456")
-        result = await _login(db, "alice", "secret123456")
+    def should_login_by_username(self, db):
+        _reg_local(db, username="alice", password="secret123456")
+        result = _login(db, "alice", "secret123456")
         assert result["user_id"] == 1
         assert result["access_token"]
         assert result["refresh_token"]
         assert result["account_level"] == "local"
 
-    async def should_login_by_email(self, db: AsyncSession):
+    def should_login_by_email(self, db):
+        _reg_local(db, username="alice", password="secret123456")
+        # give the user an email manually
         from app.db.models import User
 
-        await _reg_local(db, username="alice", password="secret123456")
-        # give the user an email manually
-        user = await _get(db, User, User.id == 1)
+        user = db.query(User).filter(User.id == 1).first()
         user.email = "alice@example.com"
-        await db.flush()
+        db.flush()
 
-        result = await _login(db, "alice@example.com", "secret123456")
+        result = _login(db, "alice@example.com", "secret123456")
         assert result["user_id"] == 1
 
-    async def should_login_by_phone(self, db: AsyncSession):
+    def should_login_by_phone(self, db):
+        _reg_local(db, username="alice", password="secret123456")
         from app.db.models import User
 
-        await _reg_local(db, username="alice", password="secret123456")
-        user = await _get(db, User, User.id == 1)
+        user = db.query(User).filter(User.id == 1).first()
         user.phone = "13800001111"
-        await db.flush()
+        db.flush()
 
-        result = await _login(db, "13800001111", "secret123456")
+        result = _login(db, "13800001111", "secret123456")
         assert result["user_id"] == 1
 
     # --- failure paths ---
 
-    async def should_reject_wrong_password(self, db: AsyncSession):
-        await _reg_local(db, username="alice", password="secret123456")
+    def should_reject_wrong_password(self, db):
+        _reg_local(db, username="alice", password="secret123456")
         with pytest.raises(BizError) as exc:
-            await _login(db, "alice", "wrongpass")
+            _login(db, "alice", "wrongpass")
         assert exc.value.errcode == AuthErr.INVALID_CREDENTIALS
 
-    async def should_reject_nonexistent_account(self, db: AsyncSession):
+    def should_reject_nonexistent_account(self, db):
         with pytest.raises(BizError) as exc:
-            await _login(db, "nobody", "secret123456")
+            _login(db, "nobody", "secret123456")
         assert exc.value.errcode == AuthErr.INVALID_CREDENTIALS
 
-    async def should_lock_after_5_failed_attempts(self, db: AsyncSession):
+    def should_lock_after_5_failed_attempts(self, db):
+        _reg_local(db, username="alice", password="secret123456")
         from app.db.models import User
 
-        await _reg_local(db, username="alice", password="secret123456")
         for _ in range(5):
             try:
-                await _login(db, "alice", "wrongpass")
+                _login(db, "alice", "wrongpass")
             except BizError:
                 # Expire only – don't rollback, so the flush in _record_failed_attempt
                 # is preserved. The exception itself rolls back nothing at the DB level
                 # because autoflush=False; only flush calls persist.
                 db.expire_all()
 
-        user = await _get(db, User, User.username == "alice")
+        user = db.query(User).filter(User.username == "alice").first()
         assert user.failed_login_attempts == 5
         assert user.is_locked is True
 
         with pytest.raises(BizError) as exc:
-            await _login(db, "alice", "secret123456")
+            _login(db, "alice", "secret123456")
         assert exc.value.errcode == AuthErr.INVALID_CREDENTIALS
 
-    async def should_reset_failed_counter_on_success(self, db: AsyncSession):
+    def should_reset_failed_counter_on_success(self, db):
+        _reg_local(db, username="alice", password="secret123456")
         from app.db.models import User
 
-        await _reg_local(db, username="alice", password="secret123456")
         # 2 failures
         for _ in range(2):
             try:
-                await _login(db, "alice", "wrongpass")
+                _login(db, "alice", "wrongpass")
             except BizError:
                 db.expire_all()
 
         # then success
-        result = await _login(db, "alice", "secret123456")
+        result = _login(db, "alice", "secret123456")
         assert result["user_id"] == 1
 
-        user = await _get(db, User, User.username == "alice")
+        user = db.query(User).filter(User.username == "alice").first()
         assert user.failed_login_attempts == 0
         assert user.is_locked is False
 
-    async def should_return_setup_token_for_admin_without_totp(self, db: AsyncSession):
+    def should_return_setup_token_for_admin_without_totp(self, db):
         """Admin-level user without TOTP should get a setup_required response."""
         from app.db.models import User
 
-        user = User(
-            username="admin",
-            email="admin@example.com",
-            hashed_password="dummy$notreal",
-            account_level="admin",
-        )
+        user = User(username="admin", email="admin@example.com",
+                     hashed_password="dummy$notreal", account_level="admin")
         db.add(user)
-        await db.flush()
+        db.flush()
         from app.modules.auth.security import hashpwd
 
         user.hashed_password = hashpwd("admin123")
-        await db.flush()
+        db.flush()
 
-        result = await _login(db, "admin", "admin123")
+        result = _login(db, "admin", "admin123")
         assert result["requires_2fa"] is True
         assert result.get("setup_required") is True
         assert result["temp_token"] is not None
 
-    async def should_return_temp_token_when_2fa_required(self, db: AsyncSession):
+    def should_return_temp_token_when_2fa_required(self, db):
         """If user has TOTP enabled, login returns requires_2fa=True and a temp_token."""
         from app.db.models import User
         from app.modules.auth.models import TOTP
 
-        user = User(
-            username="secure",
-            email="secure@example.com",
-            hashed_password="dummy$notreal",
-            account_level="normal",
-        )
+        user = User(username="secure", email="secure@example.com",
+                     hashed_password="dummy$notreal", account_level="normal")
         db.add(user)
-        await db.flush()
+        db.flush()
         from app.modules.auth.security import hashpwd
 
         user.hashed_password = hashpwd("secret123456")
@@ -268,9 +247,9 @@ class TestLoginPassword:
         # enable TOTP
         totp = TOTP(user_id=user.id, secret="MZXW6YTBOJQXI33F", enabled=True)
         db.add(totp)
-        await db.flush()
+        db.flush()
 
-        result = await _login(db, "secure", "secret123456")
+        result = _login(db, "secure", "secret123456")
         assert result["requires_2fa"] is True
         assert result["temp_token"]
         assert result["access_token"] is None
@@ -283,30 +262,30 @@ class TestLoginPassword:
 
 
 class TestRegisterByVerify:
-    async def should_create_user_by_email_verify(self, db: AsyncSession):
+    def should_create_user_by_email_verify(self, db):
         from app.db.models import User
 
         svc = _service()
-        result = await svc.register_by_verify(db, "email", "new@example.com")
+        result = svc.register_by_verify(db, "email", "new@example.com")
         user_id = result["user_id"]
         assert result["access_token"] is not None
         assert result["refresh_token"] is not None
         assert result["account_level"] == "normal"
 
-        user = await _get(db, User, User.id == user_id)
+        user = db.query(User).filter(User.id == user_id).first()
         assert user.email == "new@example.com"
         assert user.account_level == "normal"
         assert user.hashed_password == ""
 
-    async def should_create_user_by_phone_verify(self, db: AsyncSession):
+    def should_create_user_by_phone_verify(self, db):
         from app.db.models import User
 
         svc = _service()
-        result = await svc.register_by_verify(db, "phone", "13900001111")
+        result = svc.register_by_verify(db, "phone", "13900001111")
         user_id = result["user_id"]
         assert result["access_token"] is not None
 
-        user = await _get(db, User, User.id == user_id)
+        user = db.query(User).filter(User.id == user_id).first()
         assert user.phone == "13900001111"
         assert user.account_level == "normal"
 
@@ -317,53 +296,45 @@ class TestRegisterByVerify:
 
 
 class TestUpgrade:
-    async def should_upgrade_local_to_normal(self, db: AsyncSession):
+    def should_upgrade_local_to_normal(self, db):
         from app.db.models import User
 
-        await _reg_local(db, username="alice")
-        user = await _get(db, User, User.username == "alice")
+        _reg_local(db, username="alice")
+        user = db.query(User).filter(User.username == "alice").first()
         assert user.account_level == "local"
 
         svc = _service()
-        await svc.upgrade_to_normal(db, user)
-        await db.flush()
+        svc.upgrade_to_normal(db, user)
+        db.flush()
 
-        user = await _get(db, User, User.username == "alice")
+        user = db.query(User).filter(User.username == "alice").first()
         assert user.account_level == "normal"
 
-    async def should_not_downgrade_already_normal(self, db: AsyncSession):
+    def should_not_downgrade_already_normal(self, db):
         from app.db.models import User
 
-        user = User(
-            username="normal_guy",
-            email="n@example.com",
-            hashed_password="x",
-            account_level="normal",
-        )
+        user = User(username="normal_guy", email="n@example.com",
+                     hashed_password="x", account_level="normal")
         db.add(user)
-        await db.flush()
+        db.flush()
 
         svc = _service()
-        await svc.upgrade_to_normal(db, user)
-        await db.flush()
+        svc.upgrade_to_normal(db, user)
+        db.flush()
 
         assert user.account_level == "normal"
 
-    async def admin_should_stay_admin(self, db: AsyncSession):
+    def admin_should_stay_admin(self, db):
         from app.db.models import User
 
-        user = User(
-            username="boss",
-            email="boss@example.com",
-            hashed_password="x",
-            account_level="admin",
-        )
+        user = User(username="boss", email="boss@example.com",
+                     hashed_password="x", account_level="admin")
         db.add(user)
-        await db.flush()
+        db.flush()
 
         svc = _service()
-        await svc.upgrade_to_normal(db, user)
-        await db.flush()
+        svc.upgrade_to_normal(db, user)
+        db.flush()
 
         assert user.account_level == "admin"
 
@@ -374,59 +345,55 @@ class TestUpgrade:
 
 
 class TestRefresh:
-    async def should_refresh_valid_token(self, db: AsyncSession):
-        await _reg_local(db, username="alice", password="secret123456")
-        tokens = (
-            (await db.execute(select(RefreshToken).where(RefreshToken.user_id == 1)))
-            .scalars()
-            .all()
-        )
+    def should_refresh_valid_token(self, db):
+        _reg_local(db, username="alice", password="secret123456")
+        tokens = db.query(RefreshToken).filter(RefreshToken.user_id == 1).all()
         assert len(tokens) == 1
 
         # get the raw refresh token from the registration result
-        result = await _reg_local(db, username="bob", password="other1234567")
+        result = _reg_local(db, username="bob", password="other1234567")
         raw = result["refresh_token"]
 
         svc = _service()
-        new = await svc.refresh_access_token(db, raw)
+        new = svc.refresh_access_token(db, raw)
         assert new["access_token"]
         assert new["refresh_token"]
         assert new["refresh_token"] != raw  # rotation
 
         # old token should be revoked
         old_hash = hashlib.sha256(raw.encode()).hexdigest()
-        old = await _get(db, RefreshToken, RefreshToken.token_hash == old_hash)
+        old = db.query(RefreshToken).filter(RefreshToken.token_hash == old_hash).first()
         assert old.revoked_at is not None
 
-    async def should_reject_revoked_token(self, db: AsyncSession):
-        result = await _reg_local(db, username="alice")
+    def should_reject_revoked_token(self, db):
+        result = _reg_local(db, username="alice")
         raw = result["refresh_token"]
 
         svc = _service()
         # first refresh works
-        await svc.refresh_access_token(db, raw)
+        svc.refresh_access_token(db, raw)
 
         # second refresh with same (revoked) token rejects
         with pytest.raises(BizError) as exc:
-            await svc.refresh_access_token(db, raw)
+            svc.refresh_access_token(db, raw)
         assert exc.value.errcode == AuthErr.TOKEN_INVALID
 
-    async def should_reject_expired_token(self, db: AsyncSession):
-        result = await _reg_local(db, username="alice")
+    def should_reject_expired_token(self, db):
+        result = _reg_local(db, username="alice")
         raw = result["refresh_token"]
 
         # manually expire the token in DB
         tok_hash = hashlib.sha256(raw.encode()).hexdigest()
+        import datetime as dt
 
-        tok = await _get(db, RefreshToken, RefreshToken.token_hash == tok_hash)
-        tok.expires_at = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
-            days=1
-        )
-        await db.flush()
+
+        tok = db.query(RefreshToken).filter(RefreshToken.token_hash == tok_hash).first()
+        tok.expires_at = (dt.datetime.now(dt.UTC) - dt.timedelta(days=1)).isoformat()
+        db.flush()
 
         svc = _service()
         with pytest.raises(BizError) as exc:
-            await svc.refresh_access_token(db, raw)
+            svc.refresh_access_token(db, raw)
         assert exc.value.errcode == AuthErr.TOKEN_EXPIRED
 
 
@@ -436,28 +403,20 @@ class TestRefresh:
 
 
 class TestRevokeAll:
-    async def should_revoke_all_user_tokens(self, db: AsyncSession):
-        await _reg_local(db, username="alice")
-        await _reg_local(db, username="bob")
+    def should_revoke_all_user_tokens(self, db):
+        result1 = _reg_local(db, username="alice")
+        result2 = _reg_local(db, username="bob")
 
         svc = _service()
-        await svc.revoke_all_refresh_tokens(db, 1)
+        svc.revoke_all_refresh_tokens(db, 1)
 
         # alice's tokens revoked
-        tok1 = (
-            (await db.execute(select(RefreshToken).where(RefreshToken.user_id == 1)))
-            .scalars()
-            .all()
-        )
+        tok1 = db.query(RefreshToken).filter(RefreshToken.user_id == 1).all()
         for t in tok1:
             assert t.revoked_at is not None
 
         # bob's tokens untouched
-        tok2 = (
-            (await db.execute(select(RefreshToken).where(RefreshToken.user_id == 2)))
-            .scalars()
-            .all()
-        )
+        tok2 = db.query(RefreshToken).filter(RefreshToken.user_id == 2).all()
         for t in tok2:
             assert t.revoked_at is None
 
@@ -468,20 +427,14 @@ class TestRevokeAll:
 
 
 class TestAuditLog:
-    async def should_create_audit_log(self, db: AsyncSession):
+    def should_create_audit_log(self, db):
         from app.modules.auth.models import AuditLog
 
-        await _reg_local(db, username="alice")
+        _reg_local(db, username="alice")
         svc = _service()
-        await svc.log_audit(
-            db, 1, "login", detail="password login", ip_address="127.0.0.1"
-        )
+        svc.log_audit(db, 1, "login", detail="password login", ip_address="127.0.0.1")
 
-        logs = (
-            (await db.execute(select(AuditLog).where(AuditLog.user_id == 1)))
-            .scalars()
-            .all()
-        )
+        logs = db.query(AuditLog).filter(AuditLog.user_id == 1).all()
         assert len(logs) == 1
         assert logs[0].action == "login"
         assert logs[0].detail == "password login"
