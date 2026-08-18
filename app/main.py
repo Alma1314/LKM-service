@@ -35,6 +35,23 @@ from app.modules.forum.graphql import schema as forum_graphql_schema
 request_logger = logging.getLogger("lkm.http")
 
 
+def _register_all_errors() -> None:
+    """错误码注册收敛（模块7）：集中 import 各模块 errors 使 `register()` 副作用必达。
+
+    防止漏配错误码导致 map_err 转 500。新增模块的 ErrCode 必须在此登记。导入放函数内
+    （非模块顶层 `import app.x`），避免在 main 模块命名空间绑定 `app` 包名，与
+    模块级 `app = create_app()` 冲突。
+    """
+    import app.modules.articles.errors
+    import app.modules.auth.errors
+    import app.modules.blog.errors
+    import app.modules.columns.errors
+    import app.modules.files.errors
+    import app.modules.forum.errors
+    import app.modules.members.errors
+    import app.modules.starhope.errors
+
+
 class _ImmutableStaticFiles(StaticFiles):
     """给静态文件成功响应附加 immutable 长缓存头。
 
@@ -82,6 +99,9 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
 
 
 def create_app() -> FastAPI:
+    # 确保所有错误码已注册（防漏配导致 500）
+    _register_all_errors()
+
     application = FastAPI(
         title=settings.app_name,
         version=settings.app_version,

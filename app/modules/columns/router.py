@@ -3,9 +3,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.err import BizError, CommonErr, respond
+from app.core.err import respond
 from app.db.session import get_read_session, get_session
 from app.modules.auth.deps import CurrentUser, RequireLevel, get_current_user
+from app.modules.auth.permissions import require_owner_or_admin
 from app.modules.columns.schemas import (
     ColumnApplicationCreate,
     ColumnApplicationInfo,
@@ -85,8 +86,7 @@ async def get_application_detail(
     db: AsyncSession = Depends(get_read_session),
 ) -> ColumnApplicationInfo:
     app = await get_application(db, application_id)
-    if cur.account_level != "admin" and cur.id != app.user_id:
-        raise BizError(CommonErr.FORBIDDEN)
+    require_owner_or_admin(cur, app.user_id)
     return app
 
 
@@ -138,8 +138,7 @@ async def publish_column_post(
     db: AsyncSession = Depends(get_session),
 ) -> ColumnPostInfo:
     column = await get_column(db, column_id)
-    if cur.account_level != "admin" and cur.id != column.owner_id:
-        raise BizError(CommonErr.FORBIDDEN)
+    require_owner_or_admin(cur, column.owner_id)
     return await create_post(db, column_id, info, cur.id)
 
 

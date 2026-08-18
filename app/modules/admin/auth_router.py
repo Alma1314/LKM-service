@@ -34,8 +34,6 @@ from .schemas import AdminLoginReq, AdminUserOut
 
 router = APIRouter(prefix="/admin", tags=["admin-auth"])
 
-REFRESH_TOKEN_DAYS = 7
-
 
 def _set_access_cookie(resp: Response, token: str) -> None:
     resp.set_cookie(
@@ -44,7 +42,7 @@ def _set_access_cookie(resp: Response, token: str) -> None:
         httponly=True,
         secure=settings.is_production,  # 生产 https 强制 Secure；开发 http 免加密
         samesite="lax",
-        max_age=15 * 60,
+        max_age=settings.admin_access_cookie_minutes * 60,
         path=COOKIE_PATH,
     )
 
@@ -56,7 +54,7 @@ def _set_refresh_cookie(resp: Response, token: str) -> None:
         httponly=True,
         secure=settings.is_production,
         samesite="lax",
-        max_age=REFRESH_TOKEN_DAYS * 86400,
+        max_age=settings.refresh_token_expire_days * 86400,
         path=COOKIE_PATH,
     )
 
@@ -111,7 +109,8 @@ async def admin_login(
             token_hash=hash_refresh_token(raw_refresh),
             kind="admin",
             mfa_verified=False,
-            expires_at=now_iso() + datetime.timedelta(days=REFRESH_TOKEN_DAYS),
+            expires_at=now_iso()
+            + datetime.timedelta(days=settings.refresh_token_expire_days),
             revoked_at=None,
         )
     )
@@ -180,7 +179,8 @@ async def admin_refresh(
             token_hash=hash_refresh_token(new_refresh),
             kind="admin",
             mfa_verified=False,
-            expires_at=now_iso() + datetime.timedelta(days=REFRESH_TOKEN_DAYS),
+            expires_at=now_iso()
+            + datetime.timedelta(days=settings.refresh_token_expire_days),
             revoked_at=None,
         )
     )

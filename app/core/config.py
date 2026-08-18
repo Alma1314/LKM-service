@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
 
+    # 后台 cookie 会话：access cookie 存活分钟（refresh 天数复用 refresh_token_expire_days）
+    admin_access_cookie_minutes: int = 15
+
+    # 登录限流安全参数（见 backend_auth_security 记忆）：IP/全局每次数量与窗口秒
+    login_ip_max_per_min: int = 20
+    login_global_max_per_min: int = 200
+    login_window_seconds: int = 60
+
     # TOTP / 敏感数据加密密钥 — 必须与 jwt_secret 分开设置
     totp_encryption_key: str = "change-me-totp-encryption-key-at-least-32-bytes"
 
