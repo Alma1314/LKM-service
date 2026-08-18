@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -229,6 +230,10 @@ class ColumnPost(Base):
 
 class ForumPost(Base):
     __tablename__: str = "forum_posts"
+    # 列表热路径按 category 过滤 + (is_pinned, id) 排序 → 复合索引一次命中
+    __table_args__: tuple[Index, ...] = (
+        Index("ix_forum_posts_cat_pinned_id", "category_id", "is_pinned", "id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
@@ -259,6 +264,10 @@ class ForumPost(Base):
 
 class ForumComment(Base):
     __tablename__: str = "forum_comments"
+    # 评论列表热路径按 post 过滤 + 按 floor 排序 → 复合索引
+    __table_args__: tuple[Index, ...] = (
+        Index("ix_forum_comments_post_floor", "post_id", "floor_number"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     post_id: Mapped[int] = mapped_column(ForeignKey("forum_posts.id"), nullable=False)
@@ -504,6 +513,11 @@ class StarHopeAiAgent(Base):
 
 class Article(Base):
     __tablename__: str = "articles"
+    # 文章列表热路径按 published 倒序，category 用于分组/聚合
+    __table_args__: tuple[Index, ...] = (
+        Index("ix_articles_published", "published"),
+        Index("ix_articles_category_published", "category", "published"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     slug: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)

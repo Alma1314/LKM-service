@@ -2,6 +2,8 @@ from datetime import datetime
 from typing import Any, cast
 
 from sqlalchemy import func, or_, select, update
+from sqlalchemy.dialects import postgresql as pg
+from sqlalchemy.dialects import sqlite as sq
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -53,29 +55,62 @@ def estimate_reading_time(content: str) -> int:
 async def _sync_article_tags(
     db: AsyncSession, article_id: int, names: list[str]
 ) -> None:
-    """按 name upsert Tag 并关联 ArticleTag（幂等）。"""
-    for n in set(names):
-        if not n:
-            continue
-        tag = (await db.execute(select(Tag).where(Tag.name == n))).scalars().first()
-        if tag is None:
-            tag = Tag(name=n)
-            db.add(tag)
-            await db.flush()
-        existing = (
-            (
-                await db.execute(
-                    select(ArticleTag).where(
-                        ArticleTag.article_id == article_id,
-                        ArticleTag.tag_id == tag.id,
-                    )
+    """按 name upsert Tag 并关联 ArticleTag（幂等，批量 O(log N)，保序去重）。
+
+    相比逐 tag 查/插的旧实现：tag 存在性 1 次批量查 + 缺失 tag 一次批量插（on
+    conflict do nothing）+ 一次批量回查，关联查/插各一次，全程固定次数往返且
+    保持输入 name 顺序（避免 set 迭代造成的顺序随机，修复预存的标签顺序 flaky）。
+    """
+    # 去空 + 保首现顺序去重（勿用 set：顺序非确定会打乱 tags 返回序）
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for n in names:
+        if n and n not in seen:
+            ordered.append(n)
+            seen.add(n)
+    if not ordered:
+        return
+
+    # 1) 批量查已存在 tag（name -> id）
+    rows = (
+        await db.execute(select(Tag.id, Tag.name).where(Tag.name.in_(ordered)))
+    ).all()
+    name_to_id = {name: tag_id for tag_id, name in rows}
+
+    # 2) 缺失的 tag 一批插；再批量回查拿全量 id（跨驱动用 on_conflict 免唯一冲突）
+    missing = [n for n in ordered if n not in name_to_id]
+    if missing:
+        dialect_insert = pg.insert if settings.db_driver == "postgresql" else sq.insert
+        await db.execute(
+            dialect_insert(Tag)
+            .values([{"name": n} for n in missing])
+            .on_conflict_do_nothing(index_elements=["name"])
+        )
+        await db.flush()
+        rows = (
+            await db.execute(select(Tag.id, Tag.name).where(Tag.name.in_(ordered)))
+        ).all()
+        name_to_id = {name: tag_id for tag_id, name in rows}
+
+    # 3) 批量查该文章的既有关联，只补缺失
+    tag_ids = [name_to_id[n] for n in ordered]
+    existing = (
+        (
+            await db.execute(
+                select(ArticleTag.tag_id).where(
+                    ArticleTag.article_id == article_id,
+                    ArticleTag.tag_id.in_(tag_ids),
                 )
             )
-            .scalars()
-            .first()
         )
-        if existing is None:
-            db.add(ArticleTag(article_id=article_id, tag_id=tag.id))
+        .scalars()
+        .all()
+    )
+    existing_set = set(existing)
+    for n in ordered:
+        tag_id = name_to_id[n]
+        if tag_id not in existing_set:
+            db.add(ArticleTag(article_id=article_id, tag_id=tag_id))
 
 
 async def create_article(

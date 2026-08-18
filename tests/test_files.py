@@ -17,7 +17,7 @@ from sqlalchemy.pool import StaticPool
 import app.modules.auth.models  # noqa: F401  副作用导入：注册 auth 表到 Base.metadata
 from app.core.err import BizError, CommonErr
 from app.db.models import Base, LibraryFile, Profile, User
-from app.db.session import get_session
+from app.db.session import get_read_session, get_session
 from app.main import app as fastapi_app
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.files.errors import FileErr
@@ -63,12 +63,14 @@ async def client(
         yield db
 
     fastapi_app.dependency_overrides[get_session] = override_get_session
+    fastapi_app.dependency_overrides[get_read_session] = override_get_session
     transport = ASGITransport(app=fastapi_app)
     try:
         async with AsyncClient(transport=transport, base_url="http://test") as c:
             yield c
     finally:
         fastapi_app.dependency_overrides.pop(get_session, None)
+        fastapi_app.dependency_overrides.pop(get_read_session, None)
 
 
 async def _user(
