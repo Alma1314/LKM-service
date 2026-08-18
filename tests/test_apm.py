@@ -1,5 +1,7 @@
 """可观测基座（模块0）：Sentry 接入的 DSN 空开关。"""
 
+from typing import Any, cast
+
 from app.core.config import settings
 
 
@@ -14,7 +16,7 @@ async def test_init_sentry_noop_when_dsn_empty(monkeypatch) -> None:
 
     import sys
 
-    fake_module = type(sys)("sentry_sdk")
+    fake_module: Any = cast(Any, type(sys)("sentry_sdk"))
     fake_module.init = _fail_if_init
     monkeypatch.setitem(sys.modules, "sentry_sdk", fake_module)
 

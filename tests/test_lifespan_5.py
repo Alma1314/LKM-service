@@ -36,7 +36,7 @@ async def test_lifespan_runs_setup_and_graceful_cleanup(monkeypatch) -> None:
     monkeypatch.setattr(main_mod.asyncio, "to_thread", _fake_to_thread)
 
     entered = False
-    async with main_mod.lifespan(None):  # type: ignore[arg-type]
+    async with main_mod.lifespan(None):  # ty: ignore[invalid-argument-type]  # 故意传 None 单测 lifespan
         entered = True
 
     assert entered

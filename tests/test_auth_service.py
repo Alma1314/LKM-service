@@ -578,5 +578,7 @@ class TestEmailCase:
         assert bob.id != carol.id
 
         # 精确邮箱只命中对应账号
-        assert (await EMAIL_CHANNEL.find_user(db, "Bob@Example.com")).id == bob.id
-        assert (await EMAIL_CHANNEL.find_user(db, "bob@example.com")).id == carol.id
+        found_bob = await EMAIL_CHANNEL.find_user(db, "Bob@Example.com")
+        found_carol = await EMAIL_CHANNEL.find_user(db, "bob@example.com")
+        assert found_bob is not None and found_bob.id == bob.id
+        assert found_carol is not None and found_carol.id == carol.id

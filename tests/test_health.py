@@ -1,6 +1,5 @@
 """可观测基座（模块0）：/health 聚合 DB+Redis 状态。"""
 
-from app.modules.common import ApiResp
 from app.modules.health.router import DependencyStatus
 
 
@@ -20,7 +19,7 @@ async def test_health_endpoint_aggregates_status(client, monkeypatch) -> None:
 
     resp = await client.get("/api/v1/health")
     assert resp.status_code == 200
-    payload: ApiResp = resp.json()
+    payload: dict = resp.json()
     assert payload["data"]["db"]["status"] == "up"
     assert payload["data"]["redis"]["status"] == "disabled"
     assert payload["data"]["status"] == "degraded"

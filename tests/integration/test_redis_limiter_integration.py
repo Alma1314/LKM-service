@@ -6,6 +6,7 @@
 
 import asyncio
 import os
+from collections.abc import AsyncIterator
 from contextlib import suppress
 
 import pytest
@@ -24,7 +25,7 @@ def _redis_url() -> str:
 
 
 @pytest.fixture()
-async def real_redis() -> Redis:
+async def real_redis() -> AsyncIterator[Redis]:
     """连接真实 Redis；不可用则 skip。使用独立 key 前缀避免污染生产数据。
 
     function 作用域：让连接与测试同 loop 生命周期，避免 module teardown 时
@@ -56,7 +57,7 @@ def _patch_get_redis(client: Redis) -> None:
     async def _get() -> Redis:
         return client
 
-    redis_core.get_redis = _get  # type: ignore[assignment]
+    redis_core.get_redis = _get  # ty: ignore[invalid-assignment]  # runtime monkeypatch
 
 
 def _restore_get_redis() -> None:

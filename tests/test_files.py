@@ -484,8 +484,9 @@ class TestFilesDedupAndReview:
         assert len(rows) == 2
         assert all(r.ref_count == 2 for r in rows)
         # 两条目共享同一内容哈希（SHA3-256 恒为 64 位 16 进制）
-        assert rows[0].sha3_hash == rows[1].sha3_hash
-        assert len(rows[0].sha3_hash) == 64
+        digest = rows[0].sha3_hash
+        assert digest is not None and digest == rows[1].sha3_hash
+        assert len(digest) == 64
 
     async def should_not_persist_physical_when_only_error(
         self, db: AsyncSession, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch

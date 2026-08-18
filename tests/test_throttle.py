@@ -28,7 +28,7 @@ class TestRedisRateLimiter:
         async def _none() -> Any:
             return None
 
-        redis_core.get_redis = _none  # type: ignore[assignment]
+        redis_core.get_redis = _none  # ty: ignore[invalid-assignment]  # runtime monkeypatch 临时替换签名
         limiter = RedisRateLimiter()
         assert await limiter.check("x", max_count=1, window_seconds=10) is True
 
@@ -42,7 +42,7 @@ class TestRedisRateLimiter:
         async def _broken() -> Any:
             return _BrokenGetRedis()
 
-        redis_core.get_redis = _broken  # type: ignore[assignment]
+        redis_core.get_redis = _broken  # ty: ignore[invalid-assignment]  # runtime monkeypatch 临时替换签名
         limiter = RedisRateLimiter()
         assert await limiter.check("x", max_count=1, window_seconds=10) is True
 
@@ -52,6 +52,6 @@ class TestRedisRateLimiter:
         async def _none() -> Any:
             return None
 
-        redis_core.get_redis = _none  # type: ignore[assignment]
+        redis_core.get_redis = _none  # ty: ignore[invalid-assignment]  # runtime monkeypatch 临时替换签名
         limiter = RedisRateLimiter()
         await limiter.reset("x")  # 不应抛异常

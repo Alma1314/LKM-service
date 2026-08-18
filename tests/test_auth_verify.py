@@ -226,7 +226,7 @@ class TestCheckCodeRateLimit:
         async def _none() -> Any:
             return None
 
-        redis_core.get_redis = _none  # type: ignore[assignment]
+        redis_core.get_redis = _none  # ty: ignore[invalid-assignment]  # runtime monkeypatch
         try:
             await check_code_rate_limit("test@example.com", max_count=5, window=3600)
             # 不应抛 BizError

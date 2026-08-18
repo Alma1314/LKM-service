@@ -10,7 +10,8 @@ from app.db.session import _is_unique_violation, get_async_engine
 
 
 def _ie(orig: Exception | None) -> IntegrityError:
-    return IntegrityError("stmt", {}, orig)
+    # IntegrityError.orig 的 pyi 标非 None，但 SQLAlchemy 运行时允许 orig=None
+    return IntegrityError("stmt", {}, orig)  # ty: ignore[invalid-argument-type]
 
 
 class TestIsUniqueViolation:

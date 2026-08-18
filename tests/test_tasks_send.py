@@ -25,9 +25,9 @@ async def test_send_code_delegates_to_channel(monkeypatch: Any) -> None:
         name="email",
         normalize=ch._email_normalize,
         username_from=ch._email_username_from,
-        find_user=None,
-        create_verification=None,
-        consume_code=None,
+        find_user=None,  # ty: ignore[invalid-argument-type]  # 本测试不用该钩子
+        create_verification=None,  # ty: ignore[invalid-argument-type]
+        consume_code=None,  # ty: ignore[invalid-argument-type]
         send_code=fake.send_code,
     )
     monkeypatch.setattr(ch, "CHANNELS", {"email": channel})
