@@ -7,6 +7,15 @@ from sqlalchemy.dialects import sqlite as sq
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.cache import (
+    TTL_ITEM_S,
+    TTL_LIST_S,
+    bump_collection_version,
+    cache_invalidate,
+    cached_read,
+    collection_version,
+    make_key,
+)
 from app.core.config import settings
 from app.core.err import BizError, CommonErr
 from app.db.models import (
@@ -50,6 +59,19 @@ def estimate_reading_time(content: str) -> int:
     if not text_length:
         return 0
     return max(1, round(text_length / READING_SPEED_CPS))
+
+
+async def _invalidate_article_cache(db: AsyncSession, slug: str) -> None:
+    """文章写后使列表/分类/单篇缓存失效，保证写后读一致。
+
+    集合列表用版本号失效（免 SCAN）；单篇与分类按具体键删除。
+    *db* 参数仅为调用侧语义一致（本身无需连接）。
+    """
+    await bump_collection_version("articles")
+    await cache_invalidate(
+        make_key("articles:by_slug", slug),
+        make_key("articles:categories", "ver"),
+    )
 
 
 async def _sync_article_tags(
@@ -138,6 +160,7 @@ async def create_article(
         await _sync_article_tags(db, existing.id, tags or [])
         existing.updated_at = now_iso()
         await db.flush()
+        await _invalidate_article_cache(db, slug)
         return existing
     article = Article(
         slug=slug,
@@ -151,60 +174,82 @@ async def create_article(
     await db.flush()
     if tags:
         await _sync_article_tags(db, article.id, tags)
+    await _invalidate_article_cache(db, slug)
     return article
 
 
 async def list_articles(
     db: AsyncSession, page: int = 1, page_size: int = 50
 ) -> dict[str, Any]:
-    total = (await db.execute(select(func.count()).select_from(Article))).scalar_one()
-    stmt = (
-        select(Article)
-        .order_by(Article.published.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+    ver = await collection_version("articles")
+
+    async def _load() -> dict[str, Any]:
+        total = (
+            await db.execute(select(func.count()).select_from(Article))
+        ).scalar_one()
+        stmt = (
+            select(Article)
+            .order_by(Article.published.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        items = (await db.execute(stmt)).scalars().all()
+        return {
+            "items": [ArticleListItem.model_validate(a).model_dump() for a in items],
+            "total": total,
+        }
+
+    return await cached_read(
+        make_key("articles:list", ver, page, page_size), TTL_LIST_S, _load
     )
-    items = (await db.execute(stmt)).scalars().all()
-    return {
-        "items": [ArticleListItem.model_validate(a) for a in items],
-        "total": total,
-    }
 
 
 async def get_article(db: AsyncSession, slug: str) -> ArticleDetail:
-    article = await get_or_raise(
-        db, Article, ArticleErr.NOT_FOUND, Article.slug == slug
-    )
-    # article.tags 是 Tag 对象列表，ArticleDetail.tags 期望字符串 list。
-    # 不能直接 model_validate(article)：from_attributes 会读 article.tags 得到
-    # Tag 对象而校验失败，故从标量属性构造 dict，tags 单独 map 成字符串。
-    detail = ArticleDetail(
-        **{
-            k: v
-            for k, v in article.__dict__.items()
-            if k in ArticleDetail.model_fields and k != "tags"
-        },
-        tags=[t.name for t in (article.tags or [])],
-    )
-    detail.reading_time = estimate_reading_time(article.content)
-    return detail
+    async def _load() -> dict[str, Any]:
+        article = await get_or_raise(
+            db, Article, ArticleErr.NOT_FOUND, Article.slug == slug
+        )
+        # article.tags 是 Tag 对象列表，ArticleDetail.tags 期望字符串 list。
+        # 不能直接 model_validate(article)：from_attributes 会读 article.tags 得到
+        # Tag 对象而校验失败，故从标量属性构造 dict，tags 单独 map 成字符串。
+        detail = ArticleDetail(
+            **{
+                k: v
+                for k, v in article.__dict__.items()
+                if k in ArticleDetail.model_fields and k != "tags"
+            },
+            tags=[t.name for t in (article.tags or [])],
+        )
+        detail.reading_time = estimate_reading_time(article.content)
+        return detail.model_dump()
+
+    payload = await cached_read(make_key("articles:by_slug", slug), TTL_ITEM_S, _load)
+    return ArticleDetail.model_validate(payload)
 
 
 async def list_categories(db: AsyncSession) -> list[ArticleCategory]:
-    rows = (
-        await db.execute(
-            select(Article.category, func.count(Article.id)).group_by(Article.category)
-        )
-    ).all()
-    return [
-        ArticleCategory(
-            # Article.category 为非空列，聚合行推断为 str|None，这里显式收窄
-            slug=cast("str", slug),
-            name=ARTICLE_CATEGORY_NAMES.get(cast("str", slug), cast("str", slug)),
-            article_count=count,
-        )
-        for slug, count in rows
-    ]
+    async def _load() -> list[dict[str, Any]]:
+        rows = (
+            await db.execute(
+                select(Article.category, func.count(Article.id)).group_by(
+                    Article.category
+                )
+            )
+        ).all()
+        return [
+            ArticleCategory(
+                # Article.category 为非空列，聚合行推断为 str|None，这里显式收窄
+                slug=cast("str", slug),
+                name=ARTICLE_CATEGORY_NAMES.get(cast("str", slug), cast("str", slug)),
+                article_count=count,
+            ).model_dump()
+            for slug, count in rows
+        ]
+
+    payload = await cached_read(
+        make_key("articles:categories", "ver"), TTL_LIST_S, _load
+    )
+    return [ArticleCategory.model_validate(p) for p in payload]
 
 
 def _fts_search_stmt(q: str) -> tuple[Any, Any]:

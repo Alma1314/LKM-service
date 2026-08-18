@@ -3,6 +3,14 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cache import (
+    TTL_ITEM_S,
+    TTL_LIST_S,
+    bump_collection_version,
+    cached_read,
+    collection_version,
+    make_key,
+)
 from app.core.err import BizError
 from app.db.models import Column, ColumnApplication, ColumnPost, now_iso
 from app.db.repo import get_or_raise
@@ -108,33 +116,50 @@ async def review_application(
 async def list_columns(
     db: AsyncSession, page: int = 1, limit: int | None = None
 ) -> list[ColumnInfo]:
-    stmt = select(Column).order_by(Column.id.desc())
-    if limit is not None:
-        stmt = stmt.offset((page - 1) * limit).limit(limit)
-    cols = (await db.execute(stmt)).scalars().all()
-    return [ColumnInfo.model_validate(c) for c in cols]
+    ver = await collection_version("columns")
+
+    async def _load() -> list[dict[str, Any]]:
+        stmt = select(Column).order_by(Column.id.desc())
+        if limit is not None:
+            stmt = stmt.offset((page - 1) * limit).limit(limit)
+        cols = (await db.execute(stmt)).scalars().all()
+        return [ColumnInfo.model_validate(c).model_dump() for c in cols]
+
+    payload = await cached_read(
+        make_key("columns:list", ver, page, limit), TTL_LIST_S, _load
+    )
+    # cached_read 返回的是 dict 列表，转回 schema（缺省路径也统一）
+    return [ColumnInfo.model_validate(p) for p in payload]
 
 
 async def get_column(db: AsyncSession, column_id: int) -> ColumnInfo:
-    return ColumnInfo.model_validate(
-        await get_or_raise(
-            db,
-            Column,
-            ColumnErr.NOT_FOUND,
-            Column.id == column_id,
-        )
-    )
+    async def _load() -> dict[str, Any]:
+        return ColumnInfo.model_validate(
+            await get_or_raise(
+                db,
+                Column,
+                ColumnErr.NOT_FOUND,
+                Column.id == column_id,
+            )
+        ).model_dump()
+
+    payload = await cached_read(make_key("columns:by_id", column_id), TTL_ITEM_S, _load)
+    return ColumnInfo.model_validate(payload)
 
 
 async def get_column_by_slug(db: AsyncSession, slug: str) -> ColumnInfo:
-    return ColumnInfo.model_validate(
-        await get_or_raise(
-            db,
-            Column,
-            ColumnErr.NOT_FOUND,
-            Column.slug == slug,
-        )
-    )
+    async def _load() -> dict[str, Any]:
+        return ColumnInfo.model_validate(
+            await get_or_raise(
+                db,
+                Column,
+                ColumnErr.NOT_FOUND,
+                Column.slug == slug,
+            )
+        ).model_dump()
+
+    payload = await cached_read(make_key("columns:by_slug", slug), TTL_ITEM_S, _load)
+    return ColumnInfo.model_validate(payload)
 
 
 async def create_post(
@@ -210,4 +235,6 @@ async def _ensure_column_for_application(
     )
     db.add(col)
     await db.flush()
+    # 集合新增：升级列列表版本号，使旧分页缓存立即失效（写后读一致）
+    await bump_collection_version("columns")
     return ColumnInfo.model_validate(col)
