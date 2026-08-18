@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
-from app.db.session import get_session
+from app.db.session import get_read_session, get_session
 from app.modules.auth.deps import CurrentUser, get_current_user
 from app.modules.common import ApiResp, ModuleStatus
 from app.modules.files.models import FileStatus
@@ -43,7 +43,7 @@ async def get_files(
     category_id: str | None = Query(default=None, max_length=50),
     status: str | None = Query(default=None, max_length=20),
     sort: str = Query(default="newest"),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
 ) -> PageData[FileInfo]:
     return await list_files(
         db, page=page, limit=limit, category_id=category_id, status=status, sort=sort

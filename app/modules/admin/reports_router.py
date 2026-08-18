@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
 from app.db.models import Report
-from app.db.session import get_session
+from app.db.session import get_read_session
 from app.modules.auth.deps import CurrentUser
 from app.modules.common import ApiResp, ListData
 
@@ -28,7 +28,7 @@ async def admin_list_reports(
     size: int = Query(20, ge=1, le=100),
     status: str | None = Query(default=None),
     _cur: CurrentUser = require_admin,
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
 ) -> dict[str, Any]:
     """
     举报审核列表。可按状态过滤（pending/resolved/dismissed），倒序分页。

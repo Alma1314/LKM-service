@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
-from app.db.session import get_session
+from app.db.session import get_read_session, get_session
 from app.modules.articles.schemas import ArticleDetail
 from app.modules.auth.deps import CurrentUser, get_current_user, get_optional_user
 from app.modules.blog.schemas import (
@@ -54,7 +54,7 @@ async def create_blog_series(
 @router.get("/series", response_model=ApiResp[ListData[BlogSeriesInfo]])
 @respond
 async def list_blog_series(
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
     cur: CurrentUser | None = Depends(get_optional_user),
     page: int = Query(1, ge=1),
     limit: int | None = Query(default=None, ge=1, le=200),
@@ -69,7 +69,7 @@ async def list_blog_series(
 @respond
 async def get_blog_series(
     series_id: int,
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
     cur: CurrentUser | None = Depends(get_optional_user),
 ) -> BlogSeriesDetail:
     user_id = cur.id if cur else None
@@ -109,7 +109,7 @@ async def delete_blog_series(
 async def get_blog_file(
     series_id: int,
     filepath: str,
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
 ) -> dict[str, Any]:
     return await get_file_content(db, series_id, filepath)
 
@@ -126,15 +126,11 @@ async def put_blog_file(
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> None:
-    await write_series_file(
-        db, series_id, cur.id, filepath, body.content, body.message
-    )
+    await write_series_file(db, series_id, cur.id, filepath, body.content, body.message)
     return None
 
 
-@router.post(
-    "/series/{series_id}/publish", response_model=ApiResp[ArticleDetail]
-)
+@router.post("/series/{series_id}/publish", response_model=ApiResp[ArticleDetail])
 @respond
 async def publish_series_file_endpoint(
     series_id: int,
@@ -195,7 +191,7 @@ async def create_blog_comment(
 @respond
 async def list_blog_comments(
     series_id: int,
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
 ) -> dict[str, Any]:
     return {"items": await list_comments(db, series_id)}
 

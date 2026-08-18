@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     db_user: str = "postgres"
     db_password: str = ""
 
+    # 连接池（仅 PostgreSQL/asyncpg 生效；SQLite 单文件连接数无益，走 NullPool）
+    db_pool_size: int = 10
+    db_pool_max_overflow: int = 20
+    # 取连接前 ping 探活，剔除坏连接，避免陈旧连接 0 连接时的短暂出错
+    db_pool_pre_ping: bool = True
+
     # JWT 签名密钥 — 所有非测试环境必须覆盖此值
     jwt_secret: str = "change-me-to-a-random-secret-thats-at-least-32-bytes-long"
     jwt_algorithm: str = "HS256"
@@ -67,6 +73,11 @@ class Settings(BaseSettings):
     redis_url: str = (
         ""  # 空串 = 未启用 Redis；非空走 redis://[user:pass@]host:port[/db]
     )
+
+    # Sentry APM：空串 = 不加载（dev/test 默认关闭，避免拖启动）；配置 DSN 才接入
+    sentry_dsn: str = ""
+    # Sentry 性能采样率（0~1）；仅 DSN 非空时才生效
+    sentry_traces_sample_rate: float = 1.0
 
     @model_validator(mode="after")
     def _no_insecure_secrets_outside_dev(self) -> "Settings":

@@ -11,6 +11,9 @@ register(
     {
         ArticleErr.NOT_FOUND: (404, "Article not found"),
         ArticleErr.COMMENT_NOT_FOUND: (404, "Comment not found"),
-        ArticleErr.COMMENT_PARENT_MISMATCH: (400, "Parent comment does not belong to this article"),
+        ArticleErr.COMMENT_PARENT_MISMATCH: (
+            400,
+            "Parent comment does not belong to this article",
+        ),
     }
 )

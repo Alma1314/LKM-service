@@ -144,7 +144,12 @@ def get_readme(repo_name: str) -> str | None:
         return None
 
 
-def _run_bare_check(repo_name: str, input_data: bytes | None, *args: str, env: dict[str, str] | None = None) -> str:
+def _run_bare_check(
+    repo_name: str,
+    input_data: bytes | None,
+    *args: str,
+    env: dict[str, str] | None = None,
+) -> str:
     """跑裸仓库 git 命令，失败时像 _run_git 一样抛出 BizError(GIT_ERROR)。"""
     path = _repo_path(repo_name)
     cmd = ["git", "--git-dir", path, *list(args)]
@@ -195,14 +200,22 @@ def write_file(
         blob = _run_bare_check(
             repo_name,
             content.encode("utf-8"),
-            "hash-object", "-w", "--stdin",
+            "hash-object",
+            "-w",
+            "--stdin",
             env=env,
         )
 
         # 更新临时 index
         _run_bare_check(
-            repo_name, None,
-            "update-index", "--add", "--cacheinfo", "100644", blob, filepath,
+            repo_name,
+            None,
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "100644",
+            blob,
+            filepath,
             env=env,
         )
         tree = _run_bare_check(repo_name, None, "write-tree", env=env)
@@ -217,8 +230,13 @@ def write_file(
             pass
 
         commit = _run_bare_check(
-            repo_name, None,
-            "commit-tree", tree, *parent_args, "-m", message,
+            repo_name,
+            None,
+            "commit-tree",
+            tree,
+            *parent_args,
+            "-m",
+            message,
             env=env,
         )
 

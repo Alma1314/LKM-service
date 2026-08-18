@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr, respond
-from app.db.session import get_session
+from app.db.session import get_read_session, get_session
 from app.modules.auth.deps import CurrentUser, RequireLevel, get_current_user
 from app.modules.columns.schemas import (
     ColumnApplicationCreate,
@@ -68,7 +68,7 @@ async def apply_column(
 @respond
 async def get_applications(
     cur: CurrentUser = RequireLevel("admin"),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
     page: int = Query(1, ge=1),
     limit: int | None = Query(default=None, ge=1, le=200),
 ) -> dict[str, Any]:
@@ -82,7 +82,7 @@ async def get_applications(
 async def get_application_detail(
     application_id: int,
     cur: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
 ) -> ColumnApplicationInfo:
     app = await get_application(db, application_id)
     if cur.account_level != "admin" and cur.id != app.user_id:
@@ -106,7 +106,7 @@ async def review_column_application(
 @router.get("", response_model=ApiResp[ListData[ColumnInfo]])
 @respond
 async def get_columns(
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
     page: int = Query(1, ge=1),
     limit: int | None = Query(default=None, ge=1, le=200),
 ) -> dict[str, Any]:
@@ -116,7 +116,7 @@ async def get_columns(
 @router.get("/by-slug/{slug}", response_model=ApiResp[ColumnInfo])
 @respond
 async def get_column_detail_by_slug(
-    slug: str, db: AsyncSession = Depends(get_session)
+    slug: str, db: AsyncSession = Depends(get_read_session)
 ) -> ColumnInfo:
     return await get_column_by_slug(db, slug)
 
@@ -124,7 +124,7 @@ async def get_column_detail_by_slug(
 @router.get("/{column_id}", response_model=ApiResp[ColumnInfo])
 @respond
 async def get_column_detail(
-    column_id: int, db: AsyncSession = Depends(get_session)
+    column_id: int, db: AsyncSession = Depends(get_read_session)
 ) -> ColumnInfo:
     return await get_column(db, column_id)
 
@@ -147,7 +147,7 @@ async def publish_column_post(
 @respond
 async def get_column_posts(
     column_id: int,
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
     page: int = Query(1, ge=1),
     limit: int | None = Query(default=None, ge=1, le=200),
 ) -> dict[str, Any]:
@@ -157,6 +157,6 @@ async def get_column_posts(
 @router.get("/{column_id}/posts/{post_id}", response_model=ApiResp[ColumnPostInfo])
 @respond
 async def get_column_post_detail(
-    column_id: int, post_id: int, db: AsyncSession = Depends(get_session)
+    column_id: int, post_id: int, db: AsyncSession = Depends(get_read_session)
 ) -> ColumnPostInfo:
     return await get_post(db, post_id, column_id=column_id)

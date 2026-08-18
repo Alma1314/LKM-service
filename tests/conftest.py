@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import StaticPool
 
 from app.db.models import Base
-from app.db.session import get_session
+from app.db.session import get_read_session, get_session
 from app.main import app
 
 # 复用类型的别名，供各测试文件 import 使用
@@ -62,10 +62,13 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient]:
     async def override_get_session() -> AsyncGenerator[AsyncSession]:
         yield db
 
+    # 读写两种依赖都指向同一内存库，避免测试里只覆盖了写会话而读会话漏网
     app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_read_session] = override_get_session
     transport = ASGITransport(app=app)
     try:
         async with AsyncClient(transport=transport, base_url="http://test") as c:
             yield c
     finally:
         app.dependency_overrides.pop(get_session, None)
+        app.dependency_overrides.pop(get_read_session, None)

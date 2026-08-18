@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
-from app.db.session import get_session
+from app.db.session import get_read_session, get_session
 from app.modules.auth.deps import CurrentUser, get_current_user
 from app.modules.common import ApiResp, ModuleStatus
 from app.modules.forum.schemas import (
@@ -50,7 +50,7 @@ async def get_posts(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     category_id: str | None = Query(default=None, max_length=50),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
 ) -> PageData[PostInfo]:
     return await list_posts(db, page=page, limit=limit, category_id=category_id)
 
@@ -100,7 +100,7 @@ async def get_post_comments(
     post_id: int,
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
 ) -> PageData[CommentInfo]:
     return await list_comments(db, post_id, page=page, limit=limit)
 

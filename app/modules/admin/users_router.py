@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
 from app.db.models import ForumPost, LibraryFile, User
-from app.db.session import get_session
+from app.db.session import get_read_session
 from app.modules.auth.deps import CurrentUser
 from app.modules.common import ApiResp, ListData
 
@@ -28,7 +28,7 @@ async def admin_list_users(
     keyword: str | None = None,
     include_pii: bool = False,
     _cur: CurrentUser = require_admin,
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
 ) -> dict[str, Any]:
     """
     用户管理列表。默认隐藏 email/phone（PII），可按用户名/邮箱筛选。
@@ -78,7 +78,7 @@ async def _safe_count(db: AsyncSession, stmt: Any) -> int:
 @respond
 async def admin_stats(
     _cur: CurrentUser = require_admin,
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
 ) -> AdminStats:
     """仪表盘聚合统计：注册用户数 / 帖子数 / 文件数 / 待审核文件数。"""
     user_count = await _safe_count(db, select(func.count(User.id)))

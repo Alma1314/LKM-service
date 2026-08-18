@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.models import User
-from app.db.session import get_session
+from app.db.session import get_read_session
 from app.modules.auth.security import verifypwd
 
 logger = logging.getLogger(__name__)
@@ -87,7 +87,7 @@ async def git_http_backend(
     repo_name: str,
     rest: str,
     request: Request,
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
 ) -> Response:
     root = str(await asyncio.to_thread(os.path.abspath, settings.blog_repo_dir))
     repo_path = os.path.join(root, f"{repo_name}.git")

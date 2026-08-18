@@ -57,21 +57,23 @@ async def _sync_article_tags(
     for n in set(names):
         if not n:
             continue
-        tag = (
-            await db.execute(select(Tag).where(Tag.name == n))
-        ).scalars().first()
+        tag = (await db.execute(select(Tag).where(Tag.name == n))).scalars().first()
         if tag is None:
             tag = Tag(name=n)
             db.add(tag)
             await db.flush()
         existing = (
-            await db.execute(
-                select(ArticleTag).where(
-                    ArticleTag.article_id == article_id,
-                    ArticleTag.tag_id == tag.id,
+            (
+                await db.execute(
+                    select(ArticleTag).where(
+                        ArticleTag.article_id == article_id,
+                        ArticleTag.tag_id == tag.id,
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if existing is None:
             db.add(ArticleTag(article_id=article_id, tag_id=tag.id))
 
@@ -88,8 +90,10 @@ async def create_article(
 ) -> Article:
     # 幂等：同 slug 已存在则更新（重发 = 更新）
     existing = (
-        await db.execute(select(Article).where(Article.slug == slug))
-    ).scalars().first()
+        (await db.execute(select(Article).where(Article.slug == slug)))
+        .scalars()
+        .first()
+    )
     if existing:
         existing.title = title
         existing.category = category
@@ -101,8 +105,12 @@ async def create_article(
         await db.flush()
         return existing
     article = Article(
-        slug=slug, title=title, category=category, content=content,
-        published=published or now_iso(), description=description,
+        slug=slug,
+        title=title,
+        category=category,
+        content=content,
+        published=published or now_iso(),
+        description=description,
     )
     db.add(article)
     await db.flush()
@@ -164,15 +172,13 @@ async def list_categories(db: AsyncSession) -> list[ArticleCategory]:
     ]
 
 
-def _fts_search_stmt(q: str):
+def _fts_search_stmt(q: str) -> tuple[Any, Any]:
     """按驱动返回 sqlalchemy 查询表达式，供 search_articles 使用。"""
     if settings.db_driver == "postgresql":
         # PostgreSQL 真 FTS：simple 分词（中文分词效果已知受限，属 spec 取舍）
         vector = func.to_tsvector(
             "simple",
-            func.concat_ws(
-                " ", Article.title, Article.description, Article.content
-            ),
+            func.concat_ws(" ", Article.title, Article.description, Article.content),
         )
         query = func.plainto_tsquery("simple", q)
         return vector.match(query), func.ts_rank(vector, query)
@@ -214,9 +220,7 @@ async def list_tags(db: AsyncSession) -> list[dict[str, Any]]:
             .group_by(Tag.id)
         )
     ).all()
-    return [
-        {"name": name, "article_count": count} for name, count in rows
-    ]
+    return [{"name": name, "article_count": count} for name, count in rows]
 
 
 async def get_about() -> dict[str, str]:
@@ -241,15 +245,21 @@ async def _bump_article_count(
 async def toggle_article_like(
     db: AsyncSession, slug: str, user_id: int
 ) -> dict[str, Any]:
-    article = await get_or_raise(db, Article, ArticleErr.NOT_FOUND, Article.slug == slug)
+    article = await get_or_raise(
+        db, Article, ArticleErr.NOT_FOUND, Article.slug == slug
+    )
     existing = (
-        await db.execute(
-            select(ArticleLike).where(
-                ArticleLike.article_id == article.id,
-                ArticleLike.user_id == user_id,
+        (
+            await db.execute(
+                select(ArticleLike).where(
+                    ArticleLike.article_id == article.id,
+                    ArticleLike.user_id == user_id,
+                )
             )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if existing:
         await db.delete(existing)
         await db.flush()
@@ -262,21 +272,30 @@ async def toggle_article_like(
         liked = True
     like_count = (
         await db.execute(
-            select(func.count()).select_from(ArticleLike).where(
-                ArticleLike.article_id == article.id
-            )
+            select(func.count())
+            .select_from(ArticleLike)
+            .where(ArticleLike.article_id == article.id)
         )
     ).scalar_one()
     return {"liked": liked, "like_count": like_count}
 
 
 async def create_article_comment(
-    db: AsyncSession, slug: str, user_id: int, content: str, parent_id: int | None = None
+    db: AsyncSession,
+    slug: str,
+    user_id: int,
+    content: str,
+    parent_id: int | None = None,
 ) -> ArticleComment:
-    article = await get_or_raise(db, Article, ArticleErr.NOT_FOUND, Article.slug == slug)
+    article = await get_or_raise(
+        db, Article, ArticleErr.NOT_FOUND, Article.slug == slug
+    )
     if parent_id is not None:
         parent = await get_or_raise(
-            db, ArticleComment, ArticleErr.COMMENT_NOT_FOUND, ArticleComment.id == parent_id
+            db,
+            ArticleComment,
+            ArticleErr.COMMENT_NOT_FOUND,
+            ArticleComment.id == parent_id,
         )
         if parent.article_id != article.id:
             raise BizError(ArticleErr.COMMENT_PARENT_MISMATCH)
@@ -296,9 +315,7 @@ async def _get_author_profiles(
     if not user_ids:
         return {}
     rows = (
-        (
-            await db.execute(select(Profile).where(Profile.user_id.in_(user_ids)))
-        )
+        (await db.execute(select(Profile).where(Profile.user_id.in_(user_ids))))
         .scalars()
         .all()
     )
@@ -306,15 +323,21 @@ async def _get_author_profiles(
 
 
 async def list_article_comments(db: AsyncSession, slug: str) -> list[ArticleCommentOut]:
-    article = await get_or_raise(db, Article, ArticleErr.NOT_FOUND, Article.slug == slug)
+    article = await get_or_raise(
+        db, Article, ArticleErr.NOT_FOUND, Article.slug == slug
+    )
     rows = (
-        await db.execute(
-            select(ArticleComment)
-            .where(ArticleComment.article_id == article.id)
-            .options(selectinload(ArticleComment.user))
-            .order_by(ArticleComment.created_at.asc())
+        (
+            await db.execute(
+                select(ArticleComment)
+                .where(ArticleComment.article_id == article.id)
+                .options(selectinload(ArticleComment.user))
+                .order_by(ArticleComment.created_at.asc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     user_ids = {c.user_id for c in rows}
     profiles = await _get_author_profiles(db, user_ids)
     return [
@@ -329,7 +352,10 @@ async def delete_article_comment(
     db: AsyncSession, comment_id: int, user_id: int
 ) -> None:
     comment = await get_or_raise(
-        db, ArticleComment, ArticleErr.COMMENT_NOT_FOUND, ArticleComment.id == comment_id
+        db,
+        ArticleComment,
+        ArticleErr.COMMENT_NOT_FOUND,
+        ArticleComment.id == comment_id,
     )
     if comment.user_id != user_id:
         raise BizError(CommonErr.FORBIDDEN)

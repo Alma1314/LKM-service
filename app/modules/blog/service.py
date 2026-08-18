@@ -442,7 +442,9 @@ async def publish_series_file(
     first_line = content.split("\n", 1)[0].replace("# ", "").strip()
     title = str(override.get("title") or fm.get("title") or first_line or slug)
     category = str(override.get("category") or fm.get("category") or "engineering")
-    tags = [str(t) for t in cast("list[Any]", override.get("tags") or fm.get("tags") or [])]
+    tags = [
+        str(t) for t in cast("list[Any]", override.get("tags") or fm.get("tags") or [])
+    ]
     description = override.get("description") or fm.get("description")
 
     article = await _create_article_alias(

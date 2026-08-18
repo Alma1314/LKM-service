@@ -22,13 +22,22 @@ def get_async_engine() -> AsyncEngine | None:
     global _async_engine
     if _async_engine is None:
         connect_args: dict[str, object] = {}
-        if settings.db_driver == "sqlite":
+        engine_kwargs: dict[str, object] = {"echo": False, "connect_args": connect_args}
+        if settings.db_driver == "postgresql":
+            # asyncpg：显式连接池大小 + pre_ping，剔除坏连接（生产热路径）
+            engine_kwargs.update(
+                pool_size=settings.db_pool_size,
+                max_overflow=settings.db_pool_max_overflow,
+                pool_pre_ping=settings.db_pool_pre_ping,
+            )
+        else:
+            # SQLite 单文件连接数无益：NullPool 避免池竞争与陈旧连接
+            # （外键 pragma 必须每连接设置，NullPool 每次新建连接正好适用）
+            from sqlalchemy.pool import NullPool
+
+            engine_kwargs["poolclass"] = NullPool
             connect_args["check_same_thread"] = False
-        _async_engine = create_async_engine(
-            settings.database_url,
-            echo=False,
-            connect_args=connect_args,
-        )
+        _async_engine = create_async_engine(settings.database_url, **engine_kwargs)
         # 启用 SQLite 外键支持（必须按连接设置，作用于底层 sync 连接）
         if settings.db_driver == "sqlite":
 
@@ -70,6 +79,23 @@ async def get_session() -> AsyncIterator[AsyncSession]:
                 AuthErr.ALREADY_REGISTERED, "Resource already exists"
             ) from None
         raise
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        await db.close()
+
+
+async def get_read_session() -> AsyncIterator[AsyncSession]:
+    """FastAPI 依赖：只读会话，供公开只读接口使用，避免每读请求一次空 BEGIN/COMMIT。
+
+    不做 commit（读路径本无写入）；异常回滚 + close，与 get_session 一致但更轻。
+    """
+    factory = _get_async_session_local()
+    assert factory is not None
+    db = factory()
+    try:
+        yield db
     except Exception:
         await db.rollback()
         raise

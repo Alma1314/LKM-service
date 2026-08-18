@@ -1,5 +1,8 @@
 import asyncio
-from collections.abc import AsyncGenerator
+import logging
+import time
+import uuid
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
@@ -12,7 +15,9 @@ from starlette.types import Scope
 from strawberry.fastapi import GraphQLRouter
 
 from app.api.router import api_router
+from app.core import logging as logger
 from app.core import redis as redis_client
+from app.core.apm import init_sentry
 from app.core.config import settings
 from app.core.err import BizError, map_err, resp_json
 from app.db.init_db import init_db
@@ -21,11 +26,13 @@ from app.db.session import (
     dispose_engine,
 )
 from app.db.session import (
-    get_session as get_graphql_session,
+    get_read_session as get_graphql_session,  # GraphQL 仅 Query(纯读)，避免空提交
 )
 from app.modules.auth.service_passkey import cleanup_expired_challenges
 from app.modules.forum.graphql import GraphQLContext
 from app.modules.forum.graphql import schema as forum_graphql_schema
+
+request_logger = logging.getLogger("lkm.http")
 
 
 class _ImmutableStaticFiles(StaticFiles):
@@ -47,6 +54,10 @@ class _ImmutableStaticFiles(StaticFiles):
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
+    # 可观测基座：结构化日志 + Sentry APM（均幂等；DSN 空则不加载）
+    logger.setup_logging()
+    init_sentry()
+
     await init_db()
 
     # 启动即探测 Redis，便于日志暴露其状态（未配置/不可用时静默降级为 None）
@@ -76,6 +87,35 @@ def create_app() -> FastAPI:
         version=settings.app_version,
         lifespan=lifespan,
     )
+
+    @application.middleware("http")
+    async def _log_requests(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """结构化访问日志：注入 request_id，记录 method/route/status/latency。"""
+        request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+        token = logger.set_request_id(request_id)
+        start = time.perf_counter()
+        try:
+            response = await call_next(request)
+            latency_ms = (time.perf_counter() - start) * 1000
+            response.headers.setdefault("X-Request-ID", request_id)
+            request_logger.info(
+                "http.request",
+                extra={
+                    "extra_fields": {
+                        "method": request.method,
+                        "route": request.url.path,
+                        "status": response.status_code,
+                        "latency_ms": round(latency_ms, 3),
+                    }
+                },
+            )
+            return response
+        finally:
+            logger.reset_request_id(token)
+
     application.include_router(api_router, prefix=settings.api_prefix)
     application.add_exception_handler(BizError, _on_err)
     application.add_exception_handler(RequestValidationError, _on_err)

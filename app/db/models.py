@@ -520,15 +520,15 @@ class Article(Base):
     likes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     comments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     bookmarks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    tags: Mapped[list["Tag"]] = relationship(
+    tags: Mapped[list[Tag]] = relationship(
         secondary="article_tag", back_populates="articles", lazy="selectin"
     )
-    comment_records: Mapped[list["ArticleComment"]] = relationship(
+    comment_records: Mapped[list[ArticleComment]] = relationship(
         back_populates="article",
         cascade="all, delete-orphan",
         order_by="ArticleComment.created_at",
     )
-    like_records: Mapped[list["ArticleLike"]] = relationship(
+    like_records: Mapped[list[ArticleLike]] = relationship(
         back_populates="article", cascade="all, delete-orphan"
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -573,9 +573,7 @@ class ArticleLike(Base):
 
     __tablename__: str = "article_likes"
 
-    article_id: Mapped[int] = mapped_column(
-        ForeignKey("articles.id"), primary_key=True
-    )
+    article_id: Mapped[int] = mapped_column(ForeignKey("articles.id"), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
@@ -596,7 +594,7 @@ class Tag(Base):
         UTCDateTime, nullable=False, default=now_iso
     )
 
-    articles: Mapped[list["Article"]] = relationship(
+    articles: Mapped[list[Article]] = relationship(
         secondary="article_tag", back_populates="tags"
     )
 
@@ -606,9 +604,7 @@ class ArticleTag(Base):
 
     __tablename__: str = "article_tag"
 
-    article_id: Mapped[int] = mapped_column(
-        ForeignKey("articles.id"), primary_key=True
-    )
+    article_id: Mapped[int] = mapped_column(ForeignKey("articles.id"), primary_key=True)
     tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id"), primary_key=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
