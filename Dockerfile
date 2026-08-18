@@ -1,12 +1,11 @@
 # ---- 构建阶段:用 uv 安装依赖 ----
 FROM python:3.13-slim-bookworm AS builder
-# 从官方 uv 镜像复制 uv / uvx 二进制(避免依赖 uv 的 python 镜像 tag)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-# 全量安装(含 dev 组):生产 lifespan 跑 alembic upgrade head,必需 alembic
+# 全量安装:生产 lifespan 跑 alembic upgrade head,必需 alembic
 RUN uv sync --frozen --no-install-project
 
 # ---- 运行阶段 ----
@@ -29,7 +28,7 @@ COPY . .
 RUN mkdir -p /data
 
 # 成员头像(webp)打进镜像的 /app/static/avatars —— 不能在 /data(backend_data 卷会遮蔽镜像内内容);
-# 头像属只读烘焙资产,不随卷覆盖,部署后如要更新重构建镜像即可。
+# 头像不随卷覆盖,部署后如要更新重构建镜像即可。
 ENV LKM_AVATARS_DIR=/app/static/avatars
 
 ENV LKM_DB_PATH=/data/lkm.db \
@@ -37,8 +36,8 @@ ENV LKM_DB_PATH=/data/lkm.db \
     LKM_FILES_STORE_DIR=/data/files_store
 
 EXPOSE 8000
-# 多 worker（模块5）：默认单 worker（语义不变），设 LKM_WEB_WORKERS=N 水平跑满 CPU。
+# 多 worker：默认单 worker（语义不变），设 LKM_WEB_WORKERS=N 水平跑满 CPU。
 # uvicorn(0.51) `--workers N` 用 multiprocess spawn(ASGI worker)，无需 gunicorn/worker-class。
-# 优雅启停：uvicorn 收 SIGTERM 通知各 worker，FastAPI lifespan yield 后清理
+# 启停：uvicorn 收 SIGTERM 通知各 worker，FastAPI lifespan yield 后清理
 # （cleanup_task / redis close / dispose_engine）由 app.main.lifespan 负责。
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${LKM_WEB_WORKERS:-1}"]

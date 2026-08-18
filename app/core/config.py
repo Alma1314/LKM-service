@@ -82,6 +82,11 @@ class Settings(BaseSettings):
         ""  # 空串 = 未启用 Redis；非空走 redis://[user:pass@]host:port[/db]
     )
 
+    # schema 初始化：默认 True 走 Alembic（增量迁移，schema 唯一权威）；
+    # 置 False 时 init_db 降级为 Base.metadata.create_all()（只建新库、不 ALTER 已有表，
+    # 失去增量迁移能力）。适合"无历史数据、从零重建"的场景临时关闭，生产建议保持 True。
+    use_alembic: bool = True
+
     # Sentry APM：空串 = 不加载（dev/test 默认关闭，避免拖启动）；配置 DSN 才接入
     sentry_dsn: str = ""
     # Sentry 性能采样率（0~1）；仅 DSN 非空时才生效

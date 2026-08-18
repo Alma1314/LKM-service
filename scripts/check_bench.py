@@ -1,12 +1,4 @@
-"""读取 locust `--csv` 输出的 statistics.csv，汇总并（可选）按预算断言（模块1 门禁）。
-
-用法：
-    python scripts/check_bench.py loadtest/bench_00               # 无预算仅汇总
-    python scripts/check_bench.py loadtest/bench_00 docs/superpowers/benchmarks/99-ci-budget.md  # 预算断言
-
-statistics.csv 关键列（locust）：Type / Name / # Requests / # Fails / Median / 95% ... / Requests/s
-预算文件格式见 docs/superpowers/benchmarks/99-ci-budget.md（Markdown 表格占位；实际断言从 CSV 预算文件读入）。
-"""
+"""读取 locust `--csv` 输出的 statistics.csv，汇总并（可选）按预算断言。"""
 
 import csv
 import sys
@@ -54,7 +46,6 @@ def main() -> int:
     rows = _load_stats(prefix)
     budget = _budget_map(budget_csv)
     # locust stats csv 列名（2.x）：Type / Name / Request Count / Failure Count /
-    # ... / Requests/s / ... / 95% / ...（详见 00-methodology.md）
     print(
         f"{'Method':<6}{'Name':<52}{'#Req':>8}{'Fail%':>8} {'P95(ms)':>9}{'RPS':>12}"
     )

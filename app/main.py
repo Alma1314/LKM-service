@@ -36,8 +36,7 @@ request_logger = logging.getLogger("lkm.http")
 
 
 def _register_all_errors() -> None:
-    """错误码注册收敛（模块7）：集中 import 各模块 errors 使 `register()` 副作用必达。
-
+    """错误码注册收敛：集中 import 各模块 errors 使 `register()` 副作用必达。
     防止漏配错误码导致 map_err 转 500。新增模块的 ErrCode 必须在此登记。导入放函数内
     （非模块顶层 `import app.x`），避免在 main 模块命名空间绑定 `app` 包名，与
     模块级 `app = create_app()` 冲突。
@@ -54,7 +53,6 @@ def _register_all_errors() -> None:
 
 class _ImmutableStaticFiles(StaticFiles):
     """给静态文件成功响应附加 immutable 长缓存头。
-
     成员头像内容不变(文件名即未知指纹),浏览器/nginx/CDN 可永久缓存,与 /_astro/ 策略一致。
     404/错误响应不附加,避免把错误结果也缓存。
     """

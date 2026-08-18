@@ -1,7 +1,7 @@
 """数据库初始化 —— Alembic 为 schema 唯一权威。
 
-多 worker（模块5）安全：每个 uvicorn worker 的 lifespan 都会调 init_db()。首次
-建库时并发 upgrade 会有竞态（重复建表/版本锁冲突），故用 Redis 分布式锁串行化；
+多 worker安全：每个 uvicorn worker 的 lifespan 都会调 init_db()。
+首次建库时并发 upgrade 会有竞态（重复建表/版本锁冲突），故用 Redis 分布式锁串行化；
 Redis 不可用（未配置/宕机，fail-open）则不设锁直接跑（dev/sqlite 单 worker 本无并发）。
 """
 
@@ -10,7 +10,7 @@ from contextlib import suppress
 
 _MIGRATION_LOCK_KEY = "lkm:migration:lock"
 _MIGRATION_LOCK_TTL = 120  # 秒：迁移超时上限后锁自动过期
-_MIGRATION_LOCK_WAIT = 8  # 秒：拿不到锁时最多等待的时长，之后照常跑（幂等 no-op）
+_MIGRATION_LOCK_WAIT = 8  # 秒：拿不到锁时最多等待的时长
 _MIGRATION_LOCK_POLL = 0.3  # 轮询间隔
 
 
@@ -77,12 +77,36 @@ async def _release_migration_lock(held: bool) -> None:
         await client.delete(_MIGRATION_LOCK_KEY)
 
 
-async def init_db() -> None:
-    """把数据库 schema 升到 Alembic head（多 worker 下用 Redis 锁串行化）。
+async def _create_all() -> None:
+    """create_all 降级通道：按 Base.metadata 建缺失的表（幂等，只建不 ALTER）。
 
-    既负责全新环境的建库（基线迁移建全部表），也负责后续的增量迁移。
-    生产与开发复用同一迁移链。
+    仅在 ``settings.use_alembic=False`` 时启用。多 worker 安全：create_all 对已存在的
+    表是 no-op，无需 Redis 迁移锁。注意必须 import 所有模型模块，metadata 才会被填满；
+    auth 的表独立定义在其 models（未被 db/models import），故这里显式引入。
     """
+    import app.modules.auth.models  # noqa: F401  注册 auth 表（同 alembic/env.py 习惯）
+    from app.db.models import Base
+    from app.db.session import get_async_engine
+
+    engine = get_async_engine()
+    if engine is None:
+        return
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
+async def init_db() -> None:
+    """把数据库 schema 初始化到最新（多 worker 下用 Redis 锁串行化）。
+
+    默认走 Alembic：既负责全新环境的建库（基线迁移建全部表），也负责增量迁移，
+    生产与开发复用同一迁移链。当 ``settings.use_alembic=False`` 时降级为
+    ``create_all()``（见 :func:`_create_all` 的局限，仅适配从零重建场景）。
+    """
+    from app.core.config import settings
+
+    if not settings.use_alembic:
+        await _create_all()
+        return
     held = await _acquire_migration_lock()
     try:
         await asyncio.to_thread(_run_upgrade)

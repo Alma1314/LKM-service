@@ -1,6 +1,5 @@
-"""ARQ 任务：验证码 / 魔法链接发送（worker 侧执行）。
-
-模块3：channels/deps 只在函数内延迟 import，避免 worker 冷启动时经 send→deps→
+"""验证码 / 魔法链接发送（worker 侧执行）。
+channels/deps 只在函数内延迟 import，避免 worker 冷启动时经 send→deps→
 providers/security→db.models/session 拉整棵 auth 树，缩短 worker 启动路径。
 """
 

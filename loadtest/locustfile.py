@@ -1,4 +1,4 @@
-"""LKM 后端热路径负载压测（模块1 压测基座 · locust）。
+"""LKM 后端热路径负载压测。
 
 覆盖公开只读热点：articles/columns/forum/blog 列表、categories、members、health，
 以及一组低频 auth 密码登录（受 Redis 限流，用于观测限流下行为）。
