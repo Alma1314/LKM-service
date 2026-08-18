@@ -1,13 +1,16 @@
 """文件上传、列表、审核、删除路由。"""
 
+import mimetypes
 import shutil
 from datetime import datetime
 from hashlib import sha3_256
 from pathlib import Path
 from tempfile import SpooledTemporaryFile
 from typing import Annotated, cast
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -18,7 +21,7 @@ from app.modules.auth.deps import CurrentUser, get_current_user
 from app.modules.common import ApiResp, ListData
 from app.modules.files.models import FileStatus
 from app.modules.files.schemas import FileInfo
-from app.modules.files.service import REFER_CACHE
+from app.modules.files.service import REFER_CACHE, limiter
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -97,9 +100,7 @@ def upload_files(
         view_count=0,
     )
 
-    existing = db.execute(
-        select(UserStorageItem).where(UserStorageItem.showed_path == showed_path)
-    ).scalar()
+    existing = db.execute(select(UserStorageItem).where(UserStorageItem.showed_path == showed_path)).scalar()
 
     if existing:
         # 替换：先回收旧物理文件的引用，再指向新文件
@@ -163,9 +164,9 @@ def review_file(
     if target_status == FileStatus.REJECTED:
         # 同一物理文件被多个 item 引用：一并标记 REJECTED，并删除物理文件
         item_hash = _hash_of(item.actual_path)
-        others = db.execute(
-            select(UserStorageItem).where(UserStorageItem.actual_path == item.actual_path)
-        ).scalars().all()
+        others = (
+            db.execute(select(UserStorageItem).where(UserStorageItem.actual_path == item.actual_path)).scalars().all()
+        )
         for other in others:
             other_meta = _load_meta(other)
             other_meta.status = FileStatus.REJECTED
@@ -204,4 +205,33 @@ def remove_file(
         code=200,
         msg=f"Item {target_item_id} deleted",
         data=meta,
+    )
+
+
+@router.get("/download/{item_id}")
+def download_file(
+    cur: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_session)],
+    target_item_id: Annotated[int, Path("item_id")],
+):
+    item = db.get(UserStorageItem, target_item_id)
+    if item is None or item.file_metadata.status == FileStatus.DELETED:
+        raise HTTPException(status_code=404, detail="Item not found")
+    if not limiter.check_access(target_item_id, (cur.account_level, cur.role)):
+        raise HTTPException(status_code=429, detail="Too Many Requests today")
+
+    item.file_metadata.download_count += 1
+    db.commit()
+    db.refresh(item)
+
+    media_type = item.file_metadata.mime_type
+    if not media_type:
+        media_type = "application/octet-stream"
+
+    encoded_filename = quote(Path(item.actual_path).name)
+
+    return FileResponse(
+        path=item.actual_path,
+        filename=encoded_filename,
+        media_type=media_type,
     )
