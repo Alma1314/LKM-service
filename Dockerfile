@@ -37,4 +37,8 @@ ENV LKM_DB_PATH=/data/lkm.db \
     LKM_FILES_STORE_DIR=/data/files_store
 
 EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 多 worker（模块5）：默认单 worker（语义不变），设 LKM_WEB_WORKERS=N 水平跑满 CPU。
+# uvicorn(0.51) `--workers N` 用 multiprocess spawn(ASGI worker)，无需 gunicorn/worker-class。
+# 优雅启停：uvicorn 收 SIGTERM 通知各 worker，FastAPI lifespan yield 后清理
+# （cleanup_task / redis close / dispose_engine）由 app.main.lifespan 负责。
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${LKM_WEB_WORKERS:-1}"]
