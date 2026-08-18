@@ -1,8 +1,9 @@
 import datetime
-import json
-from typing import ClassVar, cast
+from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.modules.common import parse_tags
 
 
 class FileCreate(BaseModel):
@@ -35,21 +36,4 @@ class FileInfo(BaseModel):
     @field_validator("tags", mode="before")
     @classmethod
     def _parse_tags(cls, v: object) -> list[str]:
-        if isinstance(v, list):
-            return cast(list[str], v)
-        if not isinstance(v, str):
-            return []
-        try:
-            parsed = json.loads(v)
-        except (json.JSONDecodeError, TypeError):
-            return []
-        if isinstance(parsed, list):
-            return cast(list[str], parsed)
-        return []
-
-
-class PageData[T](BaseModel):
-    items: list[T]
-    total: int
-    page: int
-    pages: int
+        return parse_tags(v)

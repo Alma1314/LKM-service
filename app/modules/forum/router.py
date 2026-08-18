@@ -6,11 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.err import respond
 from app.db.session import get_read_session, get_session
 from app.modules.auth.deps import CurrentUser, get_current_user
-from app.modules.common import ApiResp, ModuleStatus
+from app.modules.common import ApiResp, ModuleStatus, PageData
 from app.modules.forum.schemas import (
     CommentCreate,
     CommentInfo,
-    PageData,
     PostCreate,
     PostInfo,
 )

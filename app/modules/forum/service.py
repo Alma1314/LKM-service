@@ -9,12 +9,16 @@ from sqlalchemy.orm import selectinload
 from app.core.err import BizError, CommonErr
 from app.db.models import ForumComment, ForumPost, ForumPostLike, User
 from app.db.repo import get_or_raise
+from app.modules.common import (
+    PageData,
+    paginate_offset,
+    paginate_pages,
+)
 from app.modules.forum.errors import ForumErr
 from app.modules.forum.models import FORUM_TABLE_PLAN
 from app.modules.forum.schemas import (
     CommentCreate,
     CommentInfo,
-    PageData,
     PostCreate,
     PostInfo,
 )
@@ -81,7 +85,7 @@ async def list_posts(
 
     stmt = (
         base.order_by(ForumPost.is_pinned.desc(), ForumPost.id.desc())
-        .offset((page - 1) * limit)
+        .offset(paginate_offset(page, limit))
         .limit(limit)
     )
     result = await db.execute(stmt)
@@ -93,7 +97,7 @@ async def list_posts(
         items=items,
         total=total_count,
         page=page,
-        pages=(total_count + limit - 1) // limit,
+        pages=paginate_pages(total_count, limit),
     )
 
 
@@ -181,7 +185,7 @@ async def list_comments(
         select(ForumComment)
         .where(ForumComment.post_id == post_id)
         .order_by(ForumComment.floor_number.asc())
-        .offset((page - 1) * limit)
+        .offset(paginate_offset(page, limit))
         .limit(limit)
     )
     result = await db.execute(stmt)
@@ -190,7 +194,10 @@ async def list_comments(
     names = await _author_map(db, [c.user_id for c in comments])
     items = [_comment_to_schema(c, names.get(c.user_id, "")) for c in comments]
     return PageData(
-        items=items, total=total, page=page, pages=(total + limit - 1) // limit
+        items=items,
+        total=total,
+        page=page,
+        pages=paginate_pages(total, limit),
     )
 
 

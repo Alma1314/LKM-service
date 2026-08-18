@@ -23,11 +23,10 @@ from app.db.models import (
     ArticleComment,
     ArticleLike,
     ArticleTag,
-    Profile,
     Tag,
     now_iso,
 )
-from app.db.repo import get_or_raise
+from app.db.repo import get_or_raise, get_profiles_by_user_ids
 from app.modules.articles.errors import ArticleErr
 from app.modules.articles.schemas import (
     ArticleCategory,
@@ -36,6 +35,7 @@ from app.modules.articles.schemas import (
     ArticleListItem,
 )
 from app.modules.auth.schemas import ProfileInfo
+from app.modules.common import tag_names_sequence
 
 ARTICLE_CATEGORY_NAMES: dict[str, str] = {
     "announcement": "公告",
@@ -84,12 +84,7 @@ async def _sync_article_tags(
     保持输入 name 顺序（避免 set 迭代造成的顺序随机，修复预存的标签顺序 flaky）。
     """
     # 去空 + 保首现顺序去重（勿用 set：顺序非确定会打乱 tags 返回序）
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for n in names:
-        if n and n not in seen:
-            ordered.append(n)
-            seen.add(n)
+    ordered = tag_names_sequence(names)
     if not ordered:
         return
 
@@ -391,15 +386,8 @@ async def create_article_comment(
 async def _get_author_profiles(
     db: AsyncSession, user_ids: set[int]
 ) -> dict[int, ProfileInfo | None]:
-    """批量查询多个评论作者的 Profile，避免逐条查询的 N+1（照 blog 模块范式，在 articles 模块内自建）。"""
-    if not user_ids:
-        return {}
-    rows = (
-        (await db.execute(select(Profile).where(Profile.user_id.in_(user_ids))))
-        .scalars()
-        .all()
-    )
-    return {p.user_id: ProfileInfo.model_validate(p) for p in rows}
+    """批量查询多个评论作者的 Profile，避免逐条查询的 N+1（收敛到 repo 公共查询）。"""
+    return await get_profiles_by_user_ids(db, user_ids)
 
 
 async def list_article_comments(db: AsyncSession, slug: str) -> list[ArticleCommentOut]:

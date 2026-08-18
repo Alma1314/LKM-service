@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.err import BizError, CommonErr
 from app.db.models import Article, BlogComment, BlogSeries, BlogStar, Profile, now_iso
-from app.db.repo import get_or_raise
+from app.db.repo import get_or_raise, get_profiles_by_user_ids
 from app.modules.articles.service import create_article as _create_article_alias
 from app.modules.auth.schemas import ProfileInfo
 from app.modules.blog import git_svc
@@ -105,15 +105,8 @@ async def _get_profile(db: AsyncSession, user_id: int) -> ProfileInfo | None:
 async def _get_profiles(
     db: AsyncSession, user_ids: set[int]
 ) -> dict[int, ProfileInfo | None]:
-    """批量查询多个用户的 Profile，避免逐条查询的 N+1。"""
-    if not user_ids:
-        return {}
-    rows = (
-        (await db.execute(select(Profile).where(Profile.user_id.in_(user_ids))))
-        .scalars()
-        .all()
-    )
-    return {p.user_id: ProfileInfo.model_validate(p) for p in rows}
+    """批量查询多个用户的 Profile，避免逐条查询的 N+1（收敛到 repo 公共查询）。"""
+    return await get_profiles_by_user_ids(db, user_ids)
 
 
 # ---- series CRUD ----

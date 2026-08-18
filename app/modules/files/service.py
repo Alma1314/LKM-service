@@ -14,9 +14,10 @@ from app.core.config import settings
 from app.core.err import BizError
 from app.db.models import LibraryFile, User
 from app.db.repo import get_or_raise
+from app.modules.common import PageData, paginate_offset, paginate_pages
 from app.modules.files.errors import FileErr
 from app.modules.files.models import FILES_TABLE_PLAN, FileStatus
-from app.modules.files.schemas import FileCreate, FileInfo, PageData
+from app.modules.files.schemas import FileCreate, FileInfo
 
 
 class _Readable(Protocol):
@@ -82,7 +83,11 @@ async def list_files(
         else LibraryFile.id.desc()
     )
     files = (
-        (await db.execute(base.order_by(order).offset((page - 1) * limit).limit(limit)))
+        (
+            await db.execute(
+                base.order_by(order).offset(paginate_offset(page, limit)).limit(limit)
+            )
+        )
         .scalars()
         .all()
     )
@@ -90,7 +95,7 @@ async def list_files(
     names = await _uploader_map(db, [f.uploader_id for f in files])
     items = [_file_to_schema(f, names.get(f.uploader_id, "")) for f in files]
     return PageData(
-        items=items, total=total, page=page, pages=(total + limit - 1) // limit
+        items=items, total=total, page=page, pages=paginate_pages(total, limit)
     )
 
 
