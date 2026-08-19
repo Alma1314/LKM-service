@@ -1,10 +1,16 @@
 import asyncio
+import hashlib
 import io
+import json
 import pathlib
 from collections.abc import AsyncGenerator
+from typing import Any
 
+import boto3
 import pytest
+from botocore.exceptions import ClientError
 from httpx import ASGITransport, AsyncClient
+from moto import mock_aws
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -22,15 +28,18 @@ from app.main import app as fastapi_app
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.files.errors import FileErr
 from app.modules.files.models import FileStatus
-from app.modules.files.schemas import FileCreate, FileInfo
+from app.modules.files.schemas import DownloadUrlInfo, FileCreate, FileInfo
 from app.modules.files.service import (
     bump_download,
+    confirm_upload,
     create_file,
     delete_file,
     get_file,
     list_files,
     review_file,
+    upload_init,
 )
+from app.modules.storage.base import StorageBackend
 
 
 @pytest.fixture
@@ -603,3 +612,395 @@ class TestContentPath:
         p = _content_path(h)
         assert p == tmp_path / "ab" / h
         assert p.parent == tmp_path / "ab"
+
+
+# ---- Phase 2-A: download/preview ----
+
+def test_file_err_not_approved_maps_403():
+    from app.modules.files.errors import FileErr
+
+    assert FileErr.NOT_APPROVED.value is not None  # 存在性
+
+
+def test_download_url_info_fields():
+    m = DownloadUrlInfo(kind="backend", url="/api/v1/files/1/content")
+    assert m.kind == "backend" and m.url == "/api/v1/files/1/content" and m.expires_in is None
+
+
+# ---- Phase 2-A endpoints ----
+
+class TestFilesPhase2AEndpoints:
+    """预览 / 下载 URL / 内容流 三个新端点。
+
+    用 service 层 create_file + review_file(APPROVED) 造出"真实已存盘且已审核通过"的文件，
+    使 content backend 能真正读到字节。
+    """
+
+    CONTENT = b"%PDF-1.4 phase2a content"
+
+    async def _approved_file(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        approved: bool = True,
+    ) -> int:
+        f = await create_file(
+            db,
+            user_id,
+            FileCreate(
+                original_name="讲义.pdf",
+                mime_type="application/pdf",
+                category_id="math",
+                description="",
+                tags=[],
+            ),
+            stream=io.BytesIO(self.CONTENT),
+        )
+        if approved:
+            await review_file(db, f.id, FileStatus.APPROVED, is_admin=True)
+        return f.id
+
+    # 端点需要登录 token；这里直接把 user/token 造好并给 client 用
+    async def _authed(self, db: AsyncSession) -> tuple[int, str]:
+        user_id = await _user(db, username="phase2a", email="phase2a@example.com")
+        token = create_access_token(
+            user_id=user_id, account_level="normal", role="member"
+        )
+        return user_id, token
+
+    async def test_preview_returns_403_for_non_approved(
+        self, client: AsyncClient, db: AsyncSession
+    ):
+        user_id, token = await self._authed(db)
+        fid = await self._approved_file(db, user_id, approved=False)
+
+        resp = await client.get(
+            f"/api/v1/files/{fid}/preview",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert resp.status_code == 403
+        assert resp.json()["code"] == FileErr.NOT_APPROVED
+
+    async def test_preview_returns_content_for_approved(
+        self, client: AsyncClient, db: AsyncSession
+    ):
+        user_id, token = await self._authed(db)
+        fid = await self._approved_file(db, user_id, approved=True)
+
+        resp = await client.get(
+            f"/api/v1/files/{fid}/preview",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("application/pdf")
+        assert resp.content == self.CONTENT
+
+    async def test_download_url_local_returns_backend(
+        self, client: AsyncClient, db: AsyncSession
+    ):
+        from app.core.config import settings
+
+        assert settings.storage_backend == "local"  # 本测试依赖 local 后端
+        user_id, token = await self._authed(db)
+        fid = await self._approved_file(db, user_id, approved=True)
+
+        resp = await client.get(
+            f"/api/v1/files/{fid}/download/url",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()["data"]
+        assert body["kind"] == "backend"
+        assert body["url"] == f"/api/v1/files/{fid}/content"
+        assert body["expires_in"] is None
+
+    async def test_download_url_403_for_non_approved(
+        self, client: AsyncClient, db: AsyncSession
+    ):
+        user_id, token = await self._authed(db)
+        fid = await self._approved_file(db, user_id, approved=False)
+
+        resp = await client.get(
+            f"/api/v1/files/{fid}/download/url",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert resp.status_code == 403
+
+    async def test_download_bumps_download_count(
+        self, client: AsyncClient, db: AsyncSession
+    ):
+        user_id, token = await self._authed(db)
+        fid = await self._approved_file(db, user_id, approved=True)
+
+        await client.get(
+            f"/api/v1/files/{fid}/download/url",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        row = (
+            (await db.execute(select(LibraryFile).where(LibraryFile.id == fid)))
+            .scalars()
+            .one()
+        )
+        assert row.download_count == 1
+
+    async def test_content_streams_attachment(
+        self, client: AsyncClient, db: AsyncSession
+    ):
+        user_id, token = await self._authed(db)
+        fid = await self._approved_file(db, user_id, approved=True)
+
+        resp = await client.get(
+            f"/api/v1/files/{fid}/content",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert resp.status_code == 200
+        assert "attachment" in resp.headers["content-disposition"]
+        assert resp.content == self.CONTENT
+
+    async def test_preview_bumps_view_count(
+        self, client: AsyncClient, db: AsyncSession
+    ):
+        user_id, token = await self._authed(db)
+        fid = await self._approved_file(db, user_id, approved=True)
+
+        await client.get(
+            f"/api/v1/files/{fid}/preview",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        row = (
+            (await db.execute(select(LibraryFile).where(LibraryFile.id == fid)))
+            .scalars()
+            .one()
+        )
+        assert row.view_count == 1
+
+
+# ---- Phase 2-B: upload-init / confirm（预签名直传） ----
+
+class _FakeRedis:
+    """极简 dict 版 Redis，仅覆盖 upload-init/confirm 用到的 set/getdel。"""
+
+    def __init__(self) -> None:
+        self._data: dict[str, str] = {}
+
+    async def set(self, key: str, value: str, *, ex: int | None = None) -> None:
+        self._data[key] = value
+
+    async def getdel(self, key: str) -> str | None:
+        return self._data.pop(key, None)
+
+
+def _moto_s3_storage() -> tuple[StorageBackend, Any]:
+    """起 moto 内存 S3 + 返回 (S3Storage, moto_client)。mock_aws 上下文须在调用方存活。"""
+    from app.modules.storage.s3 import S3Storage
+
+    client = boto3.client("s3", region_name="us-east-1")
+    client.create_bucket(Bucket="lkm")
+    return S3Storage(bucket="lkm", prefix="files", client=client), client
+
+
+class TestFilesPhase2BUploadInit:
+    """L-b 契约：Local→sync，S3→direct（presigned_url + upload_id）。"""
+
+    async def _authed(self, db: AsyncSession) -> tuple[int, str]:
+        user_id = await _user(db, username="p2b", email="p2b@example.com")
+        token = create_access_token(
+            user_id=user_id, account_level="normal", role="member"
+        )
+        return user_id, token
+
+    def _body(self) -> dict[str, object]:
+        return {
+            "original_name": "讲座.pdf",
+            "mime_type": "application/pdf",
+            "category_id": "math",
+            "description": "直传测试",
+            "tags": ["数学"],
+        }
+
+    async def test_upload_init_local_returns_sync(
+        self, client: AsyncClient, db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "storage_backend", "local")
+        _, token = await self._authed(db)
+
+        resp = await client.post(
+            "/api/v1/files/upload-init",
+            headers={"Authorization": f"Bearer {token}"},
+            json=self._body(),
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["mode"] == "sync"
+        assert data["upload_id"] is None
+        assert data["presigned_url"] is None
+
+    async def test_upload_init_s3_returns_direct(
+        self, client: AsyncClient, db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import app.modules.files.service as svc
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "storage_backend", "s3")
+        with mock_aws():
+            stor, _client = _moto_s3_storage()
+            monkeypatch.setattr(svc, "_get_storage", lambda: stor)
+            # S3 直传需 Redis 标记；未注入时 get_redis 返回 None 也对（标记可选）
+            _, token = await self._authed(db)
+
+            resp = await client.post(
+                "/api/v1/files/upload-init",
+                headers={"Authorization": f"Bearer {token}"},
+                json=self._body(),
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["mode"] == "direct"
+        assert data["upload_id"]
+        assert data["presigned_url"].startswith("https")
+
+    async def test_upload_init_marker_includes_uploader_id(
+        self, db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """S3 直传初始化写下的 Redis 标记必须含 uploader_id（Phase 2-C 事件回调无用户上下文，
+        登记归属靠标记携带的 uploader_id）。"""
+        import app.modules.files.service as svc
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "storage_backend", "s3")
+        with mock_aws():
+            stor, _client = _moto_s3_storage()
+            monkeypatch.setattr(svc, "_get_storage", lambda: stor)
+            fake = _FakeRedis()
+
+            async def _fake_redis() -> object:
+                return fake
+
+            monkeypatch.setattr(svc, "get_redis", _fake_redis)
+            user_id = await _user(db)
+            from app.modules.auth.deps import CurrentUser
+            from app.modules.files.schemas import FileCreate
+
+            cur = CurrentUser(id=user_id, account_level="normal", role="member")
+            init = await upload_init(
+                db,
+                FileCreate(
+                    original_name="讲座.pdf",
+                    mime_type="application/pdf",
+                    category_id="math",
+                    description="直传测试",
+                    tags=["数学"],
+                ),
+                cur,
+            )
+
+            assert init.mode == "direct"
+            assert init.upload_id is not None
+            meta_raw = fake._data[svc._upload_key(init.upload_id)]
+            meta = json.loads(meta_raw)
+            assert meta["uploader_id"] == user_id
+
+    async def test_confirm_missing_marker_raises_expired(
+        self, db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Redis 标记缺失（或 Redis 未启用）→ UPLOAD_EXPIRED。"""
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "storage_backend", "s3")
+        with mock_aws():
+            stor, _ = _moto_s3_storage()
+            monkeypatch.setattr(
+                "app.modules.files.service._get_storage", lambda: stor
+            )
+            user_id = await _user(db)
+            from app.modules.auth.deps import CurrentUser
+
+            cur = CurrentUser(id=user_id, account_level="normal", role="member")
+
+            with pytest.raises(BizError) as exc:
+                await confirm_upload(db, "no-such-upload", cur)
+
+        assert exc.value.errcode == FileErr.UPLOAD_EXPIRED
+
+    async def test_confirm_s3_registers_pending_and_dedups(
+        self, db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """完整 S3 直传确认：读随机 key→SHA3→copy 到内容寻址→登记 PENDING。
+
+        用假 Redis 提供 getdel 标记，moto 提供 put/copy/exists 对象层。
+        """
+        import app.modules.files.service as svc
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "storage_backend", "s3")
+        with mock_aws():
+            stor, client = _moto_s3_storage()
+            monkeypatch.setattr(svc, "_get_storage", lambda: stor)
+            fake = _FakeRedis()
+
+            async def _fake_redis() -> object:
+                return fake
+
+            monkeypatch.setattr(svc, "get_redis", _fake_redis)
+            user_id = await _user(db)
+            from app.modules.auth.deps import CurrentUser
+            from app.modules.files.schemas import FileCreate
+
+            cur = CurrentUser(id=user_id, account_level="normal", role="member")
+            init = await upload_init(
+                db,
+                FileCreate(
+                    original_name="讲座.pdf",
+                    mime_type="application/pdf",
+                    category_id="math",
+                    description="直传测试",
+                    tags=["数学"],
+                ),
+                cur,
+            )
+
+            assert init.mode == "direct"
+            upload_id = init.upload_id
+            assert upload_id is not None
+            content = b"%PDF-1.4 direct upload bytes"
+            # 随机 key：up/<uid>；把直传字节塞进 S3
+            random_key = f"up/{upload_id}"
+            client.put_object(Bucket="lkm", Key=f"files/{random_key}", Body=content)
+
+            result = await confirm_upload(db, upload_id, cur)
+
+            assert result.status == "pending"
+            assert result.original_name == "讲座.pdf"
+            assert result.size == len(content)
+            assert result.tags == ["数学"]
+            expected = hashlib.sha3_256(content).hexdigest()
+            assert len(expected) == 64
+            # 已 copy 到内容寻址 key，且随机 key 已删
+            key = f"files/{expected[:2]}/{expected}"
+            copied = client.get_object(Bucket="lkm", Key=key)["Body"].read()
+            assert copied == content
+            with pytest.raises(ClientError):
+                client.head_object(Bucket="lkm", Key=f"files/{random_key}")
+            # DB 登记 PENDING，ref_count=1
+            rows = (
+                (await db.execute(select(LibraryFile))).scalars().all()
+            )
+            assert len(rows) == 1
+            row = rows[0]
+            assert row.status == "pending"
+            assert row.sha3_hash == expected
+            assert row.ref_count == 1
+            # 存储路径按 backend 与 create_file 对齐：S3 下为 files/<hash[:2]>/<hash>，
+            # 直传与普通上传条目不可区分
+            assert row.storage_path == f"files/{expected[:2]}/{expected}"

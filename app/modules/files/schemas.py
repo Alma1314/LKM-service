@@ -1,5 +1,5 @@
 import datetime
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -37,3 +37,18 @@ class FileInfo(BaseModel):
     @classmethod
     def _parse_tags(cls, v: object) -> list[str]:
         return parse_tags(v)
+
+
+class UploadInitResp(BaseModel):
+    mode: Literal["direct", "sync"]
+    upload_id: str | None = None      # direct 时
+    presigned_url: str | None = None  # direct 时
+    file: FileInfo | None = None      # 预留(当前 sync 前端回退 multipart, 故常 None)
+
+
+class DownloadUrlInfo(BaseModel):
+    """下载 URL 描述对象：frontend 依 kind 分叉下载方式。"""
+
+    kind: Literal["backend", "presigned"]
+    url: str
+    expires_in: int | None = None

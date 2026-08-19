@@ -2,6 +2,7 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
@@ -9,14 +10,23 @@ from app.db.session import get_read_session, get_session
 from app.modules.auth.deps import CurrentUser, get_current_user
 from app.modules.common import ApiResp, ModuleStatus, PageData
 from app.modules.files.models import FileStatus
-from app.modules.files.schemas import FileCreate, FileInfo
+from app.modules.files.schemas import (
+    DownloadUrlInfo,
+    FileCreate,
+    FileInfo,
+    UploadInitResp,
+)
 from app.modules.files.service import (
     bump_download,
+    confirm_upload,
     delete_file,
+    download_url,
     get_file,
     get_files_plan,
     list_files,
     review_file,
+    serve_content,
+    upload_init,
 )
 from app.modules.files.service import (
     create_file as create_file_service,
@@ -75,6 +85,28 @@ async def upload_file(
     return await create_file_service(db, cur.id, info, file.file)
 
 
+@router.post("/upload-init", response_model=ApiResp[UploadInitResp])
+@respond
+async def upload_init_endpoint(
+    payload: FileCreate,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> UploadInitResp:
+    """预签名直传初始化：Local→sync，S3→direct（presigned PUT + upload_id）。"""
+    return await upload_init(db, payload, cur)
+
+
+@router.post("/{upload_id}/confirm", response_model=ApiResp[FileInfo])
+@respond
+async def confirm_upload_endpoint(
+    upload_id: str,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> FileInfo:
+    """确认直传：回读对象→SHA3→去重→登记 PENDING。upload_id 为 str UUID。"""
+    return await confirm_upload(db, upload_id, cur)
+
+
 @router.get("/{file_id}", response_model=ApiResp[FileInfo])
 @respond
 async def get_file_detail(
@@ -126,3 +158,34 @@ async def delete_uploaded_file(
         actor_id=cur.id,
         is_admin=cur.account_level == "admin",
     )
+
+
+@router.get("/{file_id}/preview")
+async def preview_file(
+    file_id: int,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    """预览：仅 APPROVED 可访问，inline 流式返回，计 view_count。"""
+    return await serve_content(db, file_id, "inline")
+
+
+@router.get("/{file_id}/download/url", response_model=ApiResp[DownloadUrlInfo])
+@respond
+async def download_file_url(
+    file_id: int,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> DownloadUrlInfo:
+    """签发下载 URL（本地→/content、S3→预签名），计 download_count。"""
+    return await download_url(db, file_id, cur)
+
+
+@router.get("/{file_id}/content")
+async def download_file_content(
+    file_id: int,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    """附件流式下载：仅 APPROVED 可访问。"""
+    return await serve_content(db, file_id, "attachment")

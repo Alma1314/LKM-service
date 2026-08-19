@@ -31,6 +31,7 @@ from app.db.session import (
 from app.modules.auth.service_passkey import cleanup_expired_challenges
 from app.modules.forum.graphql import GraphQLContext
 from app.modules.forum.graphql import schema as forum_graphql_schema
+from app.ws.manager import manager
 
 request_logger = logging.getLogger("lkm.http")
 
@@ -91,6 +92,9 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     cleanup_task.cancel()
     with suppress(asyncio.CancelledError):
         await cleanup_task
+
+    # 收尾 WebSocket 事件的 Redis 订阅 task，避免泄漏连接
+    await manager.close()
 
     await redis_client.close_redis()
     await dispose_engine()

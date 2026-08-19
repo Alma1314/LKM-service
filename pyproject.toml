@@ -22,6 +22,7 @@ dependencies = [
     "redis>=5.0.0",
     "arq>=0.28.0",
     "sentry-sdk>=2.0",
+    "boto3>=1.35.0",
 ]
 
 [tool.pytest.ini_options]
@@ -63,6 +64,7 @@ dev = [
     "ty>=0.0.70",
     "fakeredis>=2.22.0",
     "locust>=2.46.3",
+    "moto>=5.0.0",
 ]
 
 [tool.ruff]

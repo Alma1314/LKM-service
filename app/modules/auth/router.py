@@ -1,6 +1,7 @@
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import jobs
@@ -36,7 +37,12 @@ from app.modules.auth.schemas import (
     UserRegLocal,
     UserRegNormal,
 )
-from app.modules.auth.service import get_profile, update_profile
+from app.modules.auth.service import (
+    get_profile,
+    serve_avatar,
+    update_avatar,
+    update_profile,
+)
 from app.modules.auth.service_auth import (
     consume_pending_normal_registration,
     store_pending_normal_registration,
@@ -98,6 +104,27 @@ async def edit_profile(
         raise BizError(CommonErr.FORBIDDEN)
     await update_profile(db, user_id, info)
     return await get_profile(db, user_id)
+
+
+@router.post("/avatar", response_model=ApiResp[MessageResponse])
+@respond
+async def upload_avatar(
+    file: UploadFile = File(...),
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """上传当前用户头像。multipart ``file``，<=2MB，返回新头像 storage key。"""
+    key = await update_avatar(db, cur.id, file.file)
+    return {"message": "Avatar uploaded", "avatar": key}
+
+
+@router.get("/avatar/{user_id}")
+async def get_avatar(
+    user_id: int,
+    db: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    """代理回读某用户头像字节（immutable 长缓存）；无头像 → 404。"""
+    return await serve_avatar(db, user_id)
 
 
 @router.post("/reg/local", response_model=ApiResp[AuthTokenData])

@@ -27,6 +27,8 @@ class AuthErr(ErrCode):
     RECOVERY_NOT_SUPPORTED = NS_AUTH.err(23)
     RECOVERY_METHOD_UNAVAILABLE = NS_AUTH.err(24)
     OAUTH_EMAIL_ALREADY_REGISTERED = NS_AUTH.err(25)
+    TOO_LARGE = NS_AUTH.err(26)
+    AVATAR_NOT_FOUND = NS_AUTH.err(27)
 
 
 register(
@@ -62,5 +64,7 @@ register(
             409,
             "OAuth email already registered",
         ),
+        AuthErr.TOO_LARGE: (413, "Avatar exceeds upload size limit"),
+        AuthErr.AVATAR_NOT_FOUND: (404, "Avatar not found"),
     }
 )

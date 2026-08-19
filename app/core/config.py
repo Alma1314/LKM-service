@@ -82,6 +82,10 @@ class Settings(BaseSettings):
         ""  # 空串 = 未启用 Redis；非空走 redis://[user:pass@]host:port[/db]
     )
 
+    # MinIO/S3 对象事件回调共享令牌：空串 = 未启用（回调端点一律 401）。
+    # 生产必须设置固定随机值，供桶通知 webhook 的 Authorization: Bearer 头校验。
+    files_notify_token: str = ""
+
     # schema 初始化：默认 True 走 Alembic（增量迁移，schema 唯一权威）；
     # 置 False 时 init_db 降级为 Base.metadata.create_all()（只建新库、不 ALTER 已有表，
     # 失去增量迁移能力）。适合"无历史数据、从零重建"的场景临时关闭，生产建议保持 True。
@@ -91,6 +95,15 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
     # Sentry 性能采样率（0~1）；仅 DSN 非空时才生效
     sentry_traces_sample_rate: float = 1.0
+
+    # ---- 存储后端 ----
+    storage_backend: str = "local"  # local | s3
+    s3_endpoint_url: str = ""       # 留空=云 S3 默认 endpoint；填了=MinIO 本地
+    s3_region: str = ""
+    s3_bucket: str = "lkm"
+    s3_access_key: str = ""
+    s3_secret_key: str = ""
+    s3_prefix: str = "files"        # 桶内 key 前缀
 
     @model_validator(mode="after")
     def _no_insecure_secrets_outside_dev(self) -> "Settings":

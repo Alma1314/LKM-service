@@ -14,11 +14,13 @@ from app.modules.blog.git_http import git_router
 from app.modules.blog.router import router as blog_router
 from app.modules.boards.router import router as boards_router
 from app.modules.columns.router import router as columns_router
+from app.modules.files.notify import router as files_notify_router
 from app.modules.files.router import router as files_router
 from app.modules.forum.router import router as forum_router
 from app.modules.health.router import router as health_router
 from app.modules.members.router import router as members_router
 from app.modules.starhope.router import router as starhope_router
+from app.ws.router import router as ws_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
@@ -36,7 +38,9 @@ api_router.include_router(boards_router)
 api_router.include_router(columns_router)
 api_router.include_router(forum_router)
 api_router.include_router(files_router)
+api_router.include_router(files_notify_router)
 api_router.include_router(blog_router)
 api_router.include_router(articles_router)
 api_router.include_router(git_router)
 api_router.include_router(starhope_router)
+api_router.include_router(ws_router)
