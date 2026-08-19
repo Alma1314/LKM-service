@@ -12,7 +12,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.modules.auth.models  # noqa: F401
-from app.db.models import Column, ColumnApplication, ColumnPost, Profile, User, now_iso
+from app.db.models import (
+    Board,
+    Column,
+    ColumnApplication,
+    ColumnPost,
+    Profile,
+    User,
+    now_iso,
+)
 from app.db.session import new_session
 from app.modules.columns.models import ColumnPostStatus, ColumnStatus
 
@@ -60,7 +68,7 @@ class _ColumnSeedData(TypedDict):
     article_count: int
     tags: list[str]
     badges: list[str]
-    board_tag: str
+    board_slug: str | None  # 关联板块 slug，seed 时解析为 board_id；None 表示无板块
 
 
 SEED_COLUMNS: list[_ColumnSeedData] = [
@@ -78,7 +86,7 @@ SEED_COLUMNS: list[_ColumnSeedData] = [
         "article_count": 15,
         "tags": ["引力波", "黑洞", "天体物理"],
         "badges": ["机构认证", "签约作者"],
-        "board_tag": "物理",
+        "board_slug": "physics",
     },
     {
         "slug": "edu-lab",
@@ -94,7 +102,7 @@ SEED_COLUMNS: list[_ColumnSeedData] = [
         "article_count": 8,
         "tags": ["科学教育", "课程设计", "科普"],
         "badges": ["机构认证"],
-        "board_tag": "教育",
+        "board_slug": None,
     },
     {
         "slug": "academic-writing",
@@ -110,7 +118,7 @@ SEED_COLUMNS: list[_ColumnSeedData] = [
         "article_count": 12,
         "tags": ["学术写作", "论文", "科研方法"],
         "badges": ["签约作者"],
-        "board_tag": "学术",
+        "board_slug": None,
     },
     {
         "slug": "algorithm-beauty",
@@ -126,7 +134,7 @@ SEED_COLUMNS: list[_ColumnSeedData] = [
         "article_count": 20,
         "tags": ["算法", "数据结构", "Python"],
         "badges": [],
-        "board_tag": "计算机",
+        "board_slug": "computer",
     },
 ]
 
@@ -203,6 +211,13 @@ _SEED_POSTS_TEMPLATES: dict[str, list[dict[str, str]]] = {
 }
 
 
+async def _board_id(db: AsyncSession, slug: str | None) -> int | None:
+    """按 slug 解析 Board 主键；对应板块未 seed 时返回 None（不报错）。"""
+    if not slug:
+        return None
+    return await db.scalar(select(Board.id).where(Board.slug == slug))
+
+
 async def seed_columns(db: AsyncSession) -> int:
     count = 0
     user = await _ensure_user(db)
@@ -215,6 +230,7 @@ async def seed_columns(db: AsyncSession) -> int:
         )
         if existing is not None:
             continue
+        board_id = await _board_id(db, data.get("board_slug"))
         col = Column(
             owner_id=user.id,
             title=data["title"],
@@ -230,7 +246,7 @@ async def seed_columns(db: AsyncSession) -> int:
             article_count=data["article_count"],
             tags=json.dumps(data["tags"], ensure_ascii=False),
             badges=json.dumps(data["badges"], ensure_ascii=False),
-            board_tag=data["board_tag"],
+            board_id=board_id,
             status=ColumnStatus.ACTIVE,
         )
         db.add(col)

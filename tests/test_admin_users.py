@@ -92,6 +92,11 @@ async def _seed_stats(db: AsyncSession, n_users: int = 3) -> None:
     await _create_user(db, "root", account_level="admin")
     for i in range(n_users):
         await _create_user(db, f"u{i}", account_level="normal")
+    import app.db.models as _models
+
+    board = _models.Board(slug="stats", title="统计", description="", is_public=True)
+    db.add(board)
+    await db.flush()
     db.add(
         ForumPost(
             author_id=int(
@@ -99,7 +104,7 @@ async def _seed_stats(db: AsyncSession, n_users: int = 3) -> None:
                     await db.execute(select(User.id).where(User.username == "u0"))
                 ).scalar_one()
             ),
-            category_id="cat",
+            board_id=board.id,
             title="t",
             excerpt="",
             content="c",

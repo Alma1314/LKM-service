@@ -182,7 +182,7 @@ class Column(Base):
     article_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tags: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     badges: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    board_tag: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    board_id: Mapped[int | None] = mapped_column(ForeignKey("boards.id"), nullable=True)
     status: Mapped[ColumnStatus] = mapped_column(
         String(20), nullable=False, default=ColumnStatus.ACTIVE
     )
@@ -236,12 +236,12 @@ class ForumPost(Base):
     __tablename__: str = "forum_posts"
     # 列表热路径按 category 过滤 + (is_pinned, id) 排序 → 复合索引一次命中
     __table_args__: tuple[Index, ...] = (
-        Index("ix_forum_posts_cat_pinned_id", "category_id", "is_pinned", "id"),
+        Index("ix_forum_posts_board_pinned_id", "board_id", "is_pinned", "id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-    category_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    board_id: Mapped[int] = mapped_column(ForeignKey("boards.id"), nullable=False)
     title: Mapped[str] = mapped_column(String(120), nullable=False)
     excerpt: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     content: Mapped[str] = mapped_column(Text, nullable=False)
@@ -261,6 +261,7 @@ class ForumPost(Base):
     )
 
     author: Mapped[User] = relationship(back_populates="forum_posts")
+    board: Mapped[Board] = relationship(back_populates="posts")
     comments: Mapped[list[ForumComment]] = relationship(
         back_populates="post", cascade="all, delete-orphan"
     )
@@ -650,6 +651,58 @@ class Report(Base):
     )
 
     reporter: Mapped[User | None] = relationship(foreign_keys=[reporter_id])
+
+
+class Board(Base):
+    __tablename__: str = "boards"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    slug: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")  # active | inactive
+    # 发言准入配置
+    require_certified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    daily_post_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 0=不限
+    is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(UTCDateTime, nullable=False, default=now_iso)
+    updated_at: Mapped[datetime.datetime] = mapped_column(UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso)
+
+    owner: Mapped[User | None] = relationship(foreign_keys=[owner_id])
+    posts: Mapped[list[ForumPost]] = relationship(back_populates="board")
+
+
+class BoardApplication(Base):
+    __tablename__: str = "board_applications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    applicant_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str] = mapped_column(String(300), nullable=False)
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    slug: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # pending|approved|rejected
+    reviewer_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(UTCDateTime, nullable=False, default=now_iso)
+    reviewed_at: Mapped[datetime.datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+    applicant: Mapped[User] = relationship(foreign_keys=[applicant_id])
+    reviewer: Mapped[User | None] = relationship(foreign_keys=[reviewer_id])
+
+
+class BoardBan(Base):
+    __tablename__: str = "board_bans"
+    __table_args__ = (Index("ix_board_bans_board_user", "board_id", "user_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    board_id: Mapped[int] = mapped_column(ForeignKey("boards.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    reason: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    expires_at: Mapped[datetime.datetime] = mapped_column(UTCDateTime, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(UTCDateTime, nullable=False, default=now_iso)
 
 
 class Exam(Base):

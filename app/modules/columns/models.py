@@ -49,7 +49,7 @@ COLUMN_TABLE_PLAN = {
         "article_count",
         "tags",
         "badges",
-        "board_tag",
+        "board_id",
         "status",
         "created_at",
         "updated_at",

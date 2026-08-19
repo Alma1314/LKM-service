@@ -9,7 +9,7 @@ from app.modules.common import parse_tags
 class PostCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=120)
     content: str = Field(..., min_length=1, max_length=200_000)
-    category_id: str = Field(..., min_length=1, max_length=50)
+    board_id: int = Field(..., ge=1)
     tags: list[str] = Field(default_factory=list)
 
 
@@ -22,7 +22,7 @@ class PostInfo(BaseModel):
     content: str
     author_id: int
     author_name: str = ""
-    category_id: str
+    board_id: int
     tags: list[str]
     is_pinned: bool
     is_featured: bool

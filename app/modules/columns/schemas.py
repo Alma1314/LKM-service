@@ -58,7 +58,7 @@ class ColumnInfo(BaseModel):
     article_count: int = 0
     tags: list[str] = Field(default_factory=list)
     badges: list[str] = Field(default_factory=list)
-    board_tag: str | None = None
+    board_id: int | None = None
     status: ColumnStatus = ColumnStatus.ACTIVE
     created_at: datetime.datetime
     updated_at: datetime.datetime

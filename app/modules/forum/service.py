@@ -65,7 +65,7 @@ def get_forum_plan() -> dict[str, Any]:
         "next_steps": [
             "Add comment delete API",
             "Add post moderation and report workflow",
-            "Add category table and board relation",
+            "Board relation already connected via board_id",
         ],
     }
 
@@ -74,11 +74,11 @@ async def list_posts(
     db: AsyncSession,
     page: int = 1,
     limit: int = 20,
-    category_id: str | None = None,
+    board_id: int | None = None,
 ) -> PageData[PostInfo]:
     base = select(ForumPost)
-    if category_id:
-        base = base.where(ForumPost.category_id == category_id)
+    if board_id:
+        base = base.where(ForumPost.board_id == board_id)
 
     count_stmt = select(func.count()).select_from(base.subquery())
     total_count = await db.scalar(count_stmt) or 0
@@ -115,9 +115,14 @@ async def get_post(db: AsyncSession, post_id: int, bump_view: bool = False) -> P
 
 
 async def create_post(db: AsyncSession, author_id: int, info: PostCreate) -> PostInfo:
+    # 发言准入：板块存在 / 可见 / 未禁言 / 认证 / 日限发
+    from app.modules.boards.service import check_post_allowed
+
+    await check_post_allowed(db, info.board_id, author_id)
+
     post = ForumPost(
         author_id=author_id,
-        category_id=info.category_id,
+        board_id=info.board_id,
         title=info.title,
         excerpt=_excerpt_of(info.content),
         content=info.content,

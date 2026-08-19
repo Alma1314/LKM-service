@@ -48,10 +48,10 @@ async def forum_status() -> ModuleStatus:
 async def get_posts(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    category_id: str | None = Query(default=None, max_length=50),
+    board_id: int | None = Query(default=None, ge=1),
     db: AsyncSession = Depends(get_read_session),
 ) -> PageData[PostInfo]:
-    return await list_posts(db, page=page, limit=limit, category_id=category_id)
+    return await list_posts(db, page=page, limit=limit, board_id=board_id)
 
 
 @router.post("/posts", response_model=ApiResp[PostInfo])

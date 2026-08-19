@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr
-from app.db.models import ForumPost, Profile, User
+from app.db.models import Board, ForumPost, Profile, User
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.forum.errors import ForumErr
 from app.modules.forum.schemas import CommentCreate, CommentInfo, PostCreate, PostInfo
@@ -40,11 +40,23 @@ async def _user(
     return user.id
 
 
+async def _make_board(db: AsyncSession, slug: str = "math") -> int:
+    """按 slug 解析（或创建）一个 Board，返回其 id。幂等：同一 slug 复用已有板块。"""
+    board = (
+        (await db.execute(select(Board).where(Board.slug == slug))).scalars().first()
+    )
+    if board is None:
+        board = Board(slug=slug, title=slug)
+        db.add(board)
+        await db.flush()
+    return board.id
+
+
 async def _post(
     db: AsyncSession,
     author_id: int = 1,
     title: str = "如何学习微积分",
-    category_id: str = "math",
+    board_slug: str = "math",
     tags: tuple[str, ...] = ("数学", "微积分"),
 ) -> PostInfo:
     return await create_post(
@@ -53,7 +65,7 @@ async def _post(
         PostCreate(
             title=title,
             content="<p>微积分是理解变化与积累的工具，先从极限开始。</p>",
-            category_id=category_id,
+            board_id=await _make_board(db, board_slug),
             tags=list(tags),
         ),
     )
@@ -105,15 +117,16 @@ class TestForumPosts:
         assert len(page.items) == 1
         assert page.items[0].title == "帖子二"
 
-    async def should_filter_posts_by_category(self, db: AsyncSession):
+    async def should_filter_posts_by_board(self, db: AsyncSession):
         user_id = await _user(db)
-        await _post(db, author_id=user_id, category_id="math")
-        await _post(db, author_id=user_id, title="物理题", category_id="physics")
+        await _post(db, author_id=user_id, board_slug="math")
+        physics_bid = await _make_board(db, "physics")
+        await _post(db, author_id=user_id, title="物理题", board_slug="physics")
 
-        page = await list_posts(db, category_id="math")
+        page = await list_posts(db, board_id=physics_bid)
 
         assert page.total == 1
-        assert page.items[0].category_id == "math"
+        assert page.items[0].board_id == physics_bid
 
     async def should_get_post_and_bump_view(self, db: AsyncSession):
         user_id = await _user(db)
@@ -221,16 +234,20 @@ class TestForumRoutes:
         )
         return user_id, token
 
+    async def _public_math_board(self, db: AsyncSession) -> int:
+        return await _make_board(db, "math")
+
     async def should_reject_create_post_without_auth(
         self, client: AsyncClient, db: AsyncSession
     ):
         await self._setup_user(db)
+        board_id = await self._public_math_board(db)
         resp = await client.post(
             "/api/v1/forum/posts",
             json={
                 "title": "标题",
                 "content": "正文",
-                "category_id": "math",
+                "board_id": board_id,
                 "tags": [],
             },
         )
@@ -242,13 +259,14 @@ class TestForumRoutes:
         self, client: AsyncClient, db: AsyncSession
     ):
         user_id, token = await self._setup_user(db)
+        board_id = await self._public_math_board(db)
         resp = await client.post(
             "/api/v1/forum/posts",
             headers={"Authorization": f"Bearer {token}"},
             json={
                 "title": "标题",
                 "content": "正文",
-                "category_id": "math",
+                "board_id": board_id,
                 "tags": ["数学"],
             },
         )
@@ -259,10 +277,11 @@ class TestForumRoutes:
 
     async def should_list_posts_publicly(self, client: AsyncClient, db: AsyncSession):
         _, token = await self._setup_user(db)
+        board_id = await self._public_math_board(db)
         await client.post(
             "/api/v1/forum/posts",
             headers={"Authorization": f"Bearer {token}"},
-            json={"title": "公开帖", "content": "正文", "category_id": "math"},
+            json={"title": "公开帖", "content": "正文", "board_id": board_id},
         )
 
         resp = await client.get("/api/v1/forum/posts")
@@ -276,10 +295,11 @@ class TestForumRoutes:
         self, client: AsyncClient, db: AsyncSession
     ):
         _, token = await self._setup_user(db)
+        board_id = await self._public_math_board(db)
         created_resp = await client.post(
             "/api/v1/forum/posts",
             headers={"Authorization": f"Bearer {token}"},
-            json={"title": "待删除", "content": "正文", "category_id": "math"},
+            json={"title": "待删除", "content": "正文", "board_id": board_id},
         )
         created = created_resp.json()["data"]
         post_id = created["id"]
@@ -313,25 +333,26 @@ class TestForumGraphQL:
         self, client: AsyncClient, db: AsyncSession
     ):
         user_id = await _user(db, username="alice", nickname="爱丽丝")
+        board_id = await _make_board(db, "math")
         post = await _post(
-            db, author_id=user_id, title="如何学习微积分", category_id="math"
+            db, author_id=user_id, title="如何学习微积分", board_slug="math"
         )
 
         data = await self._run(
             client,
             """
-            query PostList($categoryId: ID, $page: Int!, $pageSize: Int!) {
-              posts(categoryId: $categoryId, page: $page, pageSize: $pageSize) {
+            query PostList($boardId: Int, $page: Int!, $pageSize: Int!) {
+              posts(boardId: $boardId, page: $page, pageSize: $pageSize) {
                 total
                 items {
-                  id title excerpt categoryId tags isPinned isFeatured
+                  id title excerpt boardId tags isPinned isFeatured
                   viewCount likeCount commentCount createdAt
                   author { id displayName avatar username }
                 }
               }
             }
             """,
-            {"categoryId": "math", "page": 1, "pageSize": 20},
+            {"boardId": board_id, "page": 1, "pageSize": 20},
         )
 
         conn = data["posts"]
@@ -339,7 +360,7 @@ class TestForumGraphQL:
         item = conn["items"][0]
         assert item["id"] == post.id  # int
         assert item["title"] == "如何学习微积分"
-        assert item["categoryId"] == "math"
+        assert item["boardId"] == board_id
         assert item["author"]["id"] == user_id  # int
         assert item["author"]["displayName"] == "爱丽丝"
         assert item["author"]["username"] == "alice"
@@ -348,13 +369,14 @@ class TestForumGraphQL:
         self, client: AsyncClient, db: AsyncSession
     ):
         user_id = await _user(db)
-        await _post(db, author_id=user_id, title="数学", category_id="math")
-        await _post(db, author_id=user_id, title="物理", category_id="physics")
+        await _post(db, author_id=user_id, title="数学", board_slug="math")
+        await _post(db, author_id=user_id, title="物理", board_slug="physics")
+        board_id = await _make_board(db, "math")
 
         data = await self._run(
             client,
-            "query($categoryId: ID){ posts(categoryId: $categoryId, page: 1, pageSize: 20){ total items{ id } } }",
-            {"categoryId": "math"},
+            "query($boardId: Int){ posts(boardId: $boardId, page: 1, pageSize: 20){ total items{ id } } }",
+            {"boardId": board_id},
         )
 
         assert data["posts"]["total"] == 1
@@ -375,7 +397,7 @@ class TestForumGraphQL:
         prof.bio = "热爱物理与数学"
         await db.flush()
         post = await _post(
-            db, author_id=user_id, title="物理之美", category_id="physics"
+            db, author_id=user_id, title="物理之美", board_slug="physics"
         )
         post_orm = (
             (await db.execute(select(ForumPost).where(ForumPost.id == post.id)))
@@ -391,7 +413,7 @@ class TestForumGraphQL:
             """
             query PostDetail($id: ID!) {
               post(id: $id) {
-                id title content categoryId tags isPinned isFeatured
+                id title content boardId tags isPinned isFeatured
                 bookmarkCount forwardCount createdAt
                 author { id displayName avatar username bio }
               }

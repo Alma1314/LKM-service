@@ -41,6 +41,7 @@ NS_STARHOPE = Namespace(7, "starhope")
 NS_ARTICLES = Namespace(8, "articles")
 NS_STORAGE = Namespace(9, "storage")
 NS_EXAM = Namespace(10, "exam")
+NS_BOARDS = Namespace(11, "boards")
 
 
 class CommonErr(ErrCode):
