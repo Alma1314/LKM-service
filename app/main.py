@@ -46,6 +46,7 @@ def _register_all_errors() -> None:
     import app.modules.auth.errors
     import app.modules.blog.errors
     import app.modules.columns.errors
+    import app.modules.exam.errors
     import app.modules.files.errors
     import app.modules.forum.errors
     import app.modules.members.errors

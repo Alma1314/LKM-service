@@ -41,9 +41,9 @@ class FileInfo(BaseModel):
 
 class UploadInitResp(BaseModel):
     mode: Literal["direct", "sync"]
-    upload_id: str | None = None      # direct 时
+    upload_id: str | None = None  # direct 时
     presigned_url: str | None = None  # direct 时
-    file: FileInfo | None = None      # 预留(当前 sync 前端回退 multipart, 故常 None)
+    file: FileInfo | None = None  # 预留(当前 sync 前端回退 multipart, 故常 None)
 
 
 class DownloadUrlInfo(BaseModel):

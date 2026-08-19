@@ -39,16 +39,12 @@ def test_save_rejects_over_limit(local: LocalStorage):
 
 def test_save_rejects_path_traversal_dotdot(local: LocalStorage):
     with pytest.raises(BizError):
-        asyncio.run(
-            local.save(_stream(b"x"), max_bytes=100, bucket_key="../../escape")
-        )
+        asyncio.run(local.save(_stream(b"x"), max_bytes=100, bucket_key="../../escape"))
 
 
 def test_save_rejects_absolute_path(local: LocalStorage):
     with pytest.raises(BizError):
-        asyncio.run(
-            local.save(_stream(b"x"), max_bytes=100, bucket_key="/etc/passwd")
-        )
+        asyncio.run(local.save(_stream(b"x"), max_bytes=100, bucket_key="/etc/passwd"))
 
 
 def test_save_rejects_windows_drive_escape(local: LocalStorage):

@@ -46,9 +46,7 @@ def main() -> int:
     rows = _load_stats(prefix)
     budget = _budget_map(budget_csv)
     # locust stats csv 列名（2.x）：Type / Name / Request Count / Failure Count /
-    print(
-        f"{'Method':<6}{'Name':<52}{'#Req':>8}{'Fail%':>8} {'P95(ms)':>9}{'RPS':>12}"
-    )
+    print(f"{'Method':<6}{'Name':<52}{'#Req':>8}{'Fail%':>8} {'P95(ms)':>9}{'RPS':>12}")
     violations = 0
     for r in rows:
         name = r.get("Name", "") or ""
@@ -79,7 +77,9 @@ def main() -> int:
             continue
         if not (ok_p95 and ok_rps):
             violations += 1
-            print(f"[CHECK] VIOLATION {name}: P95={p95}ms(>={p95_max}) RPS={rps}(>= {rps_min})")
+            print(
+                f"[CHECK] VIOLATION {name}: P95={p95}ms(>={p95_max}) RPS={rps}(>= {rps_min})"
+            )
     if budget and violations:
         print(f"[CHECK] 预算门禁失败：{violations} 项超预算", file=sys.stderr)
         return 1

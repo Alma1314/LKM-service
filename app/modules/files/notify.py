@@ -103,7 +103,7 @@ async def notify_object(
 
     uploads = _extract_uploads(payload)
     for key in uploads:
-        upload_id = key[len(_UP_PREFIX):]
+        upload_id = key[len(_UP_PREFIX) :]
         # fire-and-forget：入队失败不影响回执（worker 侧可重投/恢复）
         await enqueue_upload_notify(upload_id)
 

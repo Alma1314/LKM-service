@@ -48,7 +48,9 @@ def _up_object_event(key: str, *, put: bool = True) -> dict[str, Any]:
     return {
         "Records": [
             {
-                "eventName": "s3:ObjectCreated:Put" if put else "s3:ObjectRemoved:Delete",
+                "eventName": "s3:ObjectCreated:Put"
+                if put
+                else "s3:ObjectRemoved:Delete",
                 "s3": {"object": {"key": key}},
             }
         ]
@@ -208,9 +210,7 @@ class TestNotifyTask:
         monkeypatch.setattr(settings, "storage_backend", "s3")
         with mock_aws():
             stor, client = self._moto_s3_storage()
-            monkeypatch.setattr(
-                "app.modules.files.service._get_storage", lambda: stor
-            )
+            monkeypatch.setattr("app.modules.files.service._get_storage", lambda: stor)
             fake = _FakeRedis()
 
             async def _fake_redis() -> object:

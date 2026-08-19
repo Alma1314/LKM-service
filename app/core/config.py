@@ -98,12 +98,12 @@ class Settings(BaseSettings):
 
     # ---- 存储后端 ----
     storage_backend: str = "local"  # local | s3
-    s3_endpoint_url: str = ""       # 留空=云 S3 默认 endpoint；填了=MinIO 本地
+    s3_endpoint_url: str = ""  # 留空=云 S3 默认 endpoint；填了=MinIO 本地
     s3_region: str = ""
     s3_bucket: str = "lkm"
     s3_access_key: str = ""
     s3_secret_key: str = ""
-    s3_prefix: str = "files"        # 桶内 key 前缀
+    s3_prefix: str = "files"  # 桶内 key 前缀
 
     @model_validator(mode="after")
     def _no_insecure_secrets_outside_dev(self) -> "Settings":

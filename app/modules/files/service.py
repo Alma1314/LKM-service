@@ -129,9 +129,7 @@ async def get_file(db: AsyncSession, file_id: int, bump_view: bool = False) -> F
 _CHUNK = 1024 * 1024  # 分块读写，避免整文件载入内存
 
 
-def _buffer_and_hash(
-    stream: _Readable, limit: int
-) -> tuple[int, str, io.BytesIO]:
+def _buffer_and_hash(stream: _Readable, limit: int) -> tuple[int, str, io.BytesIO]:
     """同步分块读 ``stream`` 并流式计算 SHA3-256，返回 ``(总字节数, 哈希 hex, 内存缓冲)``。
 
     仅做内存运算（无磁盘/网络 I/O），不阻塞事件循环。超过 ``limit`` 立即抛 ``TOO_LARGE``。
@@ -270,7 +268,9 @@ async def create_file(
     try:
         storage = _get_storage()
         if not await storage.exists(bucket_key):
-            saved = dict(await storage.save(buf, max_bytes=limit, bucket_key=bucket_key))
+            saved = dict(
+                await storage.save(buf, max_bytes=limit, bucket_key=bucket_key)
+            )
     except BizError as exc:
         _raise_storage_as_file(exc)
 
@@ -423,14 +423,18 @@ async def delete_file(
 def _require_approved(f: LibraryFile, *, action: str) -> None:
     """非 APPROVED 文件一律拒绝预览/下载，抛 403 NOT_APPROVED。"""
     if f.status != FileStatus.APPROVED:
-        raise BizError(FileErr.NOT_APPROVED, detail=f"Cannot {action} non-approved file")
+        raise BizError(
+            FileErr.NOT_APPROVED, detail=f"Cannot {action} non-approved file"
+        )
 
 
 async def download_url(
     db: AsyncSession, file_id: int, cur: CurrentUser
 ) -> DownloadUrlInfo:
     """签发下载 URL：本地后端回指 /content 端点，S3 后端返回预签名 URL（60s）。计次 download_count。"""
-    f = await get_or_raise(db, LibraryFile, FileErr.NOT_FOUND, LibraryFile.id == file_id)
+    f = await get_or_raise(
+        db, LibraryFile, FileErr.NOT_FOUND, LibraryFile.id == file_id
+    )
     _require_approved(f, action="download")
     key = _bucket_key_of(f)
     if key is None:
@@ -458,7 +462,9 @@ def _serve(
 
     # 头只能含 latin-1 可编码字节，中文等非 ASCII 文件名按 RFC 5987 filename* 编码，
     # 同时给一个 ASCII 化的 filename 兜底，保证旧客户端也能识别。
-    ascii_fallback = f.original_name.encode("ascii", "ignore").decode("ascii") or "download"
+    ascii_fallback = (
+        f.original_name.encode("ascii", "ignore").decode("ascii") or "download"
+    )
     cd = (
         f"{disposition}; filename={ascii_fallback}; "
         f"filename*=UTF-8''{quote(f.original_name)}"
@@ -471,7 +477,9 @@ async def serve_content(
     db: AsyncSession, file_id: int, disposition: Literal["inline", "attachment"]
 ) -> StreamingResponse:
     """预览(/preview)/下载(/content)共用入口：仅 APPROVED 可访问；预览计次 view_count。"""
-    f = await get_or_raise(db, LibraryFile, FileErr.NOT_FOUND, LibraryFile.id == file_id)
+    f = await get_or_raise(
+        db, LibraryFile, FileErr.NOT_FOUND, LibraryFile.id == file_id
+    )
     _require_approved(f, action="preview" if disposition == "inline" else "download")
     if disposition == "inline":  # 预览计次 view
         f.view_count += 1
@@ -481,8 +489,8 @@ async def serve_content(
 
 # ---- Phase 2-B: 预签名直传（upload-init / confirm，Redis 标记 + 回读哈希去重） ----
 
-_UPLOAD_TTL = 3600        # 标记"年龄窗口"1h：清扫按 created_at 年龄判断（标记本身持久化）
-_PRESIGN_EXPIRES = 900    # presigned PUT 15min
+_UPLOAD_TTL = 3600  # 标记"年龄窗口"1h：清扫按 created_at 年龄判断（标记本身持久化）
+_PRESIGN_EXPIRES = 900  # presigned PUT 15min
 _UPLOAD_PREFIX = "upload:"
 
 
@@ -490,7 +498,9 @@ def _upload_key(upload_id: str) -> str:
     return f"{_UPLOAD_PREFIX}{upload_id}"
 
 
-async def upload_init(db: AsyncSession, info: FileCreate, cur: CurrentUser) -> UploadInitResp:
+async def upload_init(
+    db: AsyncSession, info: FileCreate, cur: CurrentUser
+) -> UploadInitResp:
     """预签名直传初始化。
 
     Local→``mode=sync``（前端回退 multipart POST /files，无 upload_id/URL）；
@@ -527,7 +537,9 @@ async def upload_init(db: AsyncSession, info: FileCreate, cur: CurrentUser) -> U
     return UploadInitResp(mode="direct", upload_id=uid, presigned_url=url)
 
 
-async def _hash_from_storage(storage: StorageBackend, key: str, limit: int) -> tuple[int, str]:
+async def _hash_from_storage(
+    storage: StorageBackend, key: str, limit: int
+) -> tuple[int, str]:
     """分块读 ``storage.open(key)`` 流式算 SHA3；超 limit 抛 ``FileErr.TOO_LARGE`` 并清理 key。"""
     hasher = hashlib.sha3_256()
     total = 0
@@ -562,7 +574,9 @@ async def _register_from_upload(
     key = meta["key"]
     if not await storage.exists(key):
         raise BizError(FileErr.UPLOAD_NOT_FOUND, detail="Uploaded object not found")
-    total, content_hash = await _hash_from_storage(storage, key, settings.max_upload_bytes)
+    total, content_hash = await _hash_from_storage(
+        storage, key, settings.max_upload_bytes
+    )
     hash_key = _build_bucket_key(content_hash)
     if not await storage.exists(hash_key):
         try:
@@ -589,7 +603,9 @@ async def _register_from_upload(
         size=total,
         category_id=meta["category_id"],
         description=meta["description"],
-        tags=meta["tags"] if isinstance(meta["tags"], str) else json.dumps(meta["tags"], ensure_ascii=False),
+        tags=meta["tags"]
+        if isinstance(meta["tags"], str)
+        else json.dumps(meta["tags"], ensure_ascii=False),
         status=FileStatus.PENDING,
     )
     try:
@@ -608,7 +624,9 @@ async def _register_from_upload(
     return _file_to_schema(f, names.get(uploader_id, ""))
 
 
-async def confirm_upload(db: AsyncSession, upload_id: str, cur: CurrentUser) -> FileInfo:
+async def confirm_upload(
+    db: AsyncSession, upload_id: str, cur: CurrentUser
+) -> FileInfo:
     """确认预签名直传：回读对象→SHA3→去重/copy 到内容寻址 key→登记 PENDING。
 
     Redis GETDEL 标记（原子 + 幂等：同 upload_id 仅可确认一次）。标记缺失/已用/Redis

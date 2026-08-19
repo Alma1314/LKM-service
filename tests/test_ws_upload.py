@@ -137,9 +137,13 @@ class TestBroker:
                 raise ConnectionError("redis down")
 
         async def _fake_redis() -> Redis:
-            return _BrokenRedis.from_url("redis://localhost:6379/0", decode_responses=True)
+            return _BrokenRedis.from_url(
+                "redis://localhost:6379/0", decode_responses=True
+            )
 
         monkeypatch.setattr(
-            ws_broker, "get_redis", _fake_redis  # type: ignore[arg-type]
+            ws_broker,
+            "get_redis",
+            _fake_redis,  # type: ignore[arg-type]
         )
         await ws_broker.publish_upload_bound(1, {"event": "upload_registered"})

@@ -75,9 +75,7 @@ def _avatar_key(user_id: int) -> str:
     return f"avatars/{user_id}/v{ms}.{_AVATAR_EXT}"
 
 
-async def update_avatar(
-    db: AsyncSession, user_id: int, stream: _Readable
-) -> str:
+async def update_avatar(db: AsyncSession, user_id: int, stream: _Readable) -> str:
     """保存头像：写入版本化 key 并更新 ``Profile.avatar``，尽力删除旧 key。
 
     超过 2MB 由 storage 层抛 ``StorageErr.TOO_LARGE``（临时文件不落残留），此处映射为

@@ -616,6 +616,7 @@ class TestContentPath:
 
 # ---- Phase 2-A: download/preview ----
 
+
 def test_file_err_not_approved_maps_403():
     from app.modules.files.errors import FileErr
 
@@ -624,10 +625,15 @@ def test_file_err_not_approved_maps_403():
 
 def test_download_url_info_fields():
     m = DownloadUrlInfo(kind="backend", url="/api/v1/files/1/content")
-    assert m.kind == "backend" and m.url == "/api/v1/files/1/content" and m.expires_in is None
+    assert (
+        m.kind == "backend"
+        and m.url == "/api/v1/files/1/content"
+        and m.expires_in is None
+    )
 
 
 # ---- Phase 2-A endpoints ----
+
 
 class TestFilesPhase2AEndpoints:
     """预览 / 下载 URL / 内容流 三个新端点。
@@ -784,6 +790,7 @@ class TestFilesPhase2AEndpoints:
 
 # ---- Phase 2-B: upload-init / confirm（预签名直传） ----
 
+
 class _FakeRedis:
     """极简 dict 版 Redis，仅覆盖 upload-init/confirm 用到的 set/getdel。"""
 
@@ -920,9 +927,7 @@ class TestFilesPhase2BUploadInit:
         monkeypatch.setattr(settings, "storage_backend", "s3")
         with mock_aws():
             stor, _ = _moto_s3_storage()
-            monkeypatch.setattr(
-                "app.modules.files.service._get_storage", lambda: stor
-            )
+            monkeypatch.setattr("app.modules.files.service._get_storage", lambda: stor)
             user_id = await _user(db)
             from app.modules.auth.deps import CurrentUser
 
@@ -993,9 +998,7 @@ class TestFilesPhase2BUploadInit:
             with pytest.raises(ClientError):
                 client.head_object(Bucket="lkm", Key=f"files/{random_key}")
             # DB 登记 PENDING，ref_count=1
-            rows = (
-                (await db.execute(select(LibraryFile))).scalars().all()
-            )
+            rows = (await db.execute(select(LibraryFile))).scalars().all()
             assert len(rows) == 1
             row = rows[0]
             assert row.status == "pending"

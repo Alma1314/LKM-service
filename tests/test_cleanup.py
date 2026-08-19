@@ -13,9 +13,15 @@ def _marker(key: str, age_seconds: int) -> str:
     """构造带 created_at 的持久化标记；age_seconds 为创建距今秒数（越大越"老"）。"""
     created_at = datetime.now(UTC) - timedelta(seconds=age_seconds)
     return json.dumps(
-        {"key": key, "original_name": "x.pdf", "mime_type": "application/pdf",
-         "category_id": "math", "description": "", "tags": ["数学"],
-         "created_at": created_at.isoformat()},
+        {
+            "key": key,
+            "original_name": "x.pdf",
+            "mime_type": "application/pdf",
+            "category_id": "math",
+            "description": "",
+            "tags": ["数学"],
+            "created_at": created_at.isoformat(),
+        },
         ensure_ascii=False,
     )
 
@@ -84,7 +90,9 @@ async def test_cleanup_keeps_fresh_uploads(monkeypatch: Any) -> None:
     deleted_keys: list[str] = []
     storage = _FakeStorage(deleted_keys)
     store = {
-        "upload:aaa": _marker("up/aaa", age_seconds=_UPLOAD_TTL - 5),  # 接近窗口，未过期
+        "upload:aaa": _marker(
+            "up/aaa", age_seconds=_UPLOAD_TTL - 5
+        ),  # 接近窗口，未过期
         "upload:bbb": _marker("up/bbb", age_seconds=_UPLOAD_TTL // 2),
     }
     redis = _FakeRedis(store)
@@ -106,7 +114,7 @@ async def test_cleanup_skips_malformed_marker(monkeypatch: Any) -> None:
     deleted_keys: list[str] = []
     storage = _FakeStorage(deleted_keys)
     store = {
-        "upload:garbage": "not-json",           # 坏 JSON
+        "upload:garbage": "not-json",  # 坏 JSON
         "upload:nodate": json.dumps({"key": "up/nodate"}),  # 缺 created_at
     }
     redis = _FakeRedis(store)

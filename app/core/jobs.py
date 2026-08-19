@@ -57,9 +57,7 @@ async def enqueue_upload_notify(upload_id: str) -> bool:
         return False
     pool = None
     try:
-        pool = await create_pool(
-            _redis_settings(), default_queue_name=NOTIFY_QUEUE
-        )
+        pool = await create_pool(_redis_settings(), default_queue_name=NOTIFY_QUEUE)
         job = await pool.enqueue_job(
             "notify_upload", upload_id, _queue_name=NOTIFY_QUEUE
         )

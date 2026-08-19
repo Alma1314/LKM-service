@@ -196,9 +196,7 @@ class TestAvatarUpload:
         files = await asyncio.to_thread(lambda: list(tmp_path.rglob("*.webp")))
         assert len(files) == 1
 
-    async def test_upload_requires_auth(
-        self, client: AsyncClient, db: AsyncSession
-    ):
+    async def test_upload_requires_auth(self, client: AsyncClient, db: AsyncSession):
         resp = await client.post(
             "/api/v1/auth/avatar",
             files={"file": ("a.webp", b"\x00", "image/webp")},

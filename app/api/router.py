@@ -14,6 +14,7 @@ from app.modules.blog.git_http import git_router
 from app.modules.blog.router import router as blog_router
 from app.modules.boards.router import router as boards_router
 from app.modules.columns.router import router as columns_router
+from app.modules.exam.router import router as exam_router
 from app.modules.files.notify import router as files_notify_router
 from app.modules.files.router import router as files_router
 from app.modules.forum.router import router as forum_router
@@ -36,6 +37,7 @@ api_router.include_router(auth_recovery_router)
 api_router.include_router(auth_settings_router)
 api_router.include_router(boards_router)
 api_router.include_router(columns_router)
+api_router.include_router(exam_router)
 api_router.include_router(forum_router)
 api_router.include_router(files_router)
 api_router.include_router(files_notify_router)

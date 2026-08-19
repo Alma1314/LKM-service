@@ -20,7 +20,10 @@ register(
         FileErr.INVALID_STATUS: (400, "Invalid file status transition"),
         FileErr.NOT_PENDING: (409, "File is not in pending status"),
         FileErr.NOT_APPROVED: (403, "File is not approved for download or preview"),
-        FileErr.UPLOAD_NOT_FOUND: (409, "Upload target not found (direct upload failed)"),
+        FileErr.UPLOAD_NOT_FOUND: (
+            409,
+            "Upload target not found (direct upload failed)",
+        ),
         FileErr.UPLOAD_EXPIRED: (410, "Upload session expired, please re-initiate"),
     }
 )

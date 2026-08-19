@@ -65,9 +65,7 @@ class LocalStorage:
         dest = self._resolve(bucket_key)
         temp = await asyncio.to_thread(_new_temp_file, self.root_dir)
         try:
-            await asyncio.to_thread(
-                dest.parent.mkdir, parents=True, exist_ok=True
-            )
+            await asyncio.to_thread(dest.parent.mkdir, parents=True, exist_ok=True)
             size, _hash = await asyncio.to_thread(
                 _stream_to_disk_hash, stream, temp, max_bytes
             )

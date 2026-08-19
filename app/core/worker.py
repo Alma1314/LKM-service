@@ -79,7 +79,9 @@ async def run_default_worker() -> None:
         max_tries=5,
         max_jobs=10,
         cron_jobs=[
-            cron(cleanup.cleanup_expired_uploads, hour=set(range(24)), minute=0),  # 每小时整点清扫
+            cron(
+                cleanup.cleanup_expired_uploads, hour=set(range(24)), minute=0
+            ),  # 每小时整点清扫
         ],
     )
     await w.async_run()
