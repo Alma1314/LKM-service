@@ -7,14 +7,23 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.modules.auth.models  # noqa: F401  注册剩余 ORM 映射类（同 alembic/env.py）
-from app.db.models import Article, now_iso
+from app.db.models import Article, ArticleCategory, now_iso
 from app.db.session import new_session
+
+# 文章分类种子：slug 幂等；engineering 是 blog produce 默认分类，必须存在
+_CATEGORIES: list[dict[str, int | str]] = [
+    {"slug": "announcement", "title": "官方公告", "sort": 0},
+    {"slug": "news", "title": "新闻", "sort": 1},
+    {"slug": "science", "title": "科学", "sort": 2},
+    {"slug": "engineering", "title": "工程", "sort": 3},
+]
 
 # Markdown 渲染测试文章（独立 md 文件作为单一内容源）
 _MARKDOWN_TEST_CONTENT = (Path(__file__).parent / "markdown-test.md").read_text(
     encoding="utf-8"
 )
 
+# 文章种子：category 存分类 slug，创建时解析为 category_id
 SEED_ARTICLES: list[dict[str, object]] = [
     {
         "slug": "welcome-to-lkm",
@@ -74,7 +83,33 @@ SEED_ARTICLES: list[dict[str, object]] = [
 ]
 
 
+async def seed_categories(db: AsyncSession) -> int:
+    """幂等写入文章分类：按 slug 去重，存在则跳过，返回实际新建条数。"""
+    created = 0
+    for spec in _CATEGORIES:
+        exists = await db.scalar(
+            select(ArticleCategory.id).where(ArticleCategory.slug == spec["slug"])
+        )
+        if exists is not None:
+            continue
+        db.add(ArticleCategory(**spec))
+        await db.flush()
+        created += 1
+    return created
+
+
+async def _resolve_category_id(db: AsyncSession, slug: str) -> int:
+    """按分类 slug 解析 category_id；不存在则抛 KeyError（调用方保证分类已 seed）。"""
+    category_id = await db.scalar(
+        select(ArticleCategory.id).where(ArticleCategory.slug == slug)
+    )
+    if category_id is None:
+        raise KeyError(f"article category slug not found: {slug}")
+    return int(category_id)
+
+
 async def seed_articles(db: AsyncSession) -> int:
+    """幂等写入官方文章：按 slug 去重；category slug 解析为 category_id，状态 published。"""
     count = 0
     for data in SEED_ARTICLES:
         slug = data["slug"]
@@ -83,7 +118,15 @@ async def seed_articles(db: AsyncSession) -> int:
         ).scalar_one_or_none()
         if existing is not None:
             continue
-        db.add(Article(published=now_iso(), **data))
+        category_slug = data["category"]
+        assert isinstance(category_slug, str)
+        article = Article(
+            published=now_iso(),
+            status="published",
+            category_id=await _resolve_category_id(db, category_slug),
+            **{k: v for k, v in data.items() if k != "category"},
+        )
+        db.add(article)
         count += 1
     await db.commit()
     return count
@@ -92,6 +135,8 @@ async def seed_articles(db: AsyncSession) -> int:
 async def main() -> None:
     db = await new_session()
     try:
+        category_count = await seed_categories(db)
+        print(f"seeded {category_count} categories")
         count = await seed_articles(db)
         print(f"seeded {count} articles")
     finally:

@@ -6,9 +6,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.err import BizError, CommonErr
-from app.db.models import Article, BlogComment, BlogSeries, BlogStar, Profile, now_iso
+from app.db.models import (
+    Article,
+    ArticleCategory,
+    BlogComment,
+    BlogSeries,
+    BlogStar,
+    Profile,
+    now_iso,
+)
 from app.db.repo import get_or_raise, get_profiles_by_user_ids
-from app.modules.articles.service import create_article as _create_article_alias
+from app.modules.articles.schemas import CategoryCreate
+from app.modules.articles.service import (
+    create_article as _create_article_alias,
+)
+from app.modules.articles.service import create_category_ex as _create_category_ex
 from app.modules.auth.schemas import ProfileInfo
 from app.modules.blog import git_svc
 from app.modules.blog.errors import BlogErr
@@ -412,6 +424,21 @@ async def write_series_file(
 # ---- publish ----
 
 
+async def _ensure_category(db: AsyncSession, slug: str) -> str:
+    """blog 发布时按 slug 解析文章分类；不存在则自动建并返回 slug。
+
+    分类已从自由字符串改为 category_id FK，但 blog 前端发布分类是自由标签
+    （engineering 为默认），须保证对应 ArticleCategory 存在，否则 publish 会
+    因 CATEGORY_NOT_FOUND 失败。返回原 slug 供 create_article 内部解析。
+    """
+    exists = await db.scalar(
+        select(ArticleCategory.id).where(ArticleCategory.slug == slug)
+    )
+    if exists is None:
+        await _create_category_ex(db, CategoryCreate(slug=slug, title=slug))
+    return slug
+
+
 async def publish_series_file(
     db: AsyncSession,
     series_id: int,
@@ -434,11 +461,15 @@ async def publish_series_file(
     slug = str(raw_slug).removesuffix(".mdx").removesuffix(".md")
     first_line = content.split("\n", 1)[0].replace("# ", "").strip()
     title = str(override.get("title") or fm.get("title") or first_line or slug)
-    category = str(override.get("category") or fm.get("category") or "engineering")
+    category_slug = str(override.get("category") or fm.get("category") or "engineering")
     tags = [
         str(t) for t in cast("list[Any]", override.get("tags") or fm.get("tags") or [])
     ]
     description = override.get("description") or fm.get("description")
+
+    # 分类已改 category_id FK：blog 前端分类是自由标签，需解析为已存在分类；
+    # 不存在则按 slug 自动建（get-or-create），避免 publish 因缺分类而失败。
+    category = await _ensure_category(db, category_slug)
 
     article = await _create_article_alias(
         db,

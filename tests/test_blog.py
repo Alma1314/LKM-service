@@ -910,7 +910,7 @@ slug: {slug}
         data = resp.json()["data"]
         assert data["slug"] == "hello-pub"
         assert data["title"] == "Hello Pub"
-        assert data["category"] == "engineering"
+        assert data["category_title"] == "engineering"
         assert data["tags"] == ["python", "test"]
 
         # 发布后可从 articles 详情读回
@@ -987,7 +987,7 @@ slug: {slug}
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["slug"] == "from-override"
-        assert data["category"] == "life"
+        assert data["category_title"] == "life"
         assert data["tags"] == ["override-tag"]
 
     async def should_reject_publish_by_non_owner(

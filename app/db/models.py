@@ -516,12 +516,26 @@ class StarHopeAiAgent(Base):
     )
 
 
+class ArticleCategory(Base):
+    __tablename__: str = "article_categories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    slug: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(100), nullable=False)
+    sort: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+
+    articles: Mapped[list[Article]] = relationship(back_populates="category")
+
+
 class Article(Base):
     __tablename__: str = "articles"
-    # 文章列表热路径按 published 倒序，category 用于分组/聚合
+    # 文章列表热路径按 published 倒序，category_id 用于分组/聚合
     __table_args__: tuple[Index, ...] = (
         Index("ix_articles_published", "published"),
-        Index("ix_articles_category_published", "category", "published"),
+        Index("ix_articles_category_published", "category_id", "published"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -529,16 +543,24 @@ class Article(Base):
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     cover: Mapped[str | None] = mapped_column(Text, nullable=True)
-    category: Mapped[str] = mapped_column(String(50), nullable=False)
+    category_id: Mapped[int] = mapped_column(
+        ForeignKey("article_categories.id"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="draft"
+    )  # draft|pending|published|rejected
     content: Mapped[str] = mapped_column(Text, nullable=False)
     publisher: Mapped[str | None] = mapped_column(String(100), nullable=True)
     department: Mapped[str | None] = mapped_column(String(100), nullable=True)
     keywords: Mapped[str | None] = mapped_column(Text, nullable=True)
-    published: Mapped[datetime.datetime] = mapped_column(UTCDateTime, nullable=False)
+    published: Mapped[datetime.datetime | None] = mapped_column(
+        UTCDateTime, nullable=True
+    )
     views: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     likes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     comments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     bookmarks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    category: Mapped[ArticleCategory | None] = relationship(back_populates="articles")
     tags: Mapped[list[Tag]] = relationship(
         secondary="article_tag", back_populates="articles", lazy="selectin"
     )
@@ -661,13 +683,23 @@ class Board(Base):
     title: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")  # active | inactive
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active"
+    )  # active | inactive
     # 发言准入配置
-    require_certified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    daily_post_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 0=不限
+    require_certified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    daily_post_limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )  # 0=不限
     is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    created_at: Mapped[datetime.datetime] = mapped_column(UTCDateTime, nullable=False, default=now_iso)
-    updated_at: Mapped[datetime.datetime] = mapped_column(UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
+    )
 
     owner: Mapped[User | None] = relationship(foreign_keys=[owner_id])
     posts: Mapped[list[ForumPost]] = relationship(back_populates="board")
@@ -682,11 +714,19 @@ class BoardApplication(Base):
     description: Mapped[str] = mapped_column(String(300), nullable=False)
     reason: Mapped[str] = mapped_column(String(500), nullable=False)
     slug: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # pending|approved|rejected
-    reviewer_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending"
+    )  # pending|approved|rejected
+    reviewer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime.datetime] = mapped_column(UTCDateTime, nullable=False, default=now_iso)
-    reviewed_at: Mapped[datetime.datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    reviewed_at: Mapped[datetime.datetime | None] = mapped_column(
+        UTCDateTime, nullable=True
+    )
 
     applicant: Mapped[User] = relationship(foreign_keys=[applicant_id])
     reviewer: Mapped[User | None] = relationship(foreign_keys=[reviewer_id])
@@ -702,7 +742,9 @@ class BoardBan(Base):
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     reason: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     expires_at: Mapped[datetime.datetime] = mapped_column(UTCDateTime, nullable=False)
-    created_at: Mapped[datetime.datetime] = mapped_column(UTCDateTime, nullable=False, default=now_iso)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
 
 class Exam(Base):

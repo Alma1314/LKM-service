@@ -1,9 +1,11 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
+from app.db.models import ArticleCategory
 from app.db.session import get_read_session, get_session
 from app.modules.articles.schemas import ArticleDetail
 from app.modules.auth.deps import CurrentUser, get_current_user, get_optional_user
@@ -144,12 +146,17 @@ async def publish_series_file_endpoint(
     # article.tags 是 Tag 对象列表，ArticleDetail.tags 期望字符串 list。
     # 不能直接 model_validate(article)：from_attributes 会读 article.tags 得到 Tag
     # 对象而校验失败。故从标量属性构造 dict，tags 单独 map 成字符串。
+    # category_title 非 ORM 标量，须另行解析（article 仅有 category_id 外键）。
+    category_title = await db.scalar(
+        select(ArticleCategory.title).where(ArticleCategory.id == article.category_id)
+    )
     return ArticleDetail(
         **{
             k: v
             for k, v in article.__dict__.items()
             if k in ArticleDetail.model_fields and k != "tags"
         },
+        category_title=str(category_title) if category_title is not None else "",
         tags=[t.name for t in (article.tags or [])],
     )
 

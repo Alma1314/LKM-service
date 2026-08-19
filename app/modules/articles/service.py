@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects import postgresql as pg
@@ -26,28 +26,24 @@ from app.db.models import (
     Tag,
     now_iso,
 )
+from app.db.models import (
+    ArticleCategory as ArticleCategoryORM,
+)
 from app.db.repo import get_or_raise, get_profiles_by_user_ids
 from app.modules.articles.errors import ArticleErr
 from app.modules.articles.schemas import (
     ArticleCategory,
     ArticleCommentOut,
+    ArticleCreate,
     ArticleDetail,
     ArticleListItem,
+    ArticleUpdate,
+    CategoryCreate,
+    CategoryOut,
 )
+from app.modules.auth.deps import CurrentUser
 from app.modules.auth.schemas import ProfileInfo
 from app.modules.common import tag_names_sequence
-
-ARTICLE_CATEGORY_NAMES: dict[str, str] = {
-    "announcement": "公告",
-    "architecture": "架构",
-    "security": "安全",
-    "engineering": "工程",
-    "ai": "AI",
-    "community": "社区",
-    "culture": "文化",
-    "news": "科技新闻",
-    "science": "科普相关",
-}
 
 # 默认阅读速度：中文约 300 字/分钟
 READING_SPEED_CPS = 300
@@ -148,7 +144,7 @@ async def create_article(
     )
     if existing:
         existing.title = title
-        existing.category = category
+        existing.category_id = await _resolve_category_id(db, category)
         existing.content = content
         if description is not None:
             existing.description = description
@@ -160,7 +156,7 @@ async def create_article(
     article = Article(
         slug=slug,
         title=title,
-        category=category,
+        category_id=await _resolve_category_id(db, category),
         content=content,
         published=published or now_iso(),
         description=description,
@@ -223,22 +219,24 @@ async def get_article(db: AsyncSession, slug: str) -> ArticleDetail:
 
 
 async def list_categories(db: AsyncSession) -> list[ArticleCategory]:
+    """分类列表：读 article_categories 表 + 各分类文章数，缓存。返回 schema（slug/name/count）。"""
+
     async def _load() -> list[dict[str, Any]]:
         rows = (
             await db.execute(
-                select(Article.category, func.count(Article.id)).group_by(
-                    Article.category
-                )
+                select(ArticleCategoryORM, func.count(Article.id))
+                .outerjoin(Article, Article.category_id == ArticleCategoryORM.id)
+                .group_by(ArticleCategoryORM.id)
+                .order_by(ArticleCategoryORM.sort.asc(), ArticleCategoryORM.id.asc())
             )
         ).all()
         return [
             ArticleCategory(
-                # Article.category 为非空列，聚合行推断为 str|None，这里显式收窄
-                slug=cast("str", slug),
-                name=ARTICLE_CATEGORY_NAMES.get(cast("str", slug), cast("str", slug)),
+                slug=cat.slug,
+                name=cat.title,
                 article_count=count,
             ).model_dump()
-            for slug, count in rows
+            for cat, count in rows
         ]
 
     payload = await cached_read(
@@ -429,3 +427,220 @@ async def delete_article_comment(
         raise BizError(CommonErr.FORBIDDEN)
     await db.delete(comment)
     await _bump_article_count(db, comment.article_id, "comments", -1)
+
+
+# ————— 分类 CRUD（写操作走 service，读列表复用 list_categories） —————
+
+
+async def _invalidate_categories_cache() -> None:
+    """分类变更后使分类列表缓存失效（单键删除，集合版本由 _invalidate_article_cache 负责）。"""
+    await cache_invalidate(make_key("articles:categories", "ver"))
+
+
+async def create_category_ex(db: AsyncSession, info: CategoryCreate) -> CategoryOut:
+    """新建分类；slug 冲突抛出 409。"""
+    conflict = await db.scalar(
+        select(ArticleCategoryORM.id).where(ArticleCategoryORM.slug == info.slug)
+    )
+    if conflict is not None:
+        raise BizError(ArticleErr.SLUG_CONFLICT)
+    cat = ArticleCategoryORM(slug=info.slug, title=info.title, sort=info.sort)
+    db.add(cat)
+    await db.flush()
+    await _invalidate_categories_cache()
+    return CategoryOut.model_validate(cat)
+
+
+async def update_category_ex(
+    db: AsyncSession, category_id: int, patch: CategoryCreate
+) -> CategoryOut:
+    """更新分类；slug 冲突（排除自身）抛出 409。"""
+    cat = await get_or_raise(
+        db,
+        ArticleCategoryORM,
+        ArticleErr.CATEGORY_NOT_FOUND,
+        ArticleCategoryORM.id == category_id,
+    )
+    conflict = await db.scalar(
+        select(ArticleCategoryORM.id).where(
+            ArticleCategoryORM.slug == patch.slug,
+            ArticleCategoryORM.id != category_id,
+        )
+    )
+    if conflict is not None:
+        raise BizError(ArticleErr.SLUG_CONFLICT)
+    cat.slug = patch.slug
+    cat.title = patch.title
+    cat.sort = patch.sort
+    await db.flush()
+    await _invalidate_categories_cache()
+    return CategoryOut.model_validate(cat)
+
+
+async def delete_category_ex(db: AsyncSession, category_id: int) -> None:
+    """删除分类；分类下仍有文章时禁止删除。"""
+    cat = await get_or_raise(
+        db,
+        ArticleCategoryORM,
+        ArticleErr.CATEGORY_NOT_FOUND,
+        ArticleCategoryORM.id == category_id,
+    )
+    used = await db.scalar(
+        select(func.count(Article.id)).where(Article.category_id == category_id)
+    )
+    if used:
+        raise BizError(CommonErr.INVALID_INPUT, "分类下仍有文章，不可删除")
+    await db.delete(cat)
+    await db.flush()
+    await _invalidate_categories_cache()
+
+
+def assert_super_admin(cur: CurrentUser) -> None:
+    """断言超级管理员：需 account_level==\"admin\" 且 role==\"super_admin\"。"""
+    if cur.account_level == "admin" and cur.role == "super_admin":
+        return
+    raise BizError(CommonErr.FORBIDDEN)
+
+
+async def _resolve_category_id(db: AsyncSession, slug: str) -> int:
+    """按 slug 解析分类 id（旧 blog/seed 流程传 slug，这里保向兼容）；不存在则 404。"""
+    category_id = await db.scalar(
+        select(ArticleCategoryORM.id).where(ArticleCategoryORM.slug == slug)
+    )
+    if category_id is None:
+        raise BizError(ArticleErr.CATEGORY_NOT_FOUND)
+    return int(category_id)
+
+
+# ————— 文章写接口 / 删除 / 审核 —————
+
+
+def _now() -> datetime:
+    """当前 UTC 时间（timezone-aware）——与模型 now_iso 语义一致。"""
+    return now_iso()
+
+
+async def _require_category(db: AsyncSession, category_id: int) -> None:
+    """校验分类存在，否则抛出 404。"""
+    exists = await db.scalar(
+        select(ArticleCategoryORM.id).where(ArticleCategoryORM.id == category_id)
+    )
+    if exists is None:
+        raise BizError(ArticleErr.CATEGORY_NOT_FOUND)
+
+
+async def _get_article(db: AsyncSession, slug: str) -> Article:
+    """按 slug 取文章，不存在则抛出 404。"""
+    return await get_or_raise(db, Article, ArticleErr.NOT_FOUND, Article.slug == slug)
+
+
+async def _load_category_title(db: AsyncSession, category_id: int) -> str:
+    """一次查询分类 title，供详情填充 category_title。"""
+    title = await db.scalar(
+        select(ArticleCategoryORM.title).where(ArticleCategoryORM.id == category_id)
+    )
+    return str(title) if title is not None else ""
+
+
+async def _article_to_detail(db: AsyncSession, article: Article) -> ArticleDetail:
+    """把 Article ORM 组装为 ArticleDetail，填充 category_title 与阅读时长。"""
+    # article.tags 是 lazy="selectin" 的异步关系：调用方常以刚 flush/新创建
+    # 的 Article 传入（tags 未预载）。若在此同步访问 article.tags 会在 async
+    # 会话中触发懒加载而抛 MissingGreenlet，故先显式 refresh 按需加载该关系。
+    await db.refresh(article, attribute_names=["tags"])
+    detail = ArticleDetail(
+        **{
+            k: v
+            for k, v in article.__dict__.items()
+            if k in ArticleDetail.model_fields and k != "tags"
+        },
+        tags=[t.name for t in (article.tags or [])],
+    )
+    detail.category_title = await _load_category_title(db, article.category_id)
+    detail.reading_time = estimate_reading_time(article.content or "")
+    return detail
+
+
+async def create_article_ex(db: AsyncSession, info: ArticleCreate) -> ArticleDetail:
+    """创建文章：slug 冲突与分类存在性校验；status=published 即填充发布时间。"""
+    conflict = await db.scalar(select(Article.id).where(Article.slug == info.slug))
+    if conflict is not None:
+        raise BizError(ArticleErr.SLUG_CONFLICT)
+    await _require_category(db, info.category_id)
+    article = Article(
+        slug=info.slug,
+        title=info.title,
+        description=info.description,
+        cover=info.cover,
+        content=info.content,
+        category_id=info.category_id,
+        keywords=",".join(k.strip() for k in info.keywords if k.strip()),
+        department=info.department,
+        publisher=info.publisher,
+        status=info.status,
+        published=_now() if info.status == "published" else None,
+    )
+    db.add(article)
+    await db.flush()
+    await _sync_article_tags(db, article.id, info.tags)
+    await _invalidate_article_cache(db, info.slug)
+    return await _article_to_detail(db, article)
+
+
+async def update_article_ex(
+    db: AsyncSession, slug: str, patch: ArticleUpdate, is_super: bool
+) -> ArticleDetail:
+    """更新文章（仅更新传入字段）。is_super 预留审核/越权语义（当前未用，接口契约保留）。"""
+    article = await _get_article(db, slug)
+    data = patch.model_dump(exclude_unset=True)
+    if data.get("category_id") is not None:
+        await _require_category(db, int(data["category_id"]))
+    if "status" in data:
+        article.status = str(data["status"])
+        if data["status"] == "published" and article.published is None:
+            article.published = _now()
+        data.pop("status")
+    if "keyword_str" in data:
+        article.keywords = str(data["keyword_str"])
+        data.pop("keyword_str")
+    for k, v in data.items():
+        setattr(article, k, v)
+    if patch.tags is not None:
+        await _sync_article_tags(db, article.id, patch.tags)
+    await db.flush()
+    await _invalidate_article_cache(db, slug)
+    return await _article_to_detail(db, article)
+
+
+async def soft_delete_article(db: AsyncSession, slug: str) -> ArticleDetail:
+    """软删：status 置为 rejected，清空 published。"""
+    article = await _get_article(db, slug)
+    article.status = "rejected"
+    article.published = None
+    await db.flush()
+    await _invalidate_article_cache(db, slug)
+    return await _article_to_detail(db, article)
+
+
+async def hard_delete_article(db: AsyncSession, slug: str) -> None:
+    """硬删：published/pending 状态的文章禁止硬删（避免已展示/待审内容被直接破坏）。"""
+    article = await _get_article(db, slug)
+    if article.status in ("published", "pending"):
+        raise BizError(ArticleErr.CANNOT_HARD_DELETE_PUBLISHED)
+    # 级联删关联：comments/likes/tags 关系已在 ORM 配置 cascade/delete-orphan
+    await db.delete(article)
+    await db.flush()
+    await _invalidate_article_cache(db, slug)
+
+
+async def review_article(db: AsyncSession, slug: str, approve: bool) -> ArticleDetail:
+    """审核：仅 pending 可审；approve→published（填发布时间），否则 rejected。"""
+    article = await _get_article(db, slug)
+    if article.status != "pending":
+        raise BizError(ArticleErr.INVALID_STATUS_TRANSITION)
+    article.status = "published" if approve else "rejected"
+    if approve:
+        article.published = _now()
+    await db.flush()
+    await _invalidate_article_cache(db, slug)
+    return await _article_to_detail(db, article)

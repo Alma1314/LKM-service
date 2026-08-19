@@ -10,22 +10,36 @@ from app.modules.articles.schemas import (
     ArticleCategory,
     ArticleCommentCreate,
     ArticleCommentOut,
+    ArticleCreate,
     ArticleDetail,
     ArticleLikeStatus,
     ArticleListData,
+    ArticleUpdate,
+    CategoryCreate,
+    CategoryOut,
+    ReviewArticleRequest,
     TagItem,
 )
 from app.modules.articles.service import (
+    assert_super_admin,
     create_article_comment,
+    create_article_ex,
+    create_category_ex,
     delete_article_comment,
+    delete_category_ex,
     get_about,
     get_article,
+    hard_delete_article,
     list_article_comments,
     list_articles,
     list_categories,
     list_tags,
+    review_article,
     search_articles,
+    soft_delete_article,
     toggle_article_like,
+    update_article_ex,
+    update_category_ex,
 )
 from app.modules.auth.deps import CurrentUser, get_current_user
 from app.modules.common import ApiResp, ListData
@@ -127,3 +141,100 @@ async def get_article_detail(
     slug: str, db: AsyncSession = Depends(get_read_session)
 ) -> ArticleDetail:
     return await get_article(db, slug)
+
+
+# ——————— 写端点（均需 super_admin） ———————
+
+
+@router.post("", response_model=ApiResp[ArticleDetail])
+@respond
+async def create_article(
+    info: ArticleCreate,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> ArticleDetail:
+    assert_super_admin(cur)
+    return await create_article_ex(db, info)
+
+
+@router.patch("/{slug}", response_model=ApiResp[ArticleDetail])
+@respond
+async def patch_article(
+    slug: str,
+    patch: ArticleUpdate,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> ArticleDetail:
+    assert_super_admin(cur)
+    return await update_article_ex(db, slug, patch, is_super=True)
+
+
+@router.delete("/{slug}", response_model=ApiResp[dict[str, bool]])
+@respond
+async def soft_delete(
+    slug: str,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, bool]:
+    assert_super_admin(cur)
+    await soft_delete_article(db, slug)
+    return {"ok": True}
+
+
+@router.delete("/{slug}/hard", response_model=ApiResp[dict[str, bool]])
+@respond
+async def hard_delete(
+    slug: str,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, bool]:
+    assert_super_admin(cur)
+    await hard_delete_article(db, slug)
+    return {"ok": True}
+
+
+@router.post("/{slug}/review", response_model=ApiResp[ArticleDetail])
+@respond
+async def review_article_endpoint(
+    slug: str,
+    body: ReviewArticleRequest,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> ArticleDetail:
+    assert_super_admin(cur)
+    return await review_article(db, slug, body.approve)
+
+
+@router.post("/categories", response_model=ApiResp[CategoryOut])
+@respond
+async def add_category(
+    info: CategoryCreate,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> CategoryOut:
+    assert_super_admin(cur)
+    return await create_category_ex(db, info)
+
+
+@router.patch("/categories/{category_id}", response_model=ApiResp[CategoryOut])
+@respond
+async def update_category(
+    category_id: int,
+    info: CategoryCreate,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> CategoryOut:
+    assert_super_admin(cur)
+    return await update_category_ex(db, category_id, info)
+
+
+@router.delete("/categories/{category_id}", response_model=ApiResp[dict[str, bool]])
+@respond
+async def delete_category(
+    category_id: int,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, bool]:
+    assert_super_admin(cur)
+    await delete_category_ex(db, category_id)
+    return {"ok": True}
