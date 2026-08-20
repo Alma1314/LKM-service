@@ -560,6 +560,61 @@ class PointsLedger(Base):
     )
 
 
+class QAQuestion(Base):
+    __tablename__: str = "qa_questions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    situation: Mapped[str] = mapped_column(Text, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    bounty_people: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    bounty_per_person: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    bounty_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    bounty_distributed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="open"
+    )  # open|accepted|closed
+    accepted_answer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("qa_answers.id"), nullable=True
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
+    )
+
+
+class QAAnswer(Base):
+    __tablename__: str = "qa_answers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    question_id: Mapped[int] = mapped_column(
+        ForeignKey("qa_questions.id"), nullable=False
+    )
+    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    is_accepted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+
+
+class QAQuestionImage(Base):
+    __tablename__: str = "qa_question_images"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    question_id: Mapped[int] = mapped_column(
+        ForeignKey("qa_questions.id"), nullable=False
+    )
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    sort: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+
+
 class Article(Base):
     __tablename__: str = "articles"
     # 文章列表热路径按 published 倒序，category_id 用于分组/聚合
