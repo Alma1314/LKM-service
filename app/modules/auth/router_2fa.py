@@ -22,7 +22,7 @@ from app.db.session import get_session
 from app.modules.auth import security, service_2fa
 from app.modules.auth.deps import CurrentUser, RequireLevel
 from app.modules.auth.errors import AuthErr
-from app.modules.auth.models import TOTP, SetupTransaction
+from app.modules.auth.models import SetupTransaction
 from app.modules.auth.schemas import (
     TOTPConfirmResponse,
     TOTPDisableRequest,
@@ -35,7 +35,7 @@ from app.modules.auth.schemas import (
     TOTPVerifyRequest,
     TOTPVerifyResponse,
 )
-from app.modules.auth.service_auth import generate_refresh_token, store_refresh_token
+from app.modules.auth.service_auth import issue_session_tokens
 from app.modules.auth.service_verify import check_code_rate_limit
 from app.modules.common import ApiResp
 
@@ -138,25 +138,8 @@ async def setup_2fa_complete_temp(
         (
             result_dict["access_token"],
             result_dict["refresh_token"],
-        ) = await _issue_admin_setup_tokens(db, user)
+        ) = await issue_session_tokens(db, user, mfa_verified=True)
     return result_dict
-
-
-async def _issue_admin_setup_tokens(db: AsyncSession, user: User) -> tuple[str, str]:
-    # 与 issue_session_tokens 一致：role 从 profile 读取，不硬编码
-    if "profile" not in user.__dict__:
-        await db.refresh(user, attribute_names=["profile"])
-    profile = user.profile
-    role = profile.role if profile else "member"
-    access_token = security.create_access_token(
-        user_id=user.id,
-        account_level=user.account_level,
-        role=role,
-        token_version=user.token_version,
-    )
-    raw_refresh = generate_refresh_token()
-    await store_refresh_token(db, user.id, raw_refresh, mfa_verified=True)
-    return access_token, raw_refresh
 
 
 @router.post("/setup/complete", response_model=ApiResp[TOTPSetupCompleteData])
@@ -218,13 +201,5 @@ async def get_2fa_status(
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """返回当前用户 2FA 是否已开启。"""
-    totp = (
-        (
-            await db.execute(
-                select(TOTP).where(TOTP.user_id == cur.id, TOTP.enabled.is_(True))
-            )
-        )
-        .scalars()
-        .first()
-    )
+    totp = await service_2fa.get_enabled_totp(db, cur.id)
     return {"enabled": totp is not None}

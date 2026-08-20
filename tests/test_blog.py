@@ -177,7 +177,7 @@ class TestBlogSeries:
         await _series(db, user_id=user_id, repo_name="blog-b")
 
         items = await list_series(db)
-        assert len(items) == 2
+        assert items.total == 2
 
     async def should_list_series_with_star_info(
         self, db: AsyncSession, blog_dir: str
@@ -186,18 +186,18 @@ class TestBlogSeries:
         series = await _series(db, user_id=user_id)
 
         await toggle_star(db, series.id, user_id)
-        items = await list_series(db, current_user_id=user_id)
-        assert items[0].star_count == 1
-        assert items[0].is_starred
+        res = await list_series(db, current_user_id=user_id)
+        assert res.items[0].star_count == 1
+        assert res.items[0].is_starred
 
     async def should_list_series_guest(self, db: AsyncSession, blog_dir: str) -> None:
         user_id = await _user(db)
         series = await _series(db, user_id=user_id)
 
         await toggle_star(db, series.id, user_id)
-        items = await list_series(db, current_user_id=None)
-        assert items[0].star_count == 1
-        assert not items[0].is_starred
+        res = await list_series(db, current_user_id=None)
+        assert res.items[0].star_count == 1
+        assert not res.items[0].is_starred
 
     async def should_get_series(self, db: AsyncSession, blog_dir: str) -> None:
         user_id = await _user(db)
@@ -312,8 +312,8 @@ class TestBlogStars:
         await toggle_star(db, series.id, user_id)
         await toggle_star(db, series.id, other)
 
-        items = await list_series(db)
-        assert items[0].star_count == 2
+        res = await list_series(db)
+        assert res.items[0].star_count == 2
 
 
 # ---- comments ----

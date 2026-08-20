@@ -5,7 +5,6 @@ from app.core.err import respond
 from app.db.session import get_read_session
 from app.modules.auth.deps import CurrentUser, get_current_user
 from app.modules.common import ApiResp, ModuleStatus, PageData
-from app.modules.points.errors import PointsErr  # noqa: F401  (副作用注册由 main 统一)
 from app.modules.points.schemas import BalanceOut, LeaderboardEntry, LedgerEntry
 from app.modules.points.service import get_balance, leaderboard, list_ledger
 

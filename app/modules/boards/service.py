@@ -7,7 +7,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
-from app.db.models import Board, BoardApplication, BoardBan, Exam, ExamCertificate, User
+from app.db.models import (
+    Board,
+    BoardApplication,
+    BoardBan,
+    Exam,
+    ExamCertificate,
+    User,
+    now_iso,
+)
 from app.db.repo import get_or_raise
 from app.modules.boards.errors import BoardErr
 from app.modules.boards.schemas import (
@@ -19,10 +27,6 @@ from app.modules.boards.schemas import (
     BoardUpdate,
     ReviewBoardApplicationRequest,
 )
-
-
-def _now() -> datetime.datetime:
-    return datetime.datetime.now(datetime.UTC)
 
 
 def _board_to_schema(b: Board) -> BoardOut:
@@ -131,7 +135,7 @@ async def review_application(
     app_.status = "approved" if body.approve else "rejected"
     app_.reviewer_id = reviewer_id
     app_.review_note = body.note
-    app_.reviewed_at = _now()
+    app_.reviewed_at = now_iso()
     await db.flush()
     if body.approve:
         # 通过则创建板块并把申请人设为负责人；slug 若被占用则报冲突（罕见、明确）
@@ -159,7 +163,7 @@ async def ban_user(
         select(BoardBan.id).where(
             BoardBan.board_id == board.id,
             BoardBan.user_id == body.user_id,
-            BoardBan.expires_at > _now(),
+            BoardBan.expires_at > now_iso(),
         )
     )
     if already is not None:
@@ -170,7 +174,7 @@ async def ban_user(
             user_id=body.user_id,
             created_by=actor_id,
             reason=body.reason,
-            expires_at=_now() + datetime.timedelta(hours=body.hours),
+            expires_at=now_iso() + datetime.timedelta(hours=body.hours),
         )
     )
     await db.flush()
@@ -194,7 +198,7 @@ async def is_banned(db: AsyncSession, board_id: int, user_id: int) -> bool:
         select(BoardBan.id).where(
             BoardBan.board_id == board_id,
             BoardBan.user_id == user_id,
-            BoardBan.expires_at > _now(),
+            BoardBan.expires_at > now_iso(),
         )
     )
     return row is not None
@@ -229,7 +233,7 @@ async def check_post_allowed(db: AsyncSession, board_id: int, user_id: int) -> N
     if board.daily_post_limit > 0:
         from app.db.models import ForumPost
 
-        today_start = _now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = now_iso().replace(hour=0, minute=0, second=0, microsecond=0)
         cnt = (
             await db.scalar(
                 select(func.count(ForumPost.id)).where(

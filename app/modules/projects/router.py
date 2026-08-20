@@ -14,7 +14,6 @@ from app.db.session import get_read_session, get_session
 from app.modules.admin.deps import require_admin
 from app.modules.auth.deps import CurrentUser, RequireLevel
 from app.modules.common import ApiResp, ListData, ModuleStatus
-from app.modules.projects.errors import ProjectErr  # noqa: F401  (副作用注册)
 from app.modules.projects.schemas import (
     ProjectApplicationCreate,
     ProjectApplicationOut,

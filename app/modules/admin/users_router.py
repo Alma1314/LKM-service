@@ -12,7 +12,7 @@ from app.core.err import respond
 from app.db.models import ForumPost, LibraryFile, User
 from app.db.session import get_read_session
 from app.modules.auth.deps import CurrentUser
-from app.modules.common import ApiResp, ListData
+from app.modules.common import ApiResp, PageData, paginate_pages
 
 from .deps import require_admin
 from .schemas import AdminStats, AdminUserListItem
@@ -20,7 +20,7 @@ from .schemas import AdminStats, AdminUserListItem
 router = APIRouter(prefix="/admin", tags=["admin-data"])
 
 
-@router.get("/users", response_model=ApiResp[ListData[AdminUserListItem]])
+@router.get("/users", response_model=ApiResp[PageData[AdminUserListItem]])
 @respond
 async def admin_list_users(
     page: int = Query(1, ge=1),
@@ -63,7 +63,12 @@ async def admin_list_users(
         )
         items.append(item.model_dump())
 
-    return {"items": items, "total": total}
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "pages": paginate_pages(total, size),
+    }
 
 
 async def _safe_count(db: AsyncSession, stmt: Any) -> int:

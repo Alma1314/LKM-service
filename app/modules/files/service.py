@@ -170,6 +170,17 @@ def _bucket_key_of(f: LibraryFile) -> str | None:
     return _build_bucket_key(f.sha3_hash) if f.sha3_hash else None
 
 
+def _storage_path_for(content_hash: str) -> str:
+    """构造与首写时后端实际返回一致的 ``storage_path``，避免元数据漂移。
+
+    Local：root 下 ``_content_path`` 的规范绝对路径（``.resolve()`` 匹配首写形态）；
+    S3：复用其 ``prefix`` 语义（``prefix/<hash[:2]>/<hash>``）。普通上传与直传登记共用。
+    """
+    if settings.storage_backend == "s3":
+        return f"{settings.s3_prefix}/{_build_bucket_key(content_hash)}"
+    return str(_content_path(content_hash).resolve())
+
+
 _storage_sig: tuple[object, ...] = ()
 
 
@@ -278,14 +289,7 @@ async def create_file(
         storage_path = str(saved["storage_path"])
     else:
         # 复用既有物理文件：storage_path 须与首写时后端实际返回的一致，保证元数据不漂移。
-        # Local 下就是 root/ab/<hash>（root + 裸 key）；S3 下 `_key` 会拼 prefix，
-        # 真实 key 形如 files/ab/<hash>，故按 backend 分别构造，复用 S3Storage 的 `_key` 语义。
-        if settings.storage_backend == "s3":
-            storage_path = f"{settings.s3_prefix}/{_build_bucket_key(content_hash)}"
-        else:
-            # LocalStorage.save 首写返回的是 root 下的规范绝对路径（`_resolve` 已 `.resolve()`），
-            # 此处复用须一致（`.resolve()` 以匹配首写形态，避免元数据漂移为相对路径）
-            storage_path = str(_content_path(content_hash).resolve())
+        storage_path = _storage_path_for(content_hash)
 
     try:
         f = LibraryFile(
@@ -587,10 +591,7 @@ async def _register_from_upload(
             raise
     await _safe_delete(storage, key)
     # storage_path 按 backend 与 create_file 对齐：直传与普通上传的条目不可区分
-    if settings.storage_backend == "s3":
-        storage_path = f"{settings.s3_prefix}/{hash_key}"
-    else:
-        storage_path = str(_content_path(content_hash).resolve())
+    storage_path = _storage_path_for(content_hash)
     # 登记 PENDING（tags 标记里是 JSON 数组，转回 JSON 字符串存储，与 create_file 一致）
     f = LibraryFile(
         uploader_id=uploader_id,

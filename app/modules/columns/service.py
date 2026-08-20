@@ -1,6 +1,6 @@
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import (
@@ -28,6 +28,7 @@ from app.modules.columns.schemas import (
     ColumnPostCreate,
     ColumnPostInfo,
 )
+from app.modules.common import PageData, paginate_offset, paginate_pages
 
 
 def get_column_plan() -> dict[str, Any]:
@@ -58,13 +59,21 @@ async def create_application(
 
 async def list_applications(
     db: AsyncSession, page: int = 1, limit: int | None = None
-) -> list[ColumnApplicationInfo]:
-    """申请列表。不传 ``limit`` 时返回全部（保旧契约），传了则 SQL 层分页。"""
+) -> PageData[ColumnApplicationInfo]:
+    """申请列表，统一返回 ``PageData``。不传 ``limit`` 时返回全部（page 恒为 1，pages 视总数）。"""
+    total = (
+        await db.scalar(select(func.count()).select_from(ColumnApplication)) or 0
+    )
     stmt = select(ColumnApplication).order_by(ColumnApplication.id.desc())
     if limit is not None:
-        stmt = stmt.offset((page - 1) * limit).limit(limit)
+        stmt = stmt.offset(paginate_offset(page, limit)).limit(limit)
     apps = (await db.execute(stmt)).scalars().all()
-    return [ColumnApplicationInfo.model_validate(a) for a in apps]
+    return PageData(
+        items=[ColumnApplicationInfo.model_validate(a) for a in apps],
+        total=total,
+        page=page,
+        pages=paginate_pages(total, limit) if limit else (1 if total else 0),
+    )
 
 
 async def get_application(
@@ -115,21 +124,32 @@ async def review_application(
 
 async def list_columns(
     db: AsyncSession, page: int = 1, limit: int | None = None
-) -> list[ColumnInfo]:
+) -> PageData[ColumnInfo]:
     ver = await collection_version("columns")
 
-    async def _load() -> list[dict[str, Any]]:
+    async def _load() -> dict[str, Any]:
+        total = await db.scalar(select(func.count()).select_from(Column)) or 0
         stmt = select(Column).order_by(Column.id.desc())
         if limit is not None:
-            stmt = stmt.offset((page - 1) * limit).limit(limit)
+            stmt = stmt.offset(paginate_offset(page, limit)).limit(limit)
         cols = (await db.execute(stmt)).scalars().all()
-        return [ColumnInfo.model_validate(c).model_dump() for c in cols]
+        return PageData(
+            items=[ColumnInfo.model_validate(c).model_dump() for c in cols],
+            total=total,
+            page=page,
+            pages=paginate_pages(total, limit) if limit else (1 if total else 0),
+        ).model_dump(mode="json")
 
     payload = await cached_read(
         make_key("columns:list", ver, page, limit), TTL_LIST_S, _load
     )
-    # cached_read 返回的是 dict 列表，转回 schema（缺省路径也统一）
-    return [ColumnInfo.model_validate(p) for p in payload]
+    # cached_read 返回 PageData 的 dict，转回 schema
+    return PageData(
+        items=[ColumnInfo.model_validate(c) for c in payload["items"]],
+        total=payload["total"],
+        page=payload["page"],
+        pages=payload["pages"],
+    )
 
 
 async def get_column(db: AsyncSession, column_id: int) -> ColumnInfo:
@@ -183,17 +203,30 @@ async def create_post(
 
 async def list_posts(
     db: AsyncSession, column_id: int, page: int = 1, limit: int | None = None
-) -> list[ColumnPostInfo]:
+) -> PageData[ColumnPostInfo]:
     await get_or_raise(db, Column, ColumnErr.NOT_FOUND, Column.id == column_id)
+    total = (
+        await db.scalar(
+            select(func.count())
+            .select_from(ColumnPost)
+            .where(ColumnPost.column_id == column_id)
+        )
+        or 0
+    )
     stmt = (
         select(ColumnPost)
         .where(ColumnPost.column_id == column_id)
         .order_by(ColumnPost.id.desc())
     )
     if limit is not None:
-        stmt = stmt.offset((page - 1) * limit).limit(limit)
+        stmt = stmt.offset(paginate_offset(page, limit)).limit(limit)
     posts = (await db.execute(stmt)).scalars().all()
-    return [ColumnPostInfo.model_validate(p) for p in posts]
+    return PageData(
+        items=[ColumnPostInfo.model_validate(p) for p in posts],
+        total=total,
+        page=page,
+        pages=paginate_pages(total, limit) if limit else (1 if total else 0),
+    )
 
 
 async def get_post(

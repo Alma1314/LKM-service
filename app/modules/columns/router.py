@@ -30,7 +30,7 @@ from app.modules.columns.service import (
     list_posts,
     review_application,
 )
-from app.modules.common import ApiResp, ListData, ModuleStatus
+from app.modules.common import ApiResp, ModuleStatus, PageData
 
 router = APIRouter(prefix="/columns", tags=["columns"])
 
@@ -65,7 +65,7 @@ async def apply_column(
     return await create_application(db, cur.id, info)
 
 
-@router.get("/applications", response_model=ApiResp[ListData[ColumnApplicationInfo]])
+@router.get("/applications", response_model=ApiResp[PageData[ColumnApplicationInfo]])
 @respond
 async def get_applications(
     cur: CurrentUser = RequireLevel("admin"),
@@ -73,7 +73,7 @@ async def get_applications(
     page: int = Query(1, ge=1),
     limit: int | None = Query(default=None, ge=1, le=200),
 ) -> dict[str, Any]:
-    return {"items": await list_applications(db, page=page, limit=limit)}
+    return await list_applications(db, page=page, limit=limit)
 
 
 @router.get(
@@ -103,14 +103,14 @@ async def review_column_application(
     return await review_application(db, application_id, info, cur.id)
 
 
-@router.get("", response_model=ApiResp[ListData[ColumnInfo]])
+@router.get("", response_model=ApiResp[PageData[ColumnInfo]])
 @respond
 async def get_columns(
     db: AsyncSession = Depends(get_read_session),
     page: int = Query(1, ge=1),
     limit: int | None = Query(default=None, ge=1, le=200),
 ) -> dict[str, Any]:
-    return {"items": await list_columns(db, page=page, limit=limit)}
+    return await list_columns(db, page=page, limit=limit)
 
 
 @router.get("/by-slug/{slug}", response_model=ApiResp[ColumnInfo])
@@ -142,7 +142,7 @@ async def publish_column_post(
     return await create_post(db, column_id, info, cur.id)
 
 
-@router.get("/{column_id}/posts", response_model=ApiResp[ListData[ColumnPostInfo]])
+@router.get("/{column_id}/posts", response_model=ApiResp[PageData[ColumnPostInfo]])
 @respond
 async def get_column_posts(
     column_id: int,
@@ -150,7 +150,7 @@ async def get_column_posts(
     page: int = Query(1, ge=1),
     limit: int | None = Query(default=None, ge=1, le=200),
 ) -> dict[str, Any]:
-    return {"items": await list_posts(db, column_id, page=page, limit=limit)}
+    return await list_posts(db, column_id, page=page, limit=limit)
 
 
 @router.get("/{column_id}/posts/{post_id}", response_model=ApiResp[ColumnPostInfo])

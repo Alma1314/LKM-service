@@ -13,12 +13,13 @@ from app.db.repo import consume_once, get_or_raise
 from app.modules.auth import security
 from app.modules.auth.channels import CHANNELS, channel_for
 from app.modules.auth.errors import AuthErr
-from app.modules.auth.models import TOTP, MagicLink, RecoveryTransaction, TempTokenUsage
+from app.modules.auth.models import MagicLink, RecoveryTransaction, TempTokenUsage
 from app.modules.auth.security import (
     create_temp_token,
     dummy_verify,
     hashpwd,
 )
+from app.modules.auth.service_2fa import get_enabled_totp
 from app.modules.auth.service_auth import (
     BackgroundTasksLike,
     log_audit,
@@ -55,15 +56,7 @@ async def _user_requires_mfa(db: AsyncSession, user: User) -> bool:
     """如果用户启用了 TOTP 并且必须使用第二因素验证，则返回 True。"""
     if user.account_level == "admin":
         return True
-    totp = (
-        (
-            await db.execute(
-                select(TOTP).where(TOTP.user_id == user.id, TOTP.enabled.is_(True))
-            )
-        )
-        .scalars()
-        .first()
-    )
+    totp = await get_enabled_totp(db, user.id)
     return totp is not None
 
 

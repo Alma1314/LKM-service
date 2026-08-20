@@ -29,7 +29,7 @@ from app.modules.auth.deps import (
     get_sms_provider,
 )
 from app.modules.auth.errors import AuthErr
-from app.modules.auth.models import TOTP, UserOAuth
+from app.modules.auth.models import UserOAuth
 from app.modules.auth.providers.base import EmailProvider, SmsProvider
 from app.modules.auth.schemas import (
     BindCodeRequestResponse,
@@ -226,15 +226,7 @@ async def get_settings(
         .scalars()
         .first()
     )
-    totp = (
-        (
-            await db.execute(
-                select(TOTP).where(TOTP.user_id == cur.id, TOTP.enabled.is_(True))
-            )
-        )
-        .scalars()
-        .first()
-    )
+    totp = await service_2fa.get_enabled_totp(db, cur.id)
     return {
         "email": user.email or None,
         "phone": user.phone or None,
@@ -270,15 +262,7 @@ async def unbind(
 
     if binding_type in ("email", "phone"):
         # 2FA 门槛：已开启 2FA 必须带 TOTP 码
-        totp = (
-            (
-                await db.execute(
-                    select(TOTP).where(TOTP.user_id == cur.id, TOTP.enabled.is_(True))
-                )
-            )
-            .scalars()
-            .first()
-        )
+        totp = await service_2fa.get_enabled_totp(db, cur.id)
         if totp is not None:
             if not body.code:
                 raise BizError(

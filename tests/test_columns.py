@@ -107,8 +107,8 @@ class TestColumnApplications:
 
         applications = await list_applications(db)
 
-        assert len(applications) == 1
-        assert applications[0].title == "数学思维训练"
+        assert applications.total == 1
+        assert applications.items[0].title == "数学思维训练"
 
     async def should_get_application(self, db: AsyncSession):
         user_id = await _user(db)
@@ -160,7 +160,7 @@ class TestColumnReview:
 
         assert result["application"]["status"] == ColumnApplicationStatus.REJECTED
         assert result["column"] is None
-        assert await list_columns(db) == []
+        assert (await list_columns(db)).items == []
 
     async def should_reject_reviewing_already_reviewed_application(
         self, db: AsyncSession
@@ -184,8 +184,8 @@ class TestColumns:
 
         columns = await list_columns(db)
 
-        assert len(columns) == 1
-        assert columns[0].title == "数学思维训练"
+        assert columns.total == 1
+        assert columns.items[0].title == "数学思维训练"
 
     async def should_get_column(self, db: AsyncSession):
         user_id = await _user(db)
@@ -221,8 +221,8 @@ class TestColumnPosts:
 
         posts = await list_posts(db, column["id"])
 
-        assert len(posts) == 1
-        assert posts[0].title == "如何建立函数思想"
+        assert posts.total == 1
+        assert posts.items[0].title == "如何建立函数思想"
 
     async def should_get_post_with_column_scope(self, db: AsyncSession):
         user_id = await _user(db)

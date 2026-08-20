@@ -13,7 +13,7 @@ from app.core.err import respond
 from app.db.models import Report
 from app.db.session import get_read_session
 from app.modules.auth.deps import CurrentUser
-from app.modules.common import ApiResp, ListData
+from app.modules.common import ApiResp, PageData, paginate_pages
 
 from .deps import require_admin
 from .schemas import AdminReportListItem
@@ -21,7 +21,7 @@ from .schemas import AdminReportListItem
 router = APIRouter(prefix="/admin", tags=["admin-data"])
 
 
-@router.get("/reports", response_model=ApiResp[ListData[AdminReportListItem]])
+@router.get("/reports", response_model=ApiResp[PageData[AdminReportListItem]])
 @respond
 async def admin_list_reports(
     page: int = Query(1, ge=1),
@@ -65,4 +65,9 @@ async def admin_list_reports(
         )
     ]
 
-    return {"items": items, "total": total}
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "pages": paginate_pages(total, size),
+    }

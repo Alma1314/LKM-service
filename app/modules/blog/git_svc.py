@@ -20,15 +20,26 @@ def _repo_path(repo_name: str) -> str:
     return os.path.join(base, f"{repo_name}.git")
 
 
-def _run_git(repo_name: str, *args: str) -> str:
+def _run(
+    repo_name: str,
+    *args: str,
+    input_data: bytes | None = None,
+    env: dict[str, str] | None = None,
+) -> str:
+    """跑裸仓库 git 命令，失败抛 BizError(GIT_ERROR)。
+
+    默认返回原始（不 strip）stdout，需要去首尾空白的调用点自行 ``.strip()``。
+    """
     path = _repo_path(repo_name)
     cmd = ["git", "--git-dir", path, *list(args)]
     try:
         result = subprocess.run(
             cmd,
+            input=input_data,
             capture_output=True,
             timeout=30,
             check=True,
+            env=env,
         )
         return result.stdout.decode("utf-8", errors="replace")
     except subprocess.CalledProcessError as e:
@@ -69,14 +80,14 @@ def delete_repo(repo_name: str) -> None:
 
 def ensure_repo_has_commits(repo_name: str) -> bool:
     try:
-        _run_git(repo_name, "rev-parse", "HEAD")
+        _run(repo_name, "rev-parse", "HEAD")
         return True
     except BizError:
         return False
 
 
 def get_file_tree(repo_name: str) -> list[dict[str, Any]]:
-    out = _run_git(repo_name, "ls-tree", "-r", "--name-only", "HEAD")
+    out = _run(repo_name, "ls-tree", "-r", "--name-only", "HEAD")
     lines = [line.strip() for line in out.splitlines() if line.strip()]
     if not lines:
         return []
@@ -118,7 +129,7 @@ def read_file(repo_name: str, filepath: str) -> str:
     filepath = filepath.lstrip("/")
     if ".." in filepath.split("/"):
         raise BizError(CommonErr.INVALID_INPUT, "Invalid file path")
-    return _run_git(repo_name, "show", f"HEAD:{filepath}")
+    return _run(repo_name, "show", f"HEAD:{filepath}")
 
 
 def parse_frontmatter(content: str) -> dict[str, Any]:
@@ -144,32 +155,6 @@ def get_readme(repo_name: str) -> str | None:
         return None
 
 
-def _run_bare_check(
-    repo_name: str,
-    input_data: bytes | None,
-    *args: str,
-    env: dict[str, str] | None = None,
-) -> str:
-    """跑裸仓库 git 命令，失败时像 _run_git 一样抛出 BizError(GIT_ERROR)。"""
-    path = _repo_path(repo_name)
-    cmd = ["git", "--git-dir", path, *list(args)]
-    try:
-        result = subprocess.run(
-            cmd,
-            input=input_data,
-            capture_output=True,
-            timeout=30,
-            check=True,
-            env=env,
-        )
-        return result.stdout.decode("utf-8", errors="replace").strip()
-    except subprocess.CalledProcessError as e:
-        detail = e.stderr.decode("utf-8", errors="replace").strip() or str(e)
-        raise BizError(BlogErr.GIT_ERROR, detail) from e
-    except FileNotFoundError:
-        raise BizError(BlogErr.GIT_ERROR, "git executable not found") from None
-
-
 def write_file(
     repo_name: str,
     filepath: str,
@@ -183,9 +168,6 @@ def write_file(
     """
     filepath = filepath.lstrip("/")
 
-    def _run(*args: str) -> str:
-        return _run_git(repo_name, *args)
-
     with tempfile.TemporaryDirectory() as tmp:
         index_path = os.path.join(tmp, "index")
         env = dict(os.environ)
@@ -197,19 +179,18 @@ def write_file(
         env["GIT_COMMITTER_EMAIL"] = f"{author}@series.local"
 
         # 写 blob
-        blob = _run_bare_check(
+        blob = _run(
             repo_name,
-            content.encode("utf-8"),
             "hash-object",
             "-w",
             "--stdin",
+            input_data=content.encode("utf-8"),
             env=env,
-        )
+        ).strip()
 
         # 更新临时 index
-        _run_bare_check(
+        _run(
             repo_name,
-            None,
             "update-index",
             "--add",
             "--cacheinfo",
@@ -218,26 +199,25 @@ def write_file(
             filepath,
             env=env,
         )
-        tree = _run_bare_check(repo_name, None, "write-tree", env=env)
+        tree = _run(repo_name, "write-tree", env=env).strip()
 
         # 若已有 HEAD，作父提交；否则 root commit
         parent_args: list[str] = []
         try:
-            parent = _run("rev-parse", "--verify", "HEAD").strip()
+            parent = _run(repo_name, "rev-parse", "--verify", "HEAD").strip()
             if parent:
                 parent_args = ["-p", parent]
         except BizError:
             pass
 
-        commit = _run_bare_check(
+        commit = _run(
             repo_name,
-            None,
             "commit-tree",
             tree,
             *parent_args,
             "-m",
             message,
             env=env,
-        )
+        ).strip()
 
-        _run("update-ref", "refs/heads/master", commit)
+        _run(repo_name, "update-ref", "refs/heads/master", commit)

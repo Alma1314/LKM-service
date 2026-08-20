@@ -103,11 +103,6 @@ class ArticleCategory(BaseModel):
     article_count: int
 
 
-class ArticleListData(BaseModel):
-    items: list[ArticleListItem]
-    total: int
-
-
 class ArticleLikeStatus(BaseModel):
     liked: bool
     like_count: int

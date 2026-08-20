@@ -43,7 +43,7 @@ from app.modules.articles.schemas import (
 )
 from app.modules.auth.deps import CurrentUser
 from app.modules.auth.schemas import ProfileInfo
-from app.modules.common import tag_names_sequence
+from app.modules.common import paginate_pages, tag_names_sequence
 
 # 默认阅读速度：中文约 300 字/分钟
 READING_SPEED_CPS = 300
@@ -188,6 +188,8 @@ async def list_articles(
         return {
             "items": [ArticleListItem.model_validate(a).model_dump() for a in items],
             "total": total,
+            "page": page,
+            "pages": paginate_pages(total, page_size),
         }
 
     return await cached_read(
@@ -282,6 +284,8 @@ async def search_articles(
     return {
         "items": [ArticleListItem.model_validate(a) for a in items],
         "total": total,
+        "page": page,
+        "pages": paginate_pages(total, page_size),
     }
 
 
@@ -515,11 +519,6 @@ async def _resolve_category_id(db: AsyncSession, slug: str) -> int:
 # ————— 文章写接口 / 删除 / 审核 —————
 
 
-def _now() -> datetime:
-    """当前 UTC 时间（timezone-aware）——与模型 now_iso 语义一致。"""
-    return now_iso()
-
-
 async def _require_category(db: AsyncSession, category_id: int) -> None:
     """校验分类存在，否则抛出 404。"""
     exists = await db.scalar(
@@ -578,7 +577,7 @@ async def create_article_ex(db: AsyncSession, info: ArticleCreate) -> ArticleDet
         department=info.department,
         publisher=info.publisher,
         status=info.status,
-        published=_now() if info.status == "published" else None,
+        published=now_iso() if info.status == "published" else None,
     )
     db.add(article)
     await db.flush()
@@ -598,7 +597,7 @@ async def update_article_ex(
     if "status" in data:
         article.status = str(data["status"])
         if data["status"] == "published" and article.published is None:
-            article.published = _now()
+            article.published = now_iso()
         data.pop("status")
     if "keyword_str" in data:
         article.keywords = str(data["keyword_str"])
@@ -640,7 +639,7 @@ async def review_article(db: AsyncSession, slug: str, approve: bool) -> ArticleD
         raise BizError(ArticleErr.INVALID_STATUS_TRANSITION)
     article.status = "published" if approve else "rejected"
     if approve:
-        article.published = _now()
+        article.published = now_iso()
     await db.flush()
     await _invalidate_article_cache(db, slug)
     return await _article_to_detail(db, article)

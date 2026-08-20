@@ -119,6 +119,19 @@ async def issue_session_tokens(
     return access_token, raw_refresh
 
 
+async def _enabled_totp(db: AsyncSession, user_id: int) -> TOTP | None:
+    """取用户已启用的 TOTP 记录，供本模块判断"是否开启 2FA"复用。"""
+    return (
+        (
+            await db.execute(
+                select(TOTP).where(TOTP.user_id == user_id, TOTP.enabled.is_(True))
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
 async def _create_auth_response(
     db: AsyncSession, user: User, requires_2fa: bool = False
 ) -> dict[str, Any]:
@@ -218,12 +231,7 @@ async def register_local(db: AsyncSession, info: UserRegLocal) -> dict[str, Any]
     )
     existing = result.scalars().first()
     if existing:
-        hashed: str = existing.hashed_password
-        if not hashed or not await verifypwd(info.password, hashed):
-            raise BizError(
-                AuthErr.ALREADY_REGISTERED, "Account exists but password is incorrect"
-            )
-        await upgrade_to_normal(db, existing)
+        await _login_or_error(db, existing, info.password)
         return await _create_auth_response(db, existing)
 
     user = await create_user_with_profile(
@@ -241,6 +249,33 @@ def handle_duplicate_user_error(exc: Exception) -> None:
     if isinstance(exc, IntegrityError):
         raise BizError(AuthErr.ALREADY_REGISTERED, "Account already exists") from exc
     raise
+
+
+async def _login_or_error(
+    db: AsyncSession,
+    user: User,
+    password_to_check: str,
+    *,
+    email: str | None = None,
+    phone: str | None = None,
+) -> User:
+    """已有账号时核对密码；正确则补全联系方式并升级为 ``normal``，供各注册入口复用。
+
+    密码缺失或不匹配时报 ``ALREADY_REGISTERED``，避免泄露已有账号信息。
+    """
+    if not user.hashed_password or not await verifypwd(
+        password_to_check, user.hashed_password
+    ):
+        raise BizError(
+            AuthErr.ALREADY_REGISTERED, "Account exists but password is incorrect"
+        )
+    if email and not user.email:
+        user.email = email
+    if phone and not user.phone:
+        user.phone = phone
+    await upgrade_to_normal(db, user)
+    await db.flush()
+    return user
 
 
 async def register_normal_with_password(
@@ -278,17 +313,13 @@ async def register_normal_with_password(
         .first()
     )
     if existing:
-        hashed: str = existing.hashed_password
-        if not hashed or not await verifypwd(info.password, hashed):
-            raise BizError(
-                AuthErr.ALREADY_REGISTERED, "Account exists but password is incorrect"
-            )
-        if email_normalized and not existing.email:
-            existing.email = email_normalized
-        if info.phone and not existing.phone:
-            existing.phone = info.phone
-        await upgrade_to_normal(db, existing)
-        await db.flush()
+        await _login_or_error(
+            db,
+            existing,
+            info.password,
+            email=email_normalized,
+            phone=info.phone,
+        )
         return await _create_auth_response(db, existing)
 
     user = await create_user_with_profile(
@@ -470,19 +501,9 @@ async def finalize_auth_response(db: AsyncSession, user: User) -> dict[str, Any]
     if admin_setup is not None:
         return admin_setup
 
-    requires_2fa = False
-    if str(user.account_level) in ("normal", "admin"):
-        totp = (
-            (
-                await db.execute(
-                    select(TOTP).where(TOTP.user_id == user.id, TOTP.enabled.is_(True))
-                )
-            )
-            .scalars()
-            .first()
-        )
-        if totp:
-            requires_2fa = True
+    requires_2fa = str(user.account_level) in ("normal", "admin") and bool(
+        await _enabled_totp(db, user.id)
+    )
 
     return await _create_auth_response(db, user, requires_2fa=requires_2fa)
 
@@ -689,19 +710,9 @@ async def verify_magic_link(
             raise BizError(AuthErr.TOTP_SETUP_REQUIRED)
 
     # 与 login_password 相同的 2FA 检查
-    requires_2fa = False
-    if user.account_level in ("normal", "admin"):
-        totp = (
-            (
-                await db.execute(
-                    select(TOTP).where(TOTP.user_id == user.id, TOTP.enabled.is_(True))
-                )
-            )
-            .scalars()
-            .first()
-        )
-        if totp:
-            requires_2fa = True
+    requires_2fa = user.account_level in ("normal", "admin") and bool(
+        await _enabled_totp(db, user.id)
+    )
 
     return await _create_auth_response(db, user, requires_2fa=requires_2fa)
 

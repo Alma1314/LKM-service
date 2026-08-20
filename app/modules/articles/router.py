@@ -13,7 +13,7 @@ from app.modules.articles.schemas import (
     ArticleCreate,
     ArticleDetail,
     ArticleLikeStatus,
-    ArticleListData,
+    ArticleListItem,
     ArticleUpdate,
     CategoryCreate,
     CategoryOut,
@@ -42,12 +42,12 @@ from app.modules.articles.service import (
     update_category_ex,
 )
 from app.modules.auth.deps import CurrentUser, get_current_user
-from app.modules.common import ApiResp, ListData
+from app.modules.common import ApiResp, ListData, PageData
 
 router = APIRouter(prefix="/articles", tags=["articles"])
 
 
-@router.get("", response_model=ApiResp[ArticleListData])
+@router.get("", response_model=ApiResp[PageData[ArticleListItem]])
 @respond
 async def get_articles(
     db: AsyncSession = Depends(get_read_session),
@@ -73,7 +73,7 @@ async def get_article_tags(
     return {"items": await list_tags(db)}
 
 
-@router.get("/search", response_model=ApiResp[ArticleListData])
+@router.get("/search", response_model=ApiResp[PageData[ArticleListItem]])
 @respond
 async def search_articles_endpoint(
     q: str = Query(..., min_length=1, max_length=100),

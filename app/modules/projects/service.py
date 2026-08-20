@@ -1,6 +1,5 @@
 """项目广场服务：孵化申请、审核（通过→建项目+落成员+纳入成员升级）、公开展示。"""
 
-import datetime
 import json
 
 from sqlalchemy import select
@@ -14,6 +13,7 @@ from app.db.models import (
     ProjectApplication,
     ProjectMember,
     User,
+    now_iso,
 )
 from app.db.repo import get_or_raise
 from app.modules.projects.errors import ProjectErr
@@ -24,10 +24,6 @@ from app.modules.projects.schemas import (
     ProjectOut,
     ReviewProjectApplicationRequest,
 )
-
-
-def _now() -> datetime.datetime:
-    return datetime.datetime.now(datetime.UTC)
 
 
 def _app_to_schema(a: ProjectApplication) -> ProjectApplicationOut:
@@ -128,7 +124,7 @@ async def review_application(
 
     app_.reviewer_id = reviewer_id
     app_.review_note = body.note
-    app_.reviewed_at = _now()
+    app_.reviewed_at = now_iso()
     app_.status = "approved" if body.approve else "rejected"
     await db.flush()
 

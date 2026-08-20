@@ -16,6 +16,7 @@ from app.db.models import (
     ExamQuestion,
     Profile,
     User,
+    now_iso,
 )
 from app.db.repo import get_or_raise
 from app.modules.exam.errors import ExamErr
@@ -29,11 +30,6 @@ from app.modules.exam.schemas import (
     SubmitAnswersRequest,
     SubmitResult,
 )
-
-
-def _now() -> datetime.datetime:
-    return datetime.datetime.now(datetime.UTC)
-
 
 # 等级/角色唯一派升使用的排名表（与 auth.deps._LEVEL_ORDER 及
 # docs/后台管理权限等级需求总结.md 口径一致，仅 >= 提升，不下放）。
@@ -191,7 +187,7 @@ async def start_attempt(
     ]
     deadline = None
     if exam.time_limit_min and not exam.starts_at and not exam.ends_at:
-        deadline = _now() + datetime.timedelta(minutes=exam.time_limit_min)
+        deadline = now_iso() + datetime.timedelta(minutes=exam.time_limit_min)
     return AttemptStartResp(
         attempt_id=attempt.id,
         exam_id=exam.id,
@@ -205,7 +201,7 @@ def _check_window(exam: Exam) -> None:
     """竞赛时间窗校验：非认证考试(windows 已设)才强制窗口。"""
     if exam.starts_at is None and exam.ends_at is None:
         return
-    now = _now()
+    now = now_iso()
     if exam.starts_at and now < exam.starts_at:
         raise BizError(ExamErr.EXAM_NOT_OPEN)
     if exam.ends_at and now > exam.ends_at:
@@ -221,7 +217,7 @@ def _check_attempt_deadline(attempt: ExamAttempt, exam: Exam) -> None:
     if not exam.time_limit_min or exam.starts_at or exam.ends_at:
         return
     deadline = attempt.started_at + datetime.timedelta(minutes=exam.time_limit_min)
-    if _now() > deadline:
+    if now_iso() > deadline:
         raise BizError(ExamErr.EXAM_NOT_OPEN, "考试已超时")
 
 
@@ -267,8 +263,8 @@ async def submit_attempt(
     attempt.answers = json.dumps(payload.answers, ensure_ascii=False)
     attempt.score = score
     attempt.passed = passed
-    attempt.submitted_at = _now()
-    attempt.time_spent_s = int((_now() - attempt.started_at).total_seconds())
+    attempt.submitted_at = now_iso()
+    attempt.time_spent_s = int((now_iso() - attempt.started_at).total_seconds())
     await db.flush()
 
     certificate_id: int | None = None

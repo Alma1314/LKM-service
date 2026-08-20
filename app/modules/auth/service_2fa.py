@@ -30,6 +30,19 @@ from app.modules.auth.service_auth import issue_session_tokens, log_audit
 _TOTP_MAX_FAILED = 3
 
 
+async def get_enabled_totp(db: AsyncSession, user_id: int) -> TOTP | None:
+    """取用户**已启用**的 TOTP 记录，供各处判断"是否开启 2FA"复用。"""
+    return (
+        (
+            await db.execute(
+                select(TOTP).where(TOTP.user_id == user_id, TOTP.enabled.is_(True))
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
 def _check_totp_failed(totp_record: TOTP | None) -> None:
     if totp_record and totp_record.failed_attempts >= _TOTP_MAX_FAILED:
         raise BizError(
@@ -267,15 +280,7 @@ async def verify_2fa(
         ):
             raise BizError(AuthErr.RECOVERY_CODE_INVALID)
     elif code:
-        totp_record = (
-            (
-                await db.execute(
-                    select(TOTP).where(TOTP.user_id == user_id, TOTP.enabled.is_(True))
-                )
-            )
-            .scalars()
-            .first()
-        )
+        totp_record = await get_enabled_totp(db, user_id)
         if not totp_record:
             raise BizError(AuthErr.TOTP_NOT_ENABLED)
 
@@ -364,15 +369,7 @@ async def disable_2fa(db: AsyncSession, user_id: int, code: str) -> dict[str, An
 
 async def verify_user_totp(db: AsyncSession, user_id: int, code: str) -> None:
     """校验已登录用户的 TOTP 码（不改状态、不消费，仅二次确认）。失败抛 TOTP_CODE_INVALID。"""
-    totp_record = (
-        (
-            await db.execute(
-                select(TOTP).where(TOTP.user_id == user_id, TOTP.enabled.is_(True))
-            )
-        )
-        .scalars()
-        .first()
-    )
+    totp_record = await get_enabled_totp(db, user_id)
     if not totp_record:
         raise BizError(AuthErr.TOTP_NOT_ENABLED)
 

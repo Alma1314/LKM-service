@@ -33,6 +33,7 @@ from app.modules.blog.schemas import (
     BlogSeriesUpdate,
     BlogStarStatus,
 )
+from app.modules.common import PageData, paginate_offset, paginate_pages
 
 # ---- private converters ----
 
@@ -159,26 +160,32 @@ async def list_series(
     current_user_id: int | None = None,
     page: int = 1,
     limit: int | None = None,
-) -> list[BlogSeriesInfo]:
+) -> PageData[BlogSeriesInfo]:
     """
-    系列列表。``page``/``limit`` 可选：不传 ``limit`` 时返回全部（保持旧契约），
+    系列列表，统一返回 ``PageData``。不传 ``limit`` 时返回全部（page 恒为 1，pages 视总数），
     传了则在 SQL 层分页，避免大数据量时整表拉取。
     """
+    total = await db.scalar(select(func.count()).select_from(BlogSeries)) or 0
     stmt = select(BlogSeries).order_by(BlogSeries.id.desc())
     if limit is not None:
-        stmt = stmt.offset((page - 1) * limit).limit(limit)
+        stmt = stmt.offset(paginate_offset(page, limit)).limit(limit)
     items = (await db.execute(stmt)).scalars().all()
     ids = [s.id for s in items]
     counts = await _star_counts(db, ids)
     starred_ids = (
         await _starred_ids(db, ids, current_user_id) if current_user_id else set[int]()
     )
-    return [
-        _series_to_info(
-            s, star_count=counts.get(s.id, 0), is_starred=s.id in starred_ids
-        )
-        for s in items
-    ]
+    return PageData(
+        items=[
+            _series_to_info(
+                s, star_count=counts.get(s.id, 0), is_starred=s.id in starred_ids
+            )
+            for s in items
+        ],
+        total=total,
+        page=page,
+        pages=paginate_pages(total, limit) if limit else (1 if total else 0),
+    )
 
 
 async def get_series(

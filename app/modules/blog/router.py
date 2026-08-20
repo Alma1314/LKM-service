@@ -35,7 +35,7 @@ from app.modules.blog.service import (
     update_series,
     write_series_file,
 )
-from app.modules.common import ApiResp, ListData
+from app.modules.common import ApiResp, ListData, PageData
 
 router = APIRouter(prefix="/blog", tags=["blog"])
 
@@ -53,7 +53,7 @@ async def create_blog_series(
     return await create_series(db, cur.id, info)
 
 
-@router.get("/series", response_model=ApiResp[ListData[BlogSeriesInfo]])
+@router.get("/series", response_model=ApiResp[PageData[BlogSeriesInfo]])
 @respond
 async def list_blog_series(
     db: AsyncSession = Depends(get_read_session),
@@ -62,9 +62,7 @@ async def list_blog_series(
     limit: int | None = Query(default=None, ge=1, le=200),
 ) -> dict[str, Any]:
     user_id = cur.id if cur else None
-    return {
-        "items": await list_series(db, current_user_id=user_id, page=page, limit=limit)
-    }
+    return await list_series(db, current_user_id=user_id, page=page, limit=limit)
 
 
 @router.get("/series/{series_id}", response_model=ApiResp[BlogSeriesDetail])

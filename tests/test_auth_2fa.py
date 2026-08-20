@@ -378,14 +378,15 @@ class TestGet2FAStatus:
 
 
 # ===================================================================
-# _issue_admin_setup_tokens：role 必须从 profile 读取，而非硬编码 admin
+# 管理员强制设置 2FA 后签发 token：role 必须从 profile 读取，而非硬编码 admin
+# （复用 issue_session_tokens，见 router_2fa.setup_2fa_complete_temp）
 # ===================================================================
 
 
 class TestIssueAdminSetupTokens:
     async def should_read_role_from_profile(self, db: AsyncSession):
         from app.db.models import Profile
-        from app.modules.auth.router_2fa import _issue_admin_setup_tokens
+        from app.modules.auth.service_auth import issue_session_tokens
         from app.modules.auth.security import decode_access_token
 
         user = await _create_user(db, username="role_admin", account_level="admin")
@@ -393,15 +394,15 @@ class TestIssueAdminSetupTokens:
         profile.role = "admin"
         await db.flush()
 
-        access_token, _ = await _issue_admin_setup_tokens(db, user)
+        access_token, _ = await issue_session_tokens(db, user, mfa_verified=True)
         assert decode_access_token(access_token)["role"] == "admin"
 
     async def should_not_hardcode_admin_role(self, db: AsyncSession):
-        from app.modules.auth.router_2fa import _issue_admin_setup_tokens
+        from app.modules.auth.service_auth import issue_session_tokens
         from app.modules.auth.security import decode_access_token
 
         # _create_user 的 profile.role 固定为 "member"，即使 account_level=admin
         user = await _create_user(db, username="role_member", account_level="admin")
-        access_token, _ = await _issue_admin_setup_tokens(db, user)
+        access_token, _ = await issue_session_tokens(db, user, mfa_verified=True)
         # 应从 profile 读取得到 "member"，而非硬编码 "admin"
         assert decode_access_token(access_token)["role"] == "member"
