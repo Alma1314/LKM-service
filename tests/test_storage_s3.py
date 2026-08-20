@@ -1,4 +1,6 @@
+import asyncio
 import io
+from unittest.mock import Mock
 
 import boto3
 import pytest
@@ -77,3 +79,62 @@ async def test_s3_copy_missing_src_raises(storage: S3Storage):
     with pytest.raises(BizError) as ei:
         await storage.copy("up/missing", "files/ab/x")
     assert ei.value.errcode == StorageErr.STORE_ERROR
+
+
+# ---- 分块上传：多块拼接落盘，超限中止并 abort multipart ----
+
+class _ChunkedStream:
+    """按固定块吐数据，模拟非全量缓冲的可重复读流。"""
+
+    def __init__(self, chunks: list[bytes]):
+        self._chunks = chunks
+        self._i = 0
+
+    def read(self, n: int = -1):
+        if self._i >= len(self._chunks):
+            return b""
+        c = self._chunks[self._i]
+        self._i += 1
+        return c
+
+
+def _make_s3_storage(client):
+    return S3Storage(bucket="lkm", prefix="files", client=client)
+
+
+@pytest.mark.asyncio
+async def test_save_multipart_uses_create_upload_and_complete():
+    # 用 mock client 断言分块序列：create -> upload_part*n -> complete
+    client = Mock()
+    client.create_multipart_upload.return_value = {"UploadId": "up-1"}
+    client.upload_part.return_value = {"ETag": '"etag-N"'}
+    client.complete_multipart_upload.return_value = {"ETag": "final"}
+
+    storage = _make_s3_storage(client)
+    out = await storage.save(
+        _ChunkedStream([b"aaa", b"bbb", b"ccc"]), max_bytes=100, bucket_key="ab/mp"
+    )
+    assert out["size"] == 9
+    assert out["storage_path"] == "files/ab/mp"
+    client.create_multipart_upload.assert_called_once_with(Bucket="lkm", Key="files/ab/mp")
+    assert client.upload_part.call_count == 3
+    parts = client.complete_multipart_upload.call_args.kwargs["MultipartUpload"]["Parts"]
+    assert [p["PartNumber"] for p in parts] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_save_multipart_aborts_and_raises_too_large():
+    # 累计超限：必须在 complete 前 abort，并向调用方抛 TOO_LARGE
+    client = Mock()
+    client.create_multipart_upload.return_value = {"UploadId": "up-1"}
+    client.upload_part.return_value = {"ETag": '"etag"'}
+    client.abort_multipart_upload.return_value = {}
+
+    storage = _make_s3_storage(client)
+    with pytest.raises(BizError) as ei:
+        await storage.save(
+            _ChunkedStream([b"x" * 5_000, b"y" * 5_000]), max_bytes=8_000, bucket_key="ab/over"
+        )
+    assert ei.value.errcode == StorageErr.TOO_LARGE
+    client.abort_multipart_upload.assert_called_once()
+    assert not client.complete_multipart_upload.called

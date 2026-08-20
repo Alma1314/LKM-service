@@ -15,7 +15,52 @@ from app.core.err import BizError
 from app.modules.storage.base import SavedFile
 from app.modules.storage.errors import StorageErr
 
-_CHUNK = 1024 * 1024  # 分块下载读取
+_CHUNK = 1024 * 1024  # 分块读写
+
+
+class _TooLarge(Exception):
+    """内部标记：累计超限。在 ``save`` 层转换为 ``StorageErr.TOO_LARGE``。"""
+
+
+def _save_multipart_sync(
+    client: Any, bucket: str, key: str, stream: Any, max_bytes: int
+) -> int:
+    """同步分块写入 S3（multipart）：create -> upload_part*n -> complete。
+
+    ``stream`` 需提供 ``read(size=-1)``（对 files 层传入的 ``io.BytesIO`` 兼容）。边读边累计，
+    超 ``max_bytes`` 立即 abort 并向调用方抛内部标记（转 TOO_LARGE），不留残留。
+    """
+    resp = client.create_multipart_upload(Bucket=bucket, Key=key)
+    upload_id = resp["UploadId"]
+    parts: list[dict[str, str | int]] = []
+    size = 0
+    try:
+        while True:
+            chunk = stream.read(_CHUNK)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > max_bytes:
+                raise _TooLarge()
+            part = client.upload_part(
+                Bucket=bucket, Key=key, UploadId=upload_id,
+                PartNumber=len(parts) + 1, Body=chunk,
+            )
+            parts.append({"PartNumber": len(parts) + 1, "ETag": part["ETag"]})
+        if not parts:
+            raise _TooLarge()
+        client.complete_multipart_upload(
+            Bucket=bucket, Key=key, UploadId=upload_id,
+            MultipartUpload={"Parts": parts},
+        )
+        return size
+    except BaseException:
+        # 出错（含超限）时中止未完成的 multipart，避免孤儿分片
+        try:
+            client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+        except Exception:
+            pass
+        raise
 
 
 class S3Storage:
@@ -57,23 +102,19 @@ class S3Storage:
     async def save(
         self, stream: Any, /, *, max_bytes: int, bucket_key: str
     ) -> SavedFile:
-        # 一次性读全受 max_bytes（100MB）约束校验；分块/预签名留到后续阶段
-        data = stream.read()
-        if len(data) > max_bytes:
-            raise BizError(StorageErr.TOO_LARGE)
         key = self._key(bucket_key)
+        # multipart 全程为同步 I/O（每个 part 一次调用），交给线程池执行，避免阻塞事件循环。
         try:
-            await asyncio.to_thread(
-                self._client.put_object,
-                Bucket=self.bucket,
-                Key=key,
-                Body=data,
+            size = await asyncio.to_thread(
+                _save_multipart_sync, self._client, self.bucket, key, stream, max_bytes
             )
+        except _TooLarge as exc:
+            raise BizError(StorageErr.TOO_LARGE) from exc
         except ClientError as exc:
             raise BizError(
                 StorageErr.STORE_ERROR, detail=f"Failed to store: {exc}"
             ) from exc
-        return {"size": len(data), "bucket_key": bucket_key, "storage_path": key}
+        return {"size": size, "bucket_key": bucket_key, "storage_path": key}
 
     async def open(self, bucket_key: str) -> AsyncIterator[bytes]:
         try:

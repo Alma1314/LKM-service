@@ -703,6 +703,35 @@ class TestFilesPhase2AEndpoints:
         assert resp.headers["content-type"].startswith("application/pdf")
         assert resp.content == self.CONTENT
 
+    async def test_file_content_is_not_publicly_cached(
+        self, client: AsyncClient, db: AsyncSession
+    ):
+        # 文件端点需登录私有：缓存控制必须为 private（禁 public immutable 绕过登录）。
+        user_id, token = await self._authed(db)
+        fid = await self._approved_file(db, user_id, approved=True)
+
+        resp = await client.get(
+            f"/api/v1/files/{fid}/content",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.headers["cache-control"] == "private, no-store"
+
+    async def test_preview_not_publicly_cached(
+        self, client: AsyncClient, db: AsyncSession
+    ):
+        user_id, token = await self._authed(db)
+        fid = await self._approved_file(db, user_id, approved=True)
+
+        resp = await client.get(
+            f"/api/v1/files/{fid}/preview",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.headers["cache-control"] == "private, no-store"
+
     async def test_download_url_local_returns_backend(
         self, client: AsyncClient, db: AsyncSession
     ):

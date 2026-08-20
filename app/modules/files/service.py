@@ -473,7 +473,11 @@ def _serve(
         f"{disposition}; filename={ascii_fallback}; "
         f"filename*=UTF-8''{quote(f.original_name)}"
     )
-    headers = {"Content-Disposition": cd}
+    headers = {
+        "Content-Disposition": cd,
+        # 文件端点需登录私有：禁 public immutable，避免未经授权的内容被缓存/跨代理复用
+        "Cache-Control": "private, no-store",
+    }
     return StreamingResponse(it(), media_type=f.mime_type, headers=headers)
 
 

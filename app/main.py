@@ -9,9 +9,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
-from starlette.types import Scope
 from strawberry.fastapi import GraphQLRouter
 
 from app.api.router import api_router
@@ -55,22 +53,6 @@ def _register_all_errors() -> None:
     import app.modules.projects.errors
     import app.modules.qa.errors
     import app.modules.starhope.errors
-
-
-class _ImmutableStaticFiles(StaticFiles):
-    """给静态文件成功响应附加 immutable 长缓存头。
-    成员头像内容不变(文件名即未知指纹),浏览器/nginx/CDN 可永久缓存,与 /_astro/ 策略一致。
-    404/错误响应不附加,避免把错误结果也缓存。
-    """
-
-    async def get_response(self, path: str, scope: Scope) -> Response:
-        response = await super().get_response(path, scope)
-        if 200 <= response.status_code < 300:
-            response.headers.setdefault(
-                "cache-control",
-                "public, max-age=31536000, immutable",
-            )
-        return response
 
 
 @asynccontextmanager
@@ -160,13 +142,6 @@ def create_app() -> FastAPI:
         context_getter=_graphql_context,
     )
     application.include_router(graphql_router)
-
-    # 成员头像静态文件：/static/avatars/*.webp，长缓存 immutable
-    application.mount(
-        "/static/avatars",
-        _ImmutableStaticFiles(directory=settings.avatars_dir, check_dir=False),
-        name="avatars",
-    )
 
     @application.get("/")
     async def root() -> dict[str, str]:
