@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from typing import Any, cast
 
 from sqlalchemy import func, select
@@ -10,6 +11,7 @@ from app.db.models import (
     Article,
     ArticleCategory,
     BlogComment,
+    BlogContent,
     BlogSeries,
     BlogStar,
     Profile,
@@ -122,6 +124,79 @@ async def _get_profiles(
     return await get_profiles_by_user_ids(db, user_ids)
 
 
+def _sha3(content: str) -> str:
+    """计算正文 sha3-256 指纹，用于内容变更检测。"""
+    return hashlib.sha3_256(content.encode("utf-8")).hexdigest()
+
+
+# 文件树中间节点：name→(嵌套子树 dict | "__BLOB__" 终端标记)，与 git_svc.TreeNode 同构
+_FileTreeNode = dict[str, "_FileTreeNode | str"]
+
+
+def _paths_to_file_tree(paths: list[str]) -> list[dict[str, Any]]:
+    """由文件的路径列表构建嵌套文件树，结构与原 git ``ls-tree`` 输出一致。
+
+    返回节点形如 ``{"name", "type", "children"?}``：目录 type=tree 带 children，
+    文件 type=blob；目录/文件同级按 name 排序。复用与 ``git_svc.TreeNode`` 同构的
+    中间结构以通过严格类型检查。
+    """
+    root: _FileTreeNode = {}
+
+    def _ensure(node: _FileTreeNode, parts: list[str]) -> None:
+        if not parts:
+            return
+        name, rest = parts[0], parts[1:]
+        cur = node.get(name)
+        if not isinstance(cur, dict):
+            cur = {}
+            node[name] = cur
+        if not rest:
+            node[name] = "__BLOB__"
+        else:
+            _ensure(cur, rest)
+
+    for p in paths:
+        _ensure(root, p.strip("/").split("/"))
+
+    def _to_list(node: _FileTreeNode) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for name in sorted(node):
+            val = node[name]
+            if isinstance(val, dict):
+                result.append(
+                    {
+                        "name": name,
+                        "type": "tree",
+                        "children": _to_list(val),
+                    }
+                )
+            else:
+                result.append({"name": name, "type": "blob"})
+        return result
+
+    return _to_list(root)
+
+
+async def _get_content_row(
+    db: AsyncSession, series_id: int, filepath: str
+) -> BlogContent:
+    row = (
+        (
+            await db.execute(
+                select(BlogContent).where(
+                    BlogContent.series_id == series_id,
+                    BlogContent.path == filepath,
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if row is None:
+        raise BizError(BlogErr.FILE_NOT_FOUND, f"File not found: {filepath}")
+    return row
+
+
 # ---- series CRUD ----
 
 
@@ -204,8 +279,17 @@ async def get_series(
     )
 
     file_tree: list[dict[str, Any]] | None = None
-    if await asyncio.to_thread(git_svc.ensure_repo_has_commits, series.repo_name):
-        file_tree = await asyncio.to_thread(git_svc.get_file_tree, series.repo_name)
+    rows = (
+        (
+            await db.execute(
+                select(BlogContent.path).where(BlogContent.series_id == series_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if rows:
+        file_tree = _paths_to_file_tree(list(rows))
 
     return BlogSeriesDetail.model_validate(series).model_copy(
         update={"star_count": sc, "is_starred": starred, "file_tree": file_tree}
@@ -391,14 +475,15 @@ async def delete_comment(
 async def get_file_content(
     db: AsyncSession, series_id: int, filepath: str
 ) -> dict[str, Any]:
-    series = await get_or_raise(
+    await get_or_raise(
         db,
         BlogSeries,
         BlogErr.SERIES_NOT_FOUND,
         BlogSeries.id == series_id,
     )
-    content = await asyncio.to_thread(git_svc.read_file, series.repo_name, filepath)
-    return {"filepath": filepath, "content": content}
+    filepath = filepath.lstrip("/") or filepath
+    row = await _get_content_row(db, series_id, filepath)
+    return {"filepath": row.path, "content": row.content}
 
 
 async def write_series_file(
@@ -417,13 +502,38 @@ async def write_series_file(
     )
     if series.owner_id != user_id:
         raise BizError(CommonErr.FORBIDDEN)
-    await asyncio.to_thread(
-        git_svc.write_file,
-        series.repo_name,
-        filepath,
-        content,
-        message or "update via editor",
+
+    filepath = filepath.lstrip("/") or filepath
+    row = (
+        (
+            await db.execute(
+                select(BlogContent).where(
+                    BlogContent.series_id == series_id,
+                    BlogContent.path == filepath,
+                )
+            )
+        )
+        .scalars()
+        .first()
     )
+    new_sha = _sha3(content)
+    if row is None:
+        row = BlogContent(
+            series_id=series_id,
+            path=filepath,
+            content=content,
+            sha3=new_sha,
+            version=1,
+        )
+        db.add(row)
+    else:
+        # 内容是否变化：仅当 sha3 变化才递增 version，避免无意义的重写
+        if row.sha3 != new_sha:
+            row.content = content
+            row.sha3 = new_sha
+            row.version = row.version + 1
+            row.updated_at = now_iso()
+
     series.updated_at = now_iso()
     await db.flush()
 
@@ -460,7 +570,9 @@ async def publish_series_file(
     if series.owner_id != user_id:
         raise BizError(CommonErr.FORBIDDEN)
 
-    content = await asyncio.to_thread(git_svc.read_file, series.repo_name, filepath)
+    filepath = filepath.lstrip("/") or filepath
+    row = await _get_content_row(db, series_id, filepath)
+    content = row.content
     fm = git_svc.parse_frontmatter(content)
     override = override or {}
 

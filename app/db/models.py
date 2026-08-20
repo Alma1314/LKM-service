@@ -368,6 +368,9 @@ class BlogSeries(Base):
     stars: Mapped[list[BlogStar]] = relationship(
         back_populates="series", cascade="all, delete-orphan"
     )
+    contents: Mapped[list[BlogContent]] = relationship(
+        back_populates="series", cascade="all, delete-orphan"
+    )
 
 
 class BlogStar(Base):
@@ -410,6 +413,37 @@ class BlogComment(Base):
     replies: Mapped[list[BlogComment]] = relationship(
         back_populates="parent", cascade="all, delete-orphan"
     )
+
+
+class BlogContent(Base):
+    """系列仓库内单个文件的正文（DB 为主存储）。
+
+    每 series 下每个 path 一行（UniqueConstraint(series_id, path)），保存当前内容。
+    git 裸仓库降级为版本快照层，文本内容的事实源在此表。``sha3`` 记录内容指纹，
+    供将来 git 快照经 ``git http-backend`` push 时做变更检测/懒回填。
+    """
+
+    __tablename__: str = "blog_content"
+    __table_args__: tuple[Any, ...] = (
+        UniqueConstraint("series_id", "path", name="uq_blog_content_series_path"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    series_id: Mapped[int] = mapped_column(
+        ForeignKey("blog_series.id"), nullable=False, index=True
+    )
+    path: Mapped[str] = mapped_column(String(500), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    sha3: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
+    )
+
+    series: Mapped[BlogSeries] = relationship()
 
 
 class StarHopeQuestion(Base):

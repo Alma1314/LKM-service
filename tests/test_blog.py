@@ -1,12 +1,13 @@
 import asyncio
 import os
-import subprocess
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -33,6 +34,7 @@ from app.modules.blog.service import (
     list_series,
     toggle_star,
     update_series,
+    write_series_file,
 )
 
 # ---- fixtures ----
@@ -80,65 +82,6 @@ async def _series(
     )
 
 
-def _seed_bare_repo(repo_dir: str, repo_name: str, files: dict[str, str]) -> None:
-    """Seed a bare git repo with files using git plumbing commands."""
-    bare = os.path.join(repo_dir, f"{repo_name}.git")
-
-    def _git(*args: str, stdin: bytes = b"") -> subprocess.CompletedProcess[bytes]:
-        return subprocess.run(
-            ["git", "--git-dir", bare, *list(args)],
-            input=stdin,
-            capture_output=True,
-            check=True,
-        )
-        return subprocess.run(
-            ["git", "--git-dir", bare, *list(args)],
-            input=stdin,
-            capture_output=True,
-            check=True,
-        )
-
-    # hash all files
-    blob_hashes: dict[str, str] = {}
-    for fpath, content in files.items():
-        blob_hashes[fpath] = (
-            _git("hash-object", "-w", "--stdin", stdin=content.encode())
-            .stdout.decode()
-            .strip()
-        )
-
-    # group files by their parent directory (root "" always present)
-    dir_contents: dict[str, list[str]] = {"": []}
-    for fpath in sorted(files):
-        parts = fpath.split("/")
-        dname = "/".join(parts[:-1]) if len(parts) > 1 else ""
-        fname = parts[-1]
-        h = blob_hashes[fpath]
-        dir_contents.setdefault(dname, []).append(f"100644 blob {h}\t{fname}")
-
-    # build trees from deepest to shallowest
-    sorted_dirs = sorted(dir_contents.keys(), key=lambda d: (-d.count("/"), d == ""))
-    trees: dict[str, str] = {}
-
-    for d in sorted_dirs:
-        entries = list(dir_contents[d])
-        # fold child trees into parent
-        prefix = d + "/" if d else ""
-        for child_dir, child_tree in sorted(trees.items()):
-            if child_dir.startswith(prefix):
-                rel = child_dir[len(prefix) :]
-                if "/" not in rel:
-                    entries.append(f"040000 tree {child_tree}\t{rel}")
-        tree_hash = (
-            _git("mktree", stdin="\n".join(entries).encode()).stdout.decode().strip()
-        )
-        trees[d] = tree_hash
-
-    root_tree = trees.get("", "")
-    commit = (
-        _git("commit-tree", root_tree, "-m", "initial commit").stdout.decode().strip()
-    )
-    _git("update-ref", "refs/heads/master", commit)
 
 
 # ---- series CRUD ----
@@ -213,11 +156,8 @@ class TestBlogSeries:
         user_id = await _user(db)
         series = await _series(db, user_id=user_id)
 
-        _seed_bare_repo(
-            blog_dir,
-            "my-blog",
-            {"README.md": "# Hello", "posts/2026-01-01.md": "# Post"},
-        )
+        await write_series_file(db, series.id, user_id, "README.md", "# Hello")
+        await write_series_file(db, series.id, user_id, "posts/2026-01-01.md", "# Post")
 
         detail = await get_series(db, series.id)
         assert detail.file_tree is not None
@@ -480,10 +420,10 @@ class TestBlogComments:
 
 
 class TestBlogFiles:
-    async def should_read_file_from_git(self, db: AsyncSession, blog_dir: str) -> None:
+    async def should_read_file_from_db(self, db: AsyncSession, blog_dir: str) -> None:
         user_id = await _user(db)
         series = await _series(db, user_id=user_id)
-        _seed_bare_repo(blog_dir, "my-blog", {"README.md": "# Hello World\n"})
+        await write_series_file(db, series.id, user_id, "README.md", "# Hello World\n")
 
         result = await get_file_content(db, series.id, "README.md")
         assert result["filepath"] == "README.md"
@@ -494,24 +434,21 @@ class TestBlogFiles:
             await get_file_content(db, 999, "README.md")
         assert exc.value.errcode == BlogErr.SERIES_NOT_FOUND
 
-    async def should_reject_path_traversal(
-        self, db: AsyncSession, blog_dir: str
-    ) -> None:
+    async def should_reject_missing_file(self, db: AsyncSession, blog_dir: str) -> None:
         user_id = await _user(db)
         series = await _series(db, user_id=user_id)
-        _seed_bare_repo(blog_dir, "my-blog", {"README.md": "# Hi"})
+        await write_series_file(db, series.id, user_id, "README.md", "# Hi")
 
+        # 未写入（含路径穿越形态）的文件：DB 精确匹配不到 → FILE_NOT_FOUND
         with pytest.raises(BizError) as exc:
             await get_file_content(db, series.id, "../etc/passwd")
-        assert exc.value.errcode == CommonErr.INVALID_INPUT
+        assert exc.value.errcode == BlogErr.FILE_NOT_FOUND
 
     async def should_read_nested_file(self, db: AsyncSession, blog_dir: str) -> None:
         user_id = await _user(db)
         series = await _series(db, user_id=user_id)
-        _seed_bare_repo(
-            blog_dir,
-            "my-blog",
-            {"posts/2026-07-23-hello.md": "# My Post\n"},
+        await write_series_file(
+            db, series.id, user_id, "posts/2026-07-23-hello.md", "# My Post\n"
         )
 
         result = await get_file_content(db, series.id, "posts/2026-07-23-hello.md")
@@ -1017,3 +954,106 @@ slug: {slug}
             f"/api/v1/blog/series/{sid}/publish", json={"filepath": "posts/a.mdx"}
         )
         assert resp.status_code == 403
+
+
+class TestBlogContent:
+    """DB 主存储下 blog_content 行的行为：upsert 幂等、版本递增、发布闭环。"""
+
+    async def _get_row(
+        self, db: AsyncSession, series_id: int, path: str
+    ) -> Any:
+        from app.db.models import BlogContent
+
+        return (
+            (
+                await db.execute(
+                    select(BlogContent).where(
+                        BlogContent.series_id == series_id,
+                        BlogContent.path == path,
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+
+    async def should_write_then_read_back(
+        self, db: AsyncSession, blog_dir: str
+    ) -> None:
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
+
+        await write_series_file(db, series.id, user_id, "a.md", "# hello")
+        result = await get_file_content(db, series.id, "a.md")
+        assert result["content"] == "# hello"
+
+    async def should_upsert_inplace_on_rewrite(
+        self, db: AsyncSession, blog_dir: str
+    ) -> None:
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
+
+        await write_series_file(db, series.id, user_id, "a.md", "v1")
+        await write_series_file(db, series.id, user_id, "a.md", "v2")
+
+        from app.db.models import BlogContent
+
+        row = await self._get_row(db, series.id, "a.md")
+        assert row is not None
+        assert row.content == "v2"
+        assert row.version == 2
+        # 更新同一文件仍是同一行（不新增记录）
+        rows = (
+            (
+                await db.execute(
+                    select(BlogContent).where(BlogContent.series_id == series.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 1
+
+    async def should_not_bump_version_when_content_unchanged(
+        self, db: AsyncSession, blog_dir: str
+    ) -> None:
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
+
+        await write_series_file(db, series.id, user_id, "a.md", "same")
+        await write_series_file(db, series.id, user_id, "a.md", "same")
+
+        row = await self._get_row(db, series.id, "a.md")
+        assert row is not None
+        assert row.version == 1
+
+    async def should_publish_reads_db_content(
+        self, client: AsyncClient, db: AsyncSession, blog_dir: str
+    ) -> None:
+        user_id = await _user(db)
+        token = create_access_token(
+            user_id=user_id, account_level="normal", role="member"
+        )
+        repo = f"pubcontent_{uuid.uuid4().hex[:8]}"
+        resp = await client.post(
+            "/api/v1/blog/series",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"title": "Content", "repo_name": repo},
+        )
+        assert resp.status_code == 200
+        sid = resp.json()["data"]["id"]
+
+        # 直接用服务层写（DB 主存），再经 DB 读取发布
+        mdx = "---\ntitle: 从DB\ncategory: engineering\nslug: from-db\n---\n# 正文"
+        await write_series_file(db, sid, user_id, "posts/a.mdx", mdx)
+
+        pub = await client.post(
+            f"/api/v1/blog/series/{sid}/publish",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"filepath": "posts/a.mdx"},
+        )
+        assert pub.status_code == 200
+        data = pub.json()["data"]
+        assert data["slug"] == "from-db"
+        assert data["title"] == "从DB"
+

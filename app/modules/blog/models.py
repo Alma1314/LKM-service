@@ -32,4 +32,14 @@ BLOG_TABLE_PLAN = {
         "created_at",
         "updated_at",
     ],
+    "blog_content": [
+        "id",
+        "series_id",
+        "path",
+        "content",
+        "sha3",
+        "version",
+        "created_at",
+        "updated_at",
+    ],
 }
