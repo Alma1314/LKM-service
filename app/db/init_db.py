@@ -98,9 +98,10 @@ async def _create_all() -> None:
 async def init_db() -> None:
     """把数据库 schema 初始化到最新（多 worker 下用 Redis 锁串行化）。
 
-    默认走 Alembic：既负责全新环境的建库（基线迁移建全部表），也负责增量迁移，
-    生产与开发复用同一迁移链。当 ``settings.use_alembic=False`` 时降级为
-    ``create_all()``（见 :func:`_create_all` 的局限，仅适配从零重建场景）。
+    默认（``settings.use_alembic=False``）走 ``create_all()``：按 models metadata 建缺失表，
+    开发免维护增量迁移——新增表只改 ``models.py`` 即可自动建。仅当显式设
+    ``settings.use_alembic=True``（生产/历史库）才走 Alembic 增量迁移链
+    （见 :func:`_create_all` 与 Alembic 各自的局限与取舍）。
     """
     from app.core.config import settings
 

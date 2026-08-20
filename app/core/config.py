@@ -86,10 +86,14 @@ class Settings(BaseSettings):
     # 生产必须设置固定随机值，供桶通知 webhook 的 Authorization: Bearer 头校验。
     files_notify_token: str = ""
 
-    # schema 初始化：默认 True 走 Alembic（增量迁移，schema 唯一权威）；
-    # 置 False 时 init_db 降级为 Base.metadata.create_all()（只建新库、不 ALTER 已有表，
-    # 失去增量迁移能力）。适合"无历史数据、从零重建"的场景临时关闭，生产建议保持 True。
-    use_alembic: bool = True
+    # schema 初始化策略（开发默认 create_all，免维护增量迁移）：
+    #   False（默认）→ init_db 用 Base.metadata.create_all()，只建缺失表、不 ALTER、
+    #                  不依赖 Alembic；开发新增表只改 models.py 即可，无需手写迁移文件。
+    #             局限：不处理已有表的列变更、不记录 schema 版本（无法增量升级老库）。
+    #   True        → 走 Alembic 增量迁移（schema 唯一权威、可回滚、可升级老库）。
+    # 建议：生产/有历史数据的环境显式设 LKM_USE_ALEMBIC=true；本地从零开发用默认
+    # create_all 免去每张新表写迁移的负担。迁移文件（alembic/versions/*）保留作生产后备。
+    use_alembic: bool = False
 
     # Sentry APM：空串 = 不加载（dev/test 默认关闭，避免拖启动）；配置 DSN 才接入
     sentry_dsn: str = ""
