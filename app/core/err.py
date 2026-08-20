@@ -44,6 +44,7 @@ NS_EXAM = Namespace(10, "exam")
 NS_BOARDS = Namespace(11, "boards")
 NS_POINTS = Namespace(12, "points")
 NS_QA = Namespace(13, "qa")
+NS_PROJECTS = Namespace(14, "projects")
 
 
 class CommonErr(ErrCode):

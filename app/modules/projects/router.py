@@ -1,0 +1,94 @@
+from typing import Annotated
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.cache import (
+    bump_collection_version,
+    cached_read,
+    collection_version,
+    make_key,
+)
+from app.core.err import respond
+from app.db.session import get_read_session, get_session
+from app.modules.admin.deps import require_admin
+from app.modules.auth.deps import CurrentUser, RequireLevel
+from app.modules.common import ApiResp, ListData, ModuleStatus
+from app.modules.projects.errors import ProjectErr  # noqa: F401  (副作用注册)
+from app.modules.projects.schemas import (
+    ProjectApplicationCreate,
+    ProjectApplicationOut,
+    ProjectOut,
+    ReviewProjectApplicationRequest,
+)
+from app.modules.projects.service import (
+    get_project_ex,
+    list_projects,
+    review_application,
+    submit_application,
+)
+
+
+def _status() -> ModuleStatus:
+    return ModuleStatus(
+        module="projects",
+        status="implemented",
+        responsibility="项目广场：孵化申请、审核、通过后展示项目与孵化标识、纳入成员升级、贡献者展示。",
+        next_steps=[
+            "前端项目广场页接线（backlog）",
+            "板块挂接 / 积分联动 / 多成员协作",
+        ],
+    )
+
+
+router = APIRouter(prefix="/projects", tags=["projects"])
+
+
+@router.get("/status", response_model=ModuleStatus)
+async def projects_status() -> ModuleStatus:
+    return _status()
+
+
+@router.get("", response_model=ApiResp[ListData[ProjectOut]])
+@respond
+async def project_list(
+    db: AsyncSession = Depends(get_read_session),
+) -> dict[str, object]:
+    async def load() -> dict[str, object]:
+        return {"items": await list_projects(db)}
+
+    ver = await collection_version("projects")
+    return await cached_read(make_key("projects:list", ver), 60, load)
+
+
+@router.get("/{project_id}", response_model=ApiResp[ProjectOut])
+@respond
+async def project_detail(
+    project_id: int, db: AsyncSession = Depends(get_read_session)
+) -> ProjectOut:
+    return await get_project_ex(db, project_id)
+
+
+@router.post("/applications", response_model=ApiResp[ProjectApplicationOut])
+@respond
+async def submit_app(
+    info: ProjectApplicationCreate,
+    cur: CurrentUser = RequireLevel("normal"),
+    db: AsyncSession = Depends(get_session),
+) -> ProjectApplicationOut:
+    return await submit_application(db, cur.id, info)
+
+
+@router.post(
+    "/applications/{app_id}/review", response_model=ApiResp[ProjectApplicationOut]
+)
+@respond
+async def review_app(
+    app_id: int,
+    body: ReviewProjectApplicationRequest,
+    _cur: Annotated[CurrentUser, require_admin],
+    db: AsyncSession = Depends(get_session),
+) -> ProjectApplicationOut:
+    result = await review_application(db, app_id, _cur.id, body)
+    await bump_collection_version("projects")
+    return result

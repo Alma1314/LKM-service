@@ -930,3 +930,72 @@ class ExamCertificate(Base):
 
     exam: Mapped[Exam] = relationship()
     user: Mapped[User] = relationship(back_populates="exam_certificates")
+
+
+class Project(Base):
+    __tablename__: str = "projects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(100), nullable=False)
+    summary: Mapped[str] = mapped_column(String(300), nullable=False)
+    description: Mapped[str] = mapped_column(String(500), nullable=False)
+    applicant_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    is_incubated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active"
+    )  # active | archived
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
+    )
+
+    applicant: Mapped[User] = relationship(foreign_keys=[applicant_id])
+    members: Mapped[list[ProjectMember]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+
+
+class ProjectApplication(Base):
+    __tablename__: str = "project_applications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    applicant_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(100), nullable=False)
+    summary: Mapped[str] = mapped_column(String(300), nullable=False)
+    description: Mapped[str] = mapped_column(String(500), nullable=False)
+    # 贡献成员清单：JSON 文本（[{display_name, role_in_project, user_id?}]），跨驱动用 Text
+    member_claims: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending"
+    )  # pending|approved|rejected
+    reviewer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    reviewed_at: Mapped[datetime.datetime | None] = mapped_column(
+        UTCDateTime, nullable=True
+    )
+
+    applicant: Mapped[User] = relationship(foreign_keys=[applicant_id])
+    reviewer: Mapped[User | None] = relationship(foreign_keys=[reviewer_id])
+
+
+class ProjectMember(Base):
+    __tablename__: str = "project_members"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )  # 空 = 非注册成员，仅 display_name
+    display_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    role_in_project: Mapped[str] = mapped_column(String(100), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    project: Mapped[Project] = relationship(back_populates="members")
+    user: Mapped[User | None] = relationship(foreign_keys=[user_id])

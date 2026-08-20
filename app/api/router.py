@@ -21,6 +21,7 @@ from app.modules.forum.router import router as forum_router
 from app.modules.health.router import router as health_router
 from app.modules.members.router import router as members_router
 from app.modules.points.router import router as points_router
+from app.modules.projects.router import router as projects_router
 from app.modules.qa.router import router as qa_router
 from app.modules.starhope.router import router as starhope_router
 from app.ws.router import router as ws_router
@@ -47,6 +48,7 @@ api_router.include_router(blog_router)
 api_router.include_router(articles_router)
 api_router.include_router(git_router)
 api_router.include_router(points_router)
+api_router.include_router(projects_router)
 api_router.include_router(qa_router)
 api_router.include_router(starhope_router)
 api_router.include_router(ws_router)
