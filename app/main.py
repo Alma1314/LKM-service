@@ -51,6 +51,7 @@ def _register_all_errors() -> None:
     import app.modules.files.errors
     import app.modules.forum.errors
     import app.modules.members.errors
+    import app.modules.points.errors
     import app.modules.starhope.errors
 
 

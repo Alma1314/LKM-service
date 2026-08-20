@@ -20,6 +20,7 @@ from app.modules.files.router import router as files_router
 from app.modules.forum.router import router as forum_router
 from app.modules.health.router import router as health_router
 from app.modules.members.router import router as members_router
+from app.modules.points.router import router as points_router
 from app.modules.starhope.router import router as starhope_router
 from app.ws.router import router as ws_router
 
@@ -44,5 +45,6 @@ api_router.include_router(files_notify_router)
 api_router.include_router(blog_router)
 api_router.include_router(articles_router)
 api_router.include_router(git_router)
+api_router.include_router(points_router)
 api_router.include_router(starhope_router)
 api_router.include_router(ws_router)

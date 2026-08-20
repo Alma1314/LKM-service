@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     TypeDecorator,
+    UniqueConstraint,
 )
 from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -528,6 +529,35 @@ class ArticleCategory(Base):
     )
 
     articles: Mapped[list[Article]] = relationship(back_populates="category")
+
+
+class UserBalance(Base):
+    __tablename__: str = "user_balances"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    balance: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
+    )
+
+
+class PointsLedger(Base):
+    __tablename__: str = "points_ledger"
+    # (user_id, ref_type, ref_id) 唯一：幂等——同一事件对同一用户不重复发分
+    __table_args__: tuple[Any, ...] = (
+        UniqueConstraint("user_id", "ref_type", "ref_id", name="uq_points_ledger_ref"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    delta: Mapped[int] = mapped_column(Integer, nullable=False)
+    balance_after: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(String(50), nullable=False)
+    ref_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    ref_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
 
 
 class Article(Base):
