@@ -25,12 +25,19 @@ ACCESS_TOKEN_MINUTES = 15
 _ADMIN_AUD = "lkm:admin"
 # cookie Path 须与浏览器发出的真实域路径一致（开发/默认 /api/v1/admin）
 COOKIE_PATH = f"/{settings.api_prefix.strip('/')}/admin"
+# 危险操作 step-up 2FA 的信任窗口：验证通过后 1 小时内不再重复要求
+MFA_TRUST_SECONDS = 3600
 
 
-def create_admin_access_token(user: User) -> str:
+def create_admin_access_token(
+    user: User, mfa_verified: bool = False, mfa_at: int | None = None
+) -> str:
     """签发后台 access token（15min）。独立 payload + type=admin + 专属 audience。
-    token_version 编入 payload：改密/登出提升版本号后旧 cookie 立即失效（与前台上前台逻辑一致）。"""
+    token_version 编入 payload：改密/登出提升版本号后旧 cookie 立即失效（与前台上前台逻辑一致）。
+    mfa_verified=True 时把 mfa 标记与验证时刻(mfa_at)编入 payload，供危险操作 step-up 校验。
+    mfa_at 可显式传入（admin refresh 继承原信任时刻），默认取当前时间。"""
     now = datetime.datetime.now(datetime.UTC)
+    verified_at = mfa_at if mfa_at is not None else int(now.timestamp())
     # payload 元素类型混杂（str/int/bool），用 object 收窄容器泛型，避免 Unknown
     payload: dict[str, object] = {
         "sub": str(user.id),
@@ -38,6 +45,8 @@ def create_admin_access_token(user: User) -> str:
         "type": "admin",
         "aud": _ADMIN_AUD,
         "token_version": int(user.token_version),
+        "mfa": mfa_verified,
+        "mfa_at": verified_at if mfa_verified else None,
         "iat": int(now.timestamp()),
         "exp": int(
             (now + datetime.timedelta(minutes=ACCESS_TOKEN_MINUTES)).timestamp()
@@ -131,6 +140,33 @@ async def get_current_admin(
 
 
 require_admin = Depends(get_current_admin)
+
+
+async def get_current_admin_2fa(
+    request: Request,
+    admin: CurrentUser = Depends(get_current_admin),
+) -> CurrentUser:
+    """后台危险操作依赖：在有效 admin 会话之上，另要求本会话已通过 2FA 且信任未过期（1 小时）。
+
+    校验失败抛 CommonErr.MFA_REQUIRED，前端据此弹出 2FA 验证（POST /admin/auth/2fa）后重试。
+    """
+    token = _read_admin_cookie(request)
+    if not token:
+        raise BizError(CommonErr.MFA_REQUIRED, "MFA required")
+    payload = _decode_admin_access(token)
+    if not payload.get("mfa"):
+        raise BizError(CommonErr.MFA_REQUIRED, "MFA required")
+    mfa_at = payload.get("mfa_at")
+    if mfa_at is None:
+        raise BizError(CommonErr.MFA_REQUIRED, "MFA required")
+    tried_at = datetime.datetime.fromtimestamp(float(mfa_at), tz=datetime.UTC)
+    trusted_until = tried_at + datetime.timedelta(seconds=MFA_TRUST_SECONDS)
+    if trusted_until < datetime.datetime.now(datetime.UTC):
+        raise BizError(CommonErr.MFA_REQUIRED, "MFA trust expired")
+    return admin
+
+
+require_admin_2fa = Depends(get_current_admin_2fa)
 
 
 def get_real_client_ip(request: Request) -> str:

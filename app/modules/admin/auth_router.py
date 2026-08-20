@@ -5,6 +5,7 @@
 import datetime
 from typing import Any
 
+import jwt
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
@@ -19,20 +20,53 @@ from app.modules.auth.deps import CurrentUser
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import RefreshToken
 from app.modules.auth.security import verifypwd
+from app.modules.auth.service_2fa import verify_user_totp
 from app.modules.auth.service_auth import generate_refresh_token, hash_refresh_token
 from app.modules.auth.service_verify import check_code_rate_limit
 
 from .deps import (
+    _ADMIN_AUD,
     COOKIE_NAME,
     COOKIE_PATH,
+    MFA_TRUST_SECONDS,
     REFRESH_NAME,
     create_admin_access_token,
     get_real_client_ip,
     require_admin,
 )
-from .schemas import AdminLoginReq, AdminUserOut
+from .schemas import AdminLoginReq, AdminUserOut, AdminVerify2FARequest
 
 router = APIRouter(prefix="/admin", tags=["admin-auth"])
+
+
+def _current_mfa_trust(request: Request) -> tuple[bool, int | None]:
+    """解析当前 access cookie 的 2FA 信任状态，供 refresh 继承（避免信任被 15min cookie 过期截断）。
+
+    返回 (mfa_verified, mfa_at)。token 缺失/失效/非 admin/过期一律视为未信任。
+    """
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        return False, None
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_algorithm],
+            audience=_ADMIN_AUD,
+        )
+    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, jwt.DecodeError):
+        return False, None
+    if payload.get("type") != "admin" or not payload.get("mfa"):
+        return False, None
+    mfa_at = payload.get("mfa_at")
+    if mfa_at is None:
+        return False, None
+    trusted_until = datetime.datetime.fromtimestamp(
+        float(mfa_at), tz=datetime.UTC
+    ) + datetime.timedelta(seconds=MFA_TRUST_SECONDS)
+    if trusted_until < datetime.datetime.now(datetime.UTC):
+        return False, None
+    return True, int(mfa_at)
 
 
 def _set_access_cookie(resp: Response, token: str) -> None:
@@ -169,7 +203,9 @@ async def admin_refresh(
         return resp_json(CommonErr.FORBIDDEN, detail="会话无效")
 
     # 会话体在 commit 前快照（避免 commit 后 expire 引发异步重载）
-    access_token = create_admin_access_token(user)
+    # 继承当前 access cookie 的 2FA 信任，避免 15min cookie 轮换打断 1h 信任窗口
+    mfa_ok, mfa_at = _current_mfa_trust(request)
+    access_token = create_admin_access_token(user, mfa_verified=mfa_ok, mfa_at=mfa_at)
     payload = _admin_user_payload(user)
 
     new_refresh = generate_refresh_token()
@@ -178,7 +214,7 @@ async def admin_refresh(
             user_id=user.id,
             token_hash=hash_refresh_token(new_refresh),
             kind="admin",
-            mfa_verified=False,
+            mfa_verified=mfa_ok,
             expires_at=now_iso()
             + datetime.timedelta(days=settings.refresh_token_expire_days),
             revoked_at=None,
@@ -213,6 +249,44 @@ async def admin_logout(
             await db.commit()
     resp = resp_json(CommonErr.OK, data={"ok": True})
     _clear_cookies(resp)
+    return resp
+
+
+@router.post("/auth/2fa")
+async def admin_verify_2fa(
+    body: AdminVerify2FARequest,
+    request: Request,
+    cur: CurrentUser = require_admin,
+    db: AsyncSession = Depends(get_session),
+) -> JSONResponse:
+    """危险操作 step-up：验证当前 admin 的 TOTP，通过后签发带 2FA 信任的新 access cookie。
+
+    信任窗口 1 小时（MFA_TRUST_SECONDS），期间危险操作端点（require_admin_2fa）不再重复要求。
+    未通过则不更新信任，仅抛 TOTP_CODE_INVALID。
+    """
+    await verify_user_totp(db, cur.id, body.code)
+
+    user = await get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == cur.id)
+    mfa_at = int(datetime.datetime.now(datetime.UTC).timestamp())
+    access_token = create_admin_access_token(user, mfa_verified=True, mfa_at=mfa_at)
+    payload = _admin_user_payload(user)
+
+    # 同步更新当前会话 refresh 记录的 mfa 状态（保持一致性，供审计/未来扩展）
+    raw_refresh = request.cookies.get(REFRESH_NAME)
+    if raw_refresh:
+        result = await db.execute(
+            select(RefreshToken).where(
+                RefreshToken.token_hash == hash_refresh_token(raw_refresh),
+                RefreshToken.kind == "admin",
+            )
+        )
+        stored_refresh = result.scalars().first()
+        if stored_refresh is not None and stored_refresh.revoked_at is None:
+            stored_refresh.mfa_verified = True
+    await db.commit()
+
+    resp = resp_json(CommonErr.OK, data={**payload, "mfa_verified": True, "mfa_at": mfa_at})
+    _set_access_cookie(resp, access_token)
     return resp
 
 

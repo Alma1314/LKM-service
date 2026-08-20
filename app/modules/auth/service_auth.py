@@ -119,19 +119,6 @@ async def issue_session_tokens(
     return access_token, raw_refresh
 
 
-async def _enabled_totp(db: AsyncSession, user_id: int) -> TOTP | None:
-    """取用户已启用的 TOTP 记录，供本模块判断"是否开启 2FA"复用。"""
-    return (
-        (
-            await db.execute(
-                select(TOTP).where(TOTP.user_id == user_id, TOTP.enabled.is_(True))
-            )
-        )
-        .scalars()
-        .first()
-    )
-
-
 async def _create_auth_response(
     db: AsyncSession, user: User, requires_2fa: bool = False
 ) -> dict[str, Any]:
@@ -501,11 +488,10 @@ async def finalize_auth_response(db: AsyncSession, user: User) -> dict[str, Any]
     if admin_setup is not None:
         return admin_setup
 
-    requires_2fa = str(user.account_level) in ("normal", "admin") and bool(
-        await _enabled_totp(db, user.id)
-    )
-
-    return await _create_auth_response(db, user, requires_2fa=requires_2fa)
+    # 登录不再每次强制 2FA（对齐 GitHub 缓动）：仅"首次强制设置"由上面
+    # _check_admin_totp_required 处理；已启用 TOTP 的普通登录直接发会话令牌，
+    # 危险操作时再由 admin 后台 step-up 校验（见 require_admin_2fa）。
+    return await _create_auth_response(db, user, requires_2fa=False)
 
 
 async def login_password(
@@ -709,12 +695,8 @@ async def verify_magic_link(
         if not totp or not totp.enabled:
             raise BizError(AuthErr.TOTP_SETUP_REQUIRED)
 
-    # 与 login_password 相同的 2FA 检查
-    requires_2fa = user.account_level in ("normal", "admin") and bool(
-        await _enabled_totp(db, user.id)
-    )
-
-    return await _create_auth_response(db, user, requires_2fa=requires_2fa)
+    # 与 login_password 相同：登录不再每次强制 2FA，直接发会话令牌。
+    return await _create_auth_response(db, user, requires_2fa=False)
 
 
 async def upgrade_to_normal(db: AsyncSession, user: User) -> None:
@@ -763,12 +745,8 @@ async def refresh_access_token(db: AsyncSession, raw_refresh: str) -> dict[str, 
         options=(selectinload(User.profile),),
     )
 
-    # 管理员用户的刷新令牌会话必须经过 MFA 认证
-    if user.account_level == "admin" and not stored.mfa_verified:
-        raise BizError(
-            AuthErr.TOKEN_INVALID, "Admin refresh token requires MFA assurance"
-        )
-
+    # 登录不再强制 admin MFA（对齐 GitHub 缓动）：刷新会话保持原有保证级别即可，
+    # 危险操作的安全由 admin 后台 step-up（require_admin_2fa）在请求时校验。
     access_token, raw_new = await issue_session_tokens(
         db, user, mfa_verified=stored.mfa_verified
     )

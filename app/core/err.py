@@ -52,6 +52,7 @@ class CommonErr(ErrCode):
     INVALID_INPUT = NS_COMMON.err(1)
     FORBIDDEN = NS_COMMON.err(2)
     INTERNAL_ERROR = NS_COMMON.err(3)
+    MFA_REQUIRED = NS_COMMON.err(4)  # 危险操作需重新完成 2FA（step-up）
 
 
 ERRTABLE: dict[ErrCode, tuple[int, str]] = {}
@@ -70,6 +71,7 @@ register(
         CommonErr.INVALID_INPUT: (422, "Invalid input"),
         CommonErr.FORBIDDEN: (403, "Forbidden"),
         CommonErr.INTERNAL_ERROR: (500, "Internal server error"),
+        CommonErr.MFA_REQUIRED: (401, "MFA required"),
     }
 )
 

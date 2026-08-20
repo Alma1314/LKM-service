@@ -61,13 +61,25 @@ def _redis_settings() -> RedisSettings:
 
 async def run_send_worker() -> None:
     """发送队列专属 worker（compose worker-send 入口）。"""
-    w = Worker(SEND_FUNCTIONS, queue_name=SEND_QUEUE, max_tries=5, max_jobs=10)
+    w = Worker(
+        SEND_FUNCTIONS,
+        queue_name=SEND_QUEUE,
+        redis_settings=_redis_settings(),
+        max_tries=5,
+        max_jobs=10,
+    )
     await w.async_run()
 
 
 async def run_notify_worker() -> None:
     """对象事件通知队列专属 worker（compose worker-notify 入口，后续 Task 4 加入）。"""
-    w = Worker(NOTIFY_FUNCTIONS, queue_name=NOTIFY_QUEUE, max_tries=5, max_jobs=10)
+    w = Worker(
+        NOTIFY_FUNCTIONS,
+        queue_name=NOTIFY_QUEUE,
+        redis_settings=_redis_settings(),
+        max_tries=5,
+        max_jobs=10,
+    )
     await w.async_run()
 
 
@@ -76,6 +88,7 @@ async def run_default_worker() -> None:
     w = Worker(
         [],
         queue_name=DEFAULT_QUEUE,
+        redis_settings=_redis_settings(),
         max_tries=5,
         max_jobs=10,
         cron_jobs=[
@@ -84,7 +97,7 @@ async def run_default_worker() -> None:
             ),  # 每小时整点清扫
             cron(
                 reconcile_blog_repos.reconcile_blog_repos,
-                weekday="thu", hour=4, minute=0,
+                weekday="thurs", hour=4, minute=0,
             ),  # 每周四 04:00 对账孤儿博客仓库
         ],
     )

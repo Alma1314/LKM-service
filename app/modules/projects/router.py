@@ -11,7 +11,7 @@ from app.core.cache import (
 )
 from app.core.err import respond
 from app.db.session import get_read_session, get_session
-from app.modules.admin.deps import require_admin
+from app.modules.admin.deps import require_admin_2fa
 from app.modules.auth.deps import CurrentUser, RequireLevel
 from app.modules.common import ApiResp, ListData, ModuleStatus
 from app.modules.projects.schemas import (
@@ -85,7 +85,7 @@ async def submit_app(
 async def review_app(
     app_id: int,
     body: ReviewProjectApplicationRequest,
-    _cur: Annotated[CurrentUser, require_admin],
+    _cur: Annotated[CurrentUser, require_admin_2fa],
     db: AsyncSession = Depends(get_session),
 ) -> ProjectApplicationOut:
     result = await review_application(db, app_id, _cur.id, body)

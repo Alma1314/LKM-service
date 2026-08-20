@@ -12,7 +12,7 @@ from app.core.cache import (
 )
 from app.core.err import respond
 from app.db.session import get_read_session, get_session
-from app.modules.admin.deps import require_admin
+from app.modules.admin.deps import require_admin, require_admin_2fa
 from app.modules.auth.deps import CurrentUser, RequireLevel, get_current_user
 from app.modules.boards.errors import BoardErr  # noqa: F401  (副作用注册已由 main 统一)
 from app.modules.boards.schemas import (
@@ -38,6 +38,8 @@ from app.modules.common import ApiResp, ListData, ModuleStatus
 
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
 AdminDep = Annotated[CurrentUser, require_admin]
+# 危险操作（审核通过/驳回等破坏性写操作）：需已通过 2FA 且信任未过期（1 小时）
+Admin2FADep = Annotated[CurrentUser, require_admin_2fa]
 
 
 def _status() -> ModuleStatus:
@@ -112,7 +114,7 @@ async def submit_app(
 async def review_app(
     app_id: int,
     body: ReviewBoardApplicationRequest,
-    _cur: AdminDep,
+    _cur: Admin2FADep,
     db: AsyncSession = Depends(get_session),
 ) -> BoardApplicationOut:
     result = await review_application(db, app_id, _cur.id, body)
