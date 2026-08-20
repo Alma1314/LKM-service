@@ -7,7 +7,7 @@ from arq.connections import RedisSettings
 from arq.worker import Worker
 
 from app.core.config import settings
-from app.tasks import cleanup, notify, send
+from app.tasks import cleanup, notify, reconcile_blog_repos, send
 
 
 def _ensure_models() -> None:
@@ -82,6 +82,10 @@ async def run_default_worker() -> None:
             cron(
                 cleanup.cleanup_expired_uploads, hour=set(range(24)), minute=0
             ),  # 每小时整点清扫
+            cron(
+                reconcile_blog_repos.reconcile_blog_repos,
+                weekday="thu", hour=4, minute=0,
+            ),  # 每周四 04:00 对账孤儿博客仓库
         ],
     )
     await w.async_run()

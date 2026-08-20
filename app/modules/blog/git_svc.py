@@ -221,3 +221,30 @@ def write_file(
         ).strip()
 
         _run(repo_name, "update-ref", "refs/heads/master", commit)
+
+
+def revparse_or_none(repo_name: str) -> str | None:
+    """返回 refs/heads/master 当前 SHA；仓库无提交时返回 None。"""
+    if not ensure_repo_has_commits(repo_name):
+        return None
+    out = _run(repo_name, "rev-parse", "HEAD").strip()
+    return out or None
+
+
+def diff_tree_names(
+    repo_name: str, old_sha: str | None, new_sha: str
+) -> list[str]:
+    """返回 old_sha..new_sha 之间变更文件的路径列表（重命名取新路径）。
+
+    old_sha 为空（首 push/空仓库前置）时给出 new_sha 树里全部文件路径。
+
+    调用方需注意并发：diff 与后续 read_file("HEAD:path") 之间若恰有另一 push 落库，
+    HEAD:path 可能读到比本 diff 区间更新的内容；receive-pack 同步返回 + DB 权威的
+    push_at/updated_at 规则可自愈，这里仅记并发窗口。
+    """
+    if old_sha:
+        args = ["diff-tree", "--name-only", "-r", "--no-commit-id", old_sha, new_sha]
+    else:
+        args = ["ls-tree", "-r", "--name-only", new_sha]
+    out = _run(repo_name, *args)
+    return [line.strip() for line in out.splitlines() if line.strip()]

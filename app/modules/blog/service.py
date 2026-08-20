@@ -12,6 +12,7 @@ from app.db.models import (
     ArticleCategory,
     BlogComment,
     BlogContent,
+    BlogRepoQuarantine,
     BlogSeries,
     BlogStar,
     Profile,
@@ -333,6 +334,20 @@ async def delete_series(db: AsyncSession, series_id: int, user_id: int) -> None:
         raise BizError(CommonErr.FORBIDDEN)
 
     await asyncio.to_thread(git_svc.delete_repo, series.repo_name)
+    # 正常删除系列时，同步清理可能的隔离台账(幂等:无则忽略)
+    qrow = (
+        (
+            await db.execute(
+                select(BlogRepoQuarantine).where(
+                    BlogRepoQuarantine.repo_name == series.repo_name
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if qrow is not None:
+        await db.delete(qrow)
     await db.delete(series)
     await db.flush()
 

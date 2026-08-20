@@ -4,17 +4,21 @@ import binascii
 import contextlib
 import logging
 import os
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.models import User
-from app.db.session import get_read_session
+from app.db.models import BlogSeries, User
+from app.db.session import get_read_session, new_session
 from app.modules.auth.security import verifypwd
+from app.modules.blog import backfill, git_svc
 
 logger = logging.getLogger(__name__)
+
+_session_factory = new_session  # 缝：测试可替换为注入会话
 
 git_router = APIRouter(prefix="/blog/git", tags=["blog-git"])
 
@@ -67,6 +71,55 @@ def _parse_git_response(stdout: bytes) -> Response:
     )
 
 
+def _is_receive_pack(request: Request) -> bool:
+    """仅 POST git-receive-pack 视为写（push）；读/其他不触发回填。"""
+    if request.method.lower() != "post":
+        return False
+    path = request.url.path
+    return "git-receive-pack" in path
+
+
+async def _resolve_series_id(db: AsyncSession, repo_name: str) -> int | None:
+    """repo_name → blog_series.id；无记录（孤儿仓库）返回 None。"""
+    row = (
+        (
+            await db.execute(
+                select(BlogSeries.id).where(BlogSeries.repo_name == repo_name)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    return row
+
+
+async def maybe_backfill_after_push(repo_name: str, old_sha: str | None) -> None:
+    """http-backend 成功后调用；push 内容回填 blog_content，失败只记日志不阻塞。
+
+    自建独立写会话并 commit（get_read_session 不 commit 会丢弃 flush）；隔离此写路径，
+    http-backend 代理本身保持只读。孤儿仓库(无 blog_series)跳过。
+    """
+    db = await _session_factory()
+    try:
+        series_id = await _resolve_series_id(db, repo_name)
+        if series_id is None:
+            logger.warning("blog push 命中孤儿仓库(无 blog_series), 跳过回填: %s", repo_name)
+            return
+        await backfill.backfill_series_from_git(
+            db,
+            repo_name,
+            series_id,
+            old_sha,
+            push_at=datetime.now(UTC),
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception("blog push 回填失败(不阻塞): repo=%s", repo_name)
+    finally:
+        await db.close()
+
+
 async def _stream_to_stdin(proc: asyncio.subprocess.Process, request: Request) -> None:
     """把请求体流式写入 git http-backend 的 stdin，写完关闭 stdin。"""
     assert proc.stdin is not None
@@ -94,6 +147,11 @@ async def git_http_backend(
 
     if not await asyncio.to_thread(os.path.isdir, repo_path):
         raise HTTPException(status_code=404, detail="Repository not found")
+
+    is_push = _is_receive_pack(request)
+    old_sha = None
+    if is_push:
+        old_sha = await asyncio.to_thread(git_svc.revparse_or_none, repo_name)
 
     env = os.environ.copy()
     env["GIT_PROJECT_ROOT"] = root
@@ -145,4 +203,7 @@ async def git_http_backend(
         await proc.wait()
         raise HTTPException(status_code=504, detail="Git operation timed out") from None
 
-    return _parse_git_response(stdout)
+    resp = _parse_git_response(stdout)
+    if is_push and resp.status_code < 400:
+        await maybe_backfill_after_push(repo_name, old_sha)
+    return resp

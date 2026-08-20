@@ -42,4 +42,12 @@ BLOG_TABLE_PLAN = {
         "created_at",
         "updated_at",
     ],
+    "blog_repo_quarantine": [
+        "id",
+        "repo_name",
+        "src_dir",
+        "quarantined_at",
+        "created_at",
+        "updated_at",
+    ],
 }

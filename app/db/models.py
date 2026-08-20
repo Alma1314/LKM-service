@@ -446,6 +446,32 @@ class BlogContent(Base):
     series: Mapped[BlogSeries] = relationship()
 
 
+class BlogRepoQuarantine(Base):
+    """被周对账隔离的孤儿 git 仓库台账（隔离=仅入库不移动目录）。
+
+    repo_name 对应 ``<repo_name>.git``；src_dir 记录隔离前绝对路径便于恢复。
+    对账按 quarantined_at 年龄超阈值才物理删除目录。delete_series 正常删仓库时同步清行。
+    """
+
+    __tablename__: str = "blog_repo_quarantine"
+    __table_args__: tuple[Any, ...] = (
+        UniqueConstraint("repo_name", name="uq_blog_repo_quarantine_repo_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    repo_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    src_dir: Mapped[str] = mapped_column(String(500), nullable=False)
+    quarantined_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
+    )
+
+
 class StarHopeQuestion(Base):
     __tablename__: str = "starhope_questions"
 

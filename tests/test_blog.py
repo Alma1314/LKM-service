@@ -220,6 +220,30 @@ class TestBlogSeries:
 
         assert exc.value.errcode == CommonErr.FORBIDDEN
 
+    async def should_clean_quarantine_on_delete(
+        self, db: AsyncSession, blog_dir: str
+    ) -> None:
+        from app.db.models import BlogRepoQuarantine
+
+        user_id = await _user(db)
+        series = await _series(db, user_id=user_id)
+        # 预置一条隔离记录
+        db.add(
+            BlogRepoQuarantine(
+                repo_name=series.repo_name,
+                src_dir=os.path.join(blog_dir, f"{series.repo_name}.git"),
+                quarantined_at=__import__("datetime").datetime.now(
+                    __import__("datetime").timezone.utc
+                ),
+            )
+        )
+        await db.flush()
+
+        await delete_series(db, series.id, user_id)
+
+        rows = (await db.execute(select(BlogRepoQuarantine))).scalars().all()
+        assert rows == []
+
 
 # ---- stars ----
 
