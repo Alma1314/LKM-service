@@ -1,23 +1,27 @@
-"""Github OAuth 服务 —— 授权 URL、处理回调、绑定账户。"""
+"""OAuth 服务 —— 授权 URL、处理回调、绑定账户。
+
+账户关联逻辑（查绑定 → 按邮箱找用户 → 建新用户）与提供商无关，
+提供商只负责 authorize_url / exchange_code / fetch_user 三个动作。
+"""
 
 import secrets
-from typing import Any, cast
+from typing import Any
 
-import httpx
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.config import settings
 from app.core.err import BizError
-from app.db.models import Profile, User, expires_at, now_iso
+from app.db.models import User, expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import OAuthState, UserOAuth
+from app.modules.auth.providers.github import GithubOAuth
+from app.modules.auth.providers.oauth import get_provider
 from app.modules.auth.service_auth import (
+    create_user_with_profile,
+    ensure_unique_username,
     finalize_auth_response,
-    handle_duplicate_user_error,
     log_audit,
     upgrade_to_normal,
 )
@@ -47,101 +51,55 @@ async def consume_oauth_state(db: AsyncSession, state: str, purpose: str) -> OAu
     )
     if not consumed:
         raise BizError(AuthErr.OAUTH_PROVIDER_ERROR, "Invalid or expired OAuth state")
-    row = (
-        (await db.execute(select(OAuthState).where(OAuthState.state == state)))
-        .scalars()
-        .first()
+    row = await get_or_raise(
+        db,
+        OAuthState,
+        AuthErr.OAUTH_PROVIDER_ERROR,
+        OAuthState.state == state,
+        detail="Invalid or expired OAuth state",
     )
-    if not row:
-        raise BizError(AuthErr.OAUTH_PROVIDER_ERROR, "Invalid or expired OAuth state")
     return row
 
 
 async def get_github_auth_url(
     db: AsyncSession, purpose: str = "login", user_id: int | None = None
 ) -> str:
+    """兼容入口：GitHub 授权 URL。"""
+    return await get_oauth_auth_url(db, GithubOAuth.name, purpose, user_id)
+
+
+async def get_oauth_auth_url(
+    db: AsyncSession,
+    provider_name: str,
+    purpose: str = "login",
+    user_id: int | None = None,
+) -> str:
     state = await generate_oauth_state(db, purpose, user_id)
-    return (
-        f"https://github.com/login/oauth/authorize"
-        f"?client_id={settings.github_client_id}"
-        f"&redirect_uri={settings.github_redirect_uri}"
-        f"&scope=user:email"
-        f"&state={state}"
-    )
-
-
-async def _exchange_github_token(code: str) -> str:
-    """将 OAuth 授权码兑换为 GitHub 访问令牌。"""
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            "https://github.com/login/oauth/access_token",
-            data={
-                "client_id": settings.github_client_id,
-                "client_secret": settings.github_client_secret,
-                "code": code,
-            },
-            headers={"Accept": "application/json"},
-        )
-        data = resp.json()
-        access_token = data.get("access_token")
-        if not access_token:
-            raise BizError(
-                AuthErr.OAUTH_PROVIDER_ERROR,
-                data.get("error_description", "No access token"),
-            )
-        return access_token
-
-
-async def _get_github_user(access_token: str) -> dict[str, Any]:
-    """获取 GitHub 用户资料和主邮箱。"""
-    headers = {"Authorization": f"token {access_token}"}
-    async with httpx.AsyncClient() as client:
-        # 获取用户资料
-        user_resp = await client.get("https://api.github.com/user", headers=headers)
-        user_data = user_resp.json()
-        if "id" not in user_data:
-            raise BizError(AuthErr.OAUTH_PROVIDER_ERROR, "Failed to fetch GitHub user")
-
-        # 获取邮箱列表
-        emails_resp = await client.get(
-            "https://api.github.com/user/emails", headers=headers
-        )
-        emails_data = emails_resp.json()
-        primary_email: str | None = None
-        if isinstance(emails_data, list):
-            entries = cast(list[Any], emails_data)
-            for entry in entries:
-                if entry.get("primary") and entry.get("verified"):
-                    primary_email = entry["email"]
-                    break
-            # 备选方案：第一个已验证的邮箱
-            if primary_email is None:
-                for entry in entries:
-                    if entry.get("verified"):
-                        primary_email = entry["email"]
-                        break
-
-        return {
-            "provider_user_id": str(user_data["id"]),
-            "provider_email": primary_email,
-            "login": user_data.get("login", ""),
-        }
+    return get_provider(provider_name).authorize_url(state)
 
 
 async def handle_github_callback(
     db: AsyncSession, code: str, state: str
 ) -> dict[str, Any]:
+    """兼容入口：GitHub 登录回调。"""
+    return await handle_oauth_callback(db, GithubOAuth.name, code, state)
+
+
+async def handle_oauth_callback(
+    db: AsyncSession, provider_name: str, code: str, state: str
+) -> dict[str, Any]:
+    provider = get_provider(provider_name)
     await consume_oauth_state(db, state, "login")  # login 场景无需用户归属
-    access_token = await _exchange_github_token(code)
-    gh_user = await _get_github_user(access_token)
+    access_token = await provider.exchange_code(code)
+    info = await provider.fetch_user(access_token)
 
     # 1. 现有 OAuth 绑定
     oauth = (
         (
             await db.execute(
                 select(UserOAuth).where(
-                    UserOAuth.provider == "github",
-                    UserOAuth.provider_user_id == gh_user["provider_user_id"],
+                    UserOAuth.provider == provider.name,
+                    UserOAuth.provider_user_id == info.provider_user_id,
                 )
             )
         )
@@ -158,93 +116,67 @@ async def handle_github_callback(
         )
         return await _oauth_login_response(db, user)
 
-    # 2. 通过邮箱查找现有用户 -> 绑定
-    if gh_user["provider_email"]:
-        user = (
-            (
-                await db.execute(
-                    select(User).where(User.email == gh_user["provider_email"])
-                )
-            )
+    # 2. 邮箱已被注册 → 拒绝自动绑定登录（需显式绑定后登录，防账号接管）
+    if info.provider_email:
+        existing = (
+            (await db.execute(select(User).where(User.email == info.provider_email)))
             .scalars()
             .first()
         )
-        if user:
-            db.add(
-                UserOAuth(
-                    user_id=int(user.id),
-                    provider="github",
-                    provider_user_id=gh_user["provider_user_id"],
-                    provider_email=gh_user["provider_email"],
-                )
+        if existing:
+            raise BizError(
+                AuthErr.OAUTH_EMAIL_ALREADY_REGISTERED,
+                "该邮箱已注册，请用密码登录或先在设置中绑定 GitHub",
             )
-            await db.flush()
-            await upgrade_to_normal(db, user)
-            return await _oauth_login_response(db, user)
 
     # 3. 创建新用户
-    username = gh_user["login"]
-    # 确保唯一性
-    suffix = 1
-    base = username
-    while (
-        (await db.execute(select(User).where(User.username == username)))
-        .scalars()
-        .first()
-    ):
-        username = f"{base}{suffix}"
-        suffix += 1
-
-    user = User(
+    username = await ensure_unique_username(db, info.username)
+    user = await create_user_with_profile(
+        db,
         username=username,
-        email=gh_user["provider_email"],
+        email=info.provider_email,
         hashed_password="",
         account_level="normal",
     )
-    db.add(user)
-    try:
-        await db.flush()
-    except IntegrityError as exc:
-        handle_duplicate_user_error(exc)
-
-    db.add(Profile(user_id=int(user.id), role="member"))
-    await db.flush()
 
     db.add(
         UserOAuth(
             user_id=int(user.id),
-            provider="github",
-            provider_user_id=gh_user["provider_user_id"],
-            provider_email=gh_user["provider_email"],
+            provider=provider.name,
+            provider_user_id=info.provider_user_id,
+            provider_email=info.provider_email,
         )
     )
     await db.flush()
 
-    await log_audit(db, user.id, "oauth_login", "github")
+    await log_audit(db, user.id, "oauth_login", provider.name)
 
     return await _oauth_login_response(db, user)
 
 
-async def _oauth_login_response(db: AsyncSession, user: User) -> dict[str, Any]:
-    """检查 TOTP 要求并返回认证响应。"""
-    return await finalize_auth_response(db, user)
-
-
 async def bind_github(db: AsyncSession, code: str, state: str) -> dict[str, Any]:
-    """绑定 GitHub 到发起绑定的用户（user_id 由 OAuth state 记录携带，回调无需 JWT）。"""
+    """兼容入口：绑定 GitHub 到发起绑定的用户（user_id 由 OAuth state 记录携带）。"""
+    return await bind_oauth(db, GithubOAuth.name, code, state)
+
+
+async def bind_oauth(
+    db: AsyncSession, provider_name: str, code: str, state: str
+) -> dict[str, Any]:
+    """绑定 OAuth 账户到发起绑定的用户（user_id 由 OAuth state 记录携带，回调无需 JWT）。"""
+    provider = get_provider(provider_name)
     st = await consume_oauth_state(db, state, "bind")
     user_id = st.user_id
     if not user_id:
         raise BizError(AuthErr.OAUTH_PROVIDER_ERROR, "Bind session lost its owner")
-    access_token = await _exchange_github_token(code)
-    gh_user = await _get_github_user(access_token)
+    access_token = await provider.exchange_code(code)
+    info = await provider.fetch_user(access_token)
 
     existing_oauth = (
         (
             await db.execute(
                 select(UserOAuth).where(
-                    UserOAuth.provider == "github",
-                    UserOAuth.provider_user_id == gh_user["provider_user_id"],
+                    UserOAuth.provider == provider.name,
+                    UserOAuth.provider_user_id == info.provider_user_id,
                 )
             )
         )
@@ -254,7 +186,7 @@ async def bind_github(db: AsyncSession, code: str, state: str) -> dict[str, Any]
     if existing_oauth:
         raise BizError(
             AuthErr.OAUTH_EMAIL_TAKEN,
-            "This Github account is already bound to another user",
+            f"This {provider.name.capitalize()} account is already bound to another user",
         )
 
     user = await get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == user_id)
@@ -262,13 +194,18 @@ async def bind_github(db: AsyncSession, code: str, state: str) -> dict[str, Any]
     db.add(
         UserOAuth(
             user_id=int(user.id),
-            provider="github",
-            provider_user_id=gh_user["provider_user_id"],
-            provider_email=gh_user["provider_email"],
+            provider=provider.name,
+            provider_user_id=info.provider_user_id,
+            provider_email=info.provider_email,
         )
     )
     await db.flush()
 
     await upgrade_to_normal(db, user)
 
-    return {"message": "Github account bound"}
+    return {"message": f"{provider.name.capitalize()} account bound"}
+
+
+async def _oauth_login_response(db: AsyncSession, user: User) -> dict[str, Any]:
+    """检查 TOTP 要求并返回认证响应。"""
+    return await finalize_auth_response(db, user)

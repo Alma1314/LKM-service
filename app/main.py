@@ -1,86 +1,147 @@
-import sys
-from collections.abc import AsyncIterator
+import asyncio
+import logging
+import time
+import uuid
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette.responses import Response
+from strawberry.fastapi import GraphQLRouter
 
 from app.api.router import api_router
+from app.core import logging as logger
+from app.core import redis as redis_client
+from app.core.apm import init_sentry
 from app.core.config import settings
 from app.core.err import BizError, map_err, resp_json
 from app.db.init_db import init_db
-from app.db.session import get_session
+from app.db.session import (
+    AsyncSession,
+    dispose_engine,
+)
+from app.db.session import (
+    get_read_session as get_graphql_session,  # GraphQL 仅 Query(纯读)，避免空提交
+)
+from app.modules.auth.service_passkey import cleanup_expired_challenges
+from app.modules.forum.graphql import GraphQLContext
+from app.modules.forum.graphql import schema as forum_graphql_schema
+from app.ws.manager import manager
+
+request_logger = logging.getLogger("lkm.http")
 
 
-def _verify_production_secrets() -> None:
+def _register_all_errors() -> None:
+    """错误码注册收敛：集中 import 各模块 errors 使 `register()` 副作用必达。
+    防止漏配错误码导致 map_err 转 500。新增模块的 ErrCode 必须在此登记。导入放函数内
+    （非模块顶层 `import app.x`），避免在 main 模块命名空间绑定 `app` 包名，与
+    模块级 `app = create_app()` 冲突。
     """
-    仅显式测试环境 (LKM_ENV=test 或 PYTEST_RUNNING) 允许使用弱密钥继续运行。
-    其他所有模式都必须为 JWT_SECRET 和 TOTP 加密密钥设置强且非默认的值。
-    """
-    import os
-
-    if os.environ.get("LKM_ENV") == "test" or os.environ.get("PYTEST_RUNNING"):
-        return
-
-    if settings.jwt_secret.startswith("change-me") or len(settings.jwt_secret) < 32:
-        print(
-            "ERROR: Default or weak JWT secret detected. "
-            "Set LKM_JWT_SECRET to a random 64+ character value.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    # JWT 签名密钥必须与 TOTP 加密密钥分开
-    if settings.jwt_secret == getattr(settings, "totp_encryption_key", None):
-        print(
-            "ERROR: JWT_SECRET must be different from TOTP encryption key.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    # TOTP 加密密钥不得使用默认值
-    totp_key = getattr(settings, "totp_encryption_key", "")
-    if not totp_key or totp_key.startswith("change-me") or len(totp_key) < 32:
-        print(
-            "ERROR: Default or weak TOTP encryption key detected. "
-            "Set LKM_TOTP_ENCRYPTION_KEY to a random 64+ character value.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    import app.modules.articles.errors
+    import app.modules.auth.errors
+    import app.modules.blog.errors
+    import app.modules.boards.errors
+    import app.modules.columns.errors
+    import app.modules.exam.errors
+    import app.modules.files.errors
+    import app.modules.forum.errors
+    import app.modules.members.errors
+    import app.modules.points.errors
+    import app.modules.projects.errors
+    import app.modules.qa.errors
+    import app.modules.starhope.errors
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    import asyncio
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
+    # 可观测基座：结构化日志 + Sentry APM（均幂等；DSN 空则不加载）
+    logger.setup_logging()
+    init_sentry()
 
-    _verify_production_secrets()
-    init_db()
+    await init_db()
 
-    from app.modules.files.service import build_refer_cache
-    build_refer_cache(get_session())
+    # 启动即探测 Redis，便于日志暴露其状态（未配置/不可用时静默降级为 None）
+    await redis_client.get_redis()
 
-    from app.modules.auth.service_passkey import cleanup_expired_challenges
+    # 确保成员头像静态目录存在（WebP 由运维/部署脚本放入）
+    # mkdir 同步，放 to_thread 避免阻塞事件循环（ASYNC240）
+    await asyncio.to_thread(
+        lambda: Path(settings.avatars_dir).mkdir(parents=True, exist_ok=True)
+    )
+
     cleanup_task = asyncio.create_task(cleanup_expired_challenges())
 
-    yield  # type: ignore[redefined-outer-name]
+    yield
 
     cleanup_task.cancel()
     with suppress(asyncio.CancelledError):
         await cleanup_task
 
-    from app.db.session import dispose_engine
-    dispose_engine()
+    # 收尾 WebSocket 事件的 Redis 订阅 task，避免泄漏连接
+    await manager.close()
+
+    await redis_client.close_redis()
+    await dispose_engine()
 
 
 def create_app() -> FastAPI:
+    # 确保所有错误码已注册（防漏配导致 500）
+    _register_all_errors()
+
     application = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
         lifespan=lifespan,
     )
+
+    @application.middleware("http")
+    async def _log_requests(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """结构化访问日志：注入 request_id，记录 method/route/status/latency。"""
+        request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+        token = logger.set_request_id(request_id)
+        start = time.perf_counter()
+        try:
+            response = await call_next(request)
+            latency_ms = (time.perf_counter() - start) * 1000
+            response.headers.setdefault("X-Request-ID", request_id)
+            request_logger.info(
+                "http.request",
+                extra={
+                    "extra_fields": {
+                        "method": request.method,
+                        "route": request.url.path,
+                        "status": response.status_code,
+                        "latency_ms": round(latency_ms, 3),
+                    }
+                },
+            )
+            return response
+        finally:
+            logger.reset_request_id(token)
+
     application.include_router(api_router, prefix=settings.api_prefix)
     application.add_exception_handler(BizError, _on_err)
     application.add_exception_handler(RequestValidationError, _on_err)
+    application.add_exception_handler(Exception, _on_err)
+
+    async def _graphql_context(
+        db: AsyncSession = Depends(get_graphql_session),
+    ) -> GraphQLContext:
+        # 会话生命周期由 FastAPI 的 Depends 管理，解析器只读不关闭
+        return GraphQLContext(db=db)
+
+    graphql_router = GraphQLRouter(
+        forum_graphql_schema,
+        path="/graphql",
+        context_getter=_graphql_context,
+    )
+    application.include_router(graphql_router)
 
     @application.get("/")
     async def root() -> dict[str, str]:
@@ -89,7 +150,7 @@ def create_app() -> FastAPI:
     return application
 
 
-async def _on_err(_request, exc):
+async def _on_err(_request: Request, exc: Exception) -> JSONResponse:
     _, errcode, detail = map_err(exc)
     return resp_json(errcode, detail=detail)
 

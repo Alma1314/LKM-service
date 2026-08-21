@@ -1,10 +1,17 @@
 import os
 import shutil
 import subprocess
+import tempfile
+from typing import Any, cast
+
+import yaml
 
 from app.core.config import settings
 from app.core.err import BizError, CommonErr
 from app.modules.blog.errors import BlogErr
+
+# 文件树节点：值为嵌套子树，或哨兵字符串 "__BLOB__"（表示文件）。
+TreeNode = dict[str, "TreeNode | str"]
 
 
 def _repo_path(repo_name: str) -> str:
@@ -13,22 +20,33 @@ def _repo_path(repo_name: str) -> str:
     return os.path.join(base, f"{repo_name}.git")
 
 
-def _run_git(repo_name: str, *args: str) -> str:
+def _run(
+    repo_name: str,
+    *args: str,
+    input_data: bytes | None = None,
+    env: dict[str, str] | None = None,
+) -> str:
+    """跑裸仓库 git 命令，失败抛 BizError(GIT_ERROR)。
+
+    默认返回原始（不 strip）stdout，需要去首尾空白的调用点自行 ``.strip()``。
+    """
     path = _repo_path(repo_name)
-    cmd = ["git", "--git-dir", path] + list(args)
+    cmd = ["git", "--git-dir", path, *list(args)]
     try:
         result = subprocess.run(
             cmd,
+            input=input_data,
             capture_output=True,
             timeout=30,
             check=True,
+            env=env,
         )
         return result.stdout.decode("utf-8", errors="replace")
     except subprocess.CalledProcessError as e:
         detail = e.stderr.decode("utf-8", errors="replace").strip() or str(e)
-        raise BizError(BlogErr.GIT_ERROR, detail)
+        raise BizError(BlogErr.GIT_ERROR, detail) from e
     except FileNotFoundError:
-        raise BizError(BlogErr.GIT_ERROR, "git executable not found")
+        raise BizError(BlogErr.GIT_ERROR, "git executable not found") from None
 
 
 def init_bare_repo(repo_name: str) -> str:
@@ -50,7 +68,7 @@ def init_bare_repo(repo_name: str) -> str:
         )
     except subprocess.CalledProcessError as e:
         detail = e.stderr.decode("utf-8", errors="replace").strip() or str(e)
-        raise BizError(BlogErr.GIT_ERROR, detail)
+        raise BizError(BlogErr.GIT_ERROR, detail) from e
     return path
 
 
@@ -62,22 +80,22 @@ def delete_repo(repo_name: str) -> None:
 
 def ensure_repo_has_commits(repo_name: str) -> bool:
     try:
-        _run_git(repo_name, "rev-parse", "HEAD")
+        _run(repo_name, "rev-parse", "HEAD")
         return True
     except BizError:
         return False
 
 
-def get_file_tree(repo_name: str) -> list[dict]:
-    out = _run_git(repo_name, "ls-tree", "-r", "--name-only", "HEAD")
-    lines = [l.strip() for l in out.splitlines() if l.strip()]
+def get_file_tree(repo_name: str) -> list[dict[str, Any]]:
+    out = _run(repo_name, "ls-tree", "-r", "--name-only", "HEAD")
+    lines = [line.strip() for line in out.splitlines() if line.strip()]
     if not lines:
         return []
 
-    root: dict[str, dict | str] = {}
+    root: TreeNode = {}
     for line in lines:
         parts = line.split("/")
-        cur = root
+        cur: TreeNode = root
         for i, part in enumerate(parts):
             if i == len(parts) - 1:
                 cur[part] = "__BLOB__"
@@ -88,12 +106,13 @@ def get_file_tree(repo_name: str) -> list[dict]:
                 if child == "__BLOB__":
                     cur[part] = {"__self__": "__BLOB__"}
                     child = cur[part]
-                cur = child
+                if isinstance(child, dict):
+                    cur = child
 
-    def _to_list(node: dict | str) -> list[dict]:
-        if node == "__BLOB__":
+    def _to_list(node: TreeNode | str) -> list[dict[str, Any]]:
+        if not isinstance(node, dict):
             return []
-        result = []
+        result: list[dict[str, Any]] = []
         for name, val in sorted(node.items()):
             if name == "__self__":
                 continue
@@ -110,7 +129,23 @@ def read_file(repo_name: str, filepath: str) -> str:
     filepath = filepath.lstrip("/")
     if ".." in filepath.split("/"):
         raise BizError(CommonErr.INVALID_INPUT, "Invalid file path")
-    return _run_git(repo_name, "show", f"HEAD:{filepath}")
+    return _run(repo_name, "show", f"HEAD:{filepath}")
+
+
+def parse_frontmatter(content: str) -> dict[str, Any]:
+    """从 MDX 首部 YAML 块提取元数据；无 frontmatter 返回 {}。"""
+    if not content.startswith("---"):
+        return {}
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return {}
+    try:
+        data = yaml.safe_load(parts[1])
+        if isinstance(data, dict):
+            return cast("dict[str, Any]", data)
+        return {}
+    except yaml.YAMLError:
+        return {}
 
 
 def get_readme(repo_name: str) -> str | None:
@@ -118,3 +153,98 @@ def get_readme(repo_name: str) -> str | None:
         return read_file(repo_name, "README.md")
     except BizError:
         return None
+
+
+def write_file(
+    repo_name: str,
+    filepath: str,
+    content: str,
+    message: str = "update via editor",
+    author: str = "LKM",
+) -> None:
+    """把 content 写入 series 仓库的 filepath 并提交（纯 bare 命令，无 worktree）。
+
+    用临时 GIT_INDEX_FILE 做 add+commit，不触碰裸仓库真实 index。
+    """
+    filepath = filepath.lstrip("/")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        index_path = os.path.join(tmp, "index")
+        env = dict(os.environ)
+        env["GIT_INDEX_FILE"] = index_path
+        # commit-tree 不接受 --author 参数，作者需通过环境变量传入
+        env["GIT_AUTHOR_NAME"] = author
+        env["GIT_AUTHOR_EMAIL"] = f"{author}@series.local"
+        env["GIT_COMMITTER_NAME"] = author
+        env["GIT_COMMITTER_EMAIL"] = f"{author}@series.local"
+
+        # 写 blob
+        blob = _run(
+            repo_name,
+            "hash-object",
+            "-w",
+            "--stdin",
+            input_data=content.encode("utf-8"),
+            env=env,
+        ).strip()
+
+        # 更新临时 index
+        _run(
+            repo_name,
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "100644",
+            blob,
+            filepath,
+            env=env,
+        )
+        tree = _run(repo_name, "write-tree", env=env).strip()
+
+        # 若已有 HEAD，作父提交；否则 root commit
+        parent_args: list[str] = []
+        try:
+            parent = _run(repo_name, "rev-parse", "--verify", "HEAD").strip()
+            if parent:
+                parent_args = ["-p", parent]
+        except BizError:
+            pass
+
+        commit = _run(
+            repo_name,
+            "commit-tree",
+            tree,
+            *parent_args,
+            "-m",
+            message,
+            env=env,
+        ).strip()
+
+        _run(repo_name, "update-ref", "refs/heads/master", commit)
+
+
+def revparse_or_none(repo_name: str) -> str | None:
+    """返回 refs/heads/master 当前 SHA；仓库无提交时返回 None。"""
+    if not ensure_repo_has_commits(repo_name):
+        return None
+    out = _run(repo_name, "rev-parse", "HEAD").strip()
+    return out or None
+
+
+def diff_tree_names(
+    repo_name: str, old_sha: str | None, new_sha: str
+) -> list[str]:
+    """返回 old_sha..new_sha 之间变更文件的路径列表（重命名取新路径）。
+
+    old_sha 为空（首 push/空仓库前置）时给出 new_sha 树里全部文件路径。
+
+    调用方需注意并发：diff 与后续 read_file("HEAD:path") 之间若恰有另一 push 落库，
+    HEAD:path 可能读到比本 diff 区间更新的内容；receive-pack 同步返回 + DB 权威的
+    push_at/updated_at 规则可自愈，这里仅记并发窗口。
+    """
+    if old_sha:
+        args = ["diff-tree", "--name-only", "-r", "--no-commit-id", old_sha, new_sha]
+    else:
+        args = ["ls-tree", "-r", "--name-only", new_sha]
+    out = _run(repo_name, *args)
+    return [line.strip() for line in out.splitlines() if line.strip()]

@@ -7,17 +7,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.err import BizError, CommonErr
-from app.db.models import ForumComment, ForumPost, User
+from app.db.models import ForumComment, ForumPost, ForumPostLike, User
 from app.db.repo import get_or_raise
+from app.modules.common import (
+    PageData,
+    paginate_offset,
+    paginate_pages,
+)
 from app.modules.forum.errors import ForumErr
 from app.modules.forum.models import FORUM_TABLE_PLAN
 from app.modules.forum.schemas import (
     CommentCreate,
     CommentInfo,
-    PageData,
     PostCreate,
     PostInfo,
 )
+from app.modules.points.rules import enqueue_points_event
 
 
 def _author_name(user: User) -> str:
@@ -61,7 +66,7 @@ def get_forum_plan() -> dict[str, Any]:
         "next_steps": [
             "Add comment delete API",
             "Add post moderation and report workflow",
-            "Add category table and board relation",
+            "Board relation already connected via board_id",
         ],
     }
 
@@ -70,18 +75,18 @@ async def list_posts(
     db: AsyncSession,
     page: int = 1,
     limit: int = 20,
-    category_id: str | None = None,
+    board_id: int | None = None,
 ) -> PageData[PostInfo]:
     base = select(ForumPost)
-    if category_id:
-        base = base.where(ForumPost.category_id == category_id)
+    if board_id:
+        base = base.where(ForumPost.board_id == board_id)
 
     count_stmt = select(func.count()).select_from(base.subquery())
     total_count = await db.scalar(count_stmt) or 0
 
     stmt = (
         base.order_by(ForumPost.is_pinned.desc(), ForumPost.id.desc())
-        .offset((page - 1) * limit)
+        .offset(paginate_offset(page, limit))
         .limit(limit)
     )
     result = await db.execute(stmt)
@@ -93,7 +98,7 @@ async def list_posts(
         items=items,
         total=total_count,
         page=page,
-        pages=(total_count + limit - 1) // limit,
+        pages=paginate_pages(total_count, limit),
     )
 
 
@@ -111,9 +116,14 @@ async def get_post(db: AsyncSession, post_id: int, bump_view: bool = False) -> P
 
 
 async def create_post(db: AsyncSession, author_id: int, info: PostCreate) -> PostInfo:
+    # 发言准入：板块存在 / 可见 / 未禁言 / 认证 / 日限发
+    from app.modules.boards.service import check_post_allowed
+
+    await check_post_allowed(db, info.board_id, author_id)
+
     post = ForumPost(
         author_id=author_id,
-        category_id=info.category_id,
+        board_id=info.board_id,
         title=info.title,
         excerpt=_excerpt_of(info.content),
         content=info.content,
@@ -121,27 +131,57 @@ async def create_post(db: AsyncSession, author_id: int, info: PostCreate) -> Pos
     )
     db.add(post)
     await db.flush()
+    # 发帖事件入队（异步计分，不阻塞 200）
+    await enqueue_points_event(author_id, "post", f"post:{post.id}")
 
     names = await _author_map(db, [post.author_id])
     return _post_to_schema(post, names.get(post.author_id, ""))
 
 
-async def delete_post(db: AsyncSession, post_id: int, current_user_id: int) -> None:
+async def delete_post(
+    db: AsyncSession,
+    post_id: int,
+    current_user_id: int,
+    as_admin: bool = False,
+) -> int:
+    """删除帖子并返回作者 id。普通用户只能删自己的；as_admin=True（管理员代删）跳过 owner 校验。"""
     post = await get_or_raise(
         db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id
     )
-    if post.author_id != current_user_id:
+    if not as_admin and post.author_id != current_user_id:
         raise BizError(CommonErr.FORBIDDEN)
+    author_id = post.author_id
     await db.delete(post)
     await db.flush()
+    return author_id
 
 
-async def like_post(db: AsyncSession, post_id: int) -> int:
+async def like_post(db: AsyncSession, post_id: int, user_id: int) -> int:
     post = await get_or_raise(
         db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id
     )
+
+    # 幂等：同一用户重复点赞不重复计数（复合主键兜底并发下的唯一约束）
+    existing = (
+        (
+            await db.execute(
+                select(ForumPostLike).where(
+                    ForumPostLike.post_id == post_id,
+                    ForumPostLike.user_id == user_id,
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if existing is not None:
+        return post.like_count
+
+    db.add(ForumPostLike(user_id=user_id, post_id=post_id))
     post.like_count += 1
     await db.flush()
+    # 仅新增点赞路径入队（幂等分支不含）
+    await enqueue_points_event(user_id, "like", f"post:{post_id}")
     return post.like_count
 
 
@@ -163,7 +203,7 @@ async def list_comments(
         select(ForumComment)
         .where(ForumComment.post_id == post_id)
         .order_by(ForumComment.floor_number.asc())
-        .offset((page - 1) * limit)
+        .offset(paginate_offset(page, limit))
         .limit(limit)
     )
     result = await db.execute(stmt)
@@ -172,7 +212,10 @@ async def list_comments(
     names = await _author_map(db, [c.user_id for c in comments])
     items = [_comment_to_schema(c, names.get(c.user_id, "")) for c in comments]
     return PageData(
-        items=items, total=total, page=page, pages=(total + limit - 1) // limit
+        items=items,
+        total=total,
+        page=page,
+        pages=paginate_pages(total, limit),
     )
 
 
@@ -214,6 +257,8 @@ async def create_comment(
     db.add(comment)
     post.comment_count += 1
     await db.flush()
+    # 评论事件入队（异步入账）
+    await enqueue_points_event(user_id, "comment", f"comment:{comment.id}")
 
     names = await _author_map(db, [comment.user_id])
     return _comment_to_schema(comment, names.get(comment.user_id, ""))

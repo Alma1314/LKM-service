@@ -2,7 +2,7 @@ FORUM_TABLE_PLAN = {
     "forum_posts": [
         "id",
         "author_id",
-        "category_id",
+        "board_id",
         "title",
         "excerpt",
         "content",

@@ -1,7 +1,7 @@
 """论坛模块的 GraphQL schema 与解析器。
 说明：
 - post.id / author.id 在后端为 int，GraphQL ID 直接使用 int，前端同步为 number。
-- categoryId 前后端均为字符串（板块 slug）。
+- boardId 前后端均为整型（Board.id）。
 - forwardCount / bio 为本次新增的 DB 列。
 - 列表/详情查询复用 REST 的 service（forum/service.py），仅在此组装作者对象，
   避免同一套论坛分页/过滤逻辑在 REST 与 GraphQL 各写一份。
@@ -41,7 +41,7 @@ class Post:
     title: str
     excerpt: str
     content: str
-    categoryId: str
+    boardId: int
     tags: list[str]
     isPinned: bool
     isFeatured: bool
@@ -112,15 +112,14 @@ class Query:
     async def posts(
         self,
         info: Info,
-        category_id: ID | None = None,
+        board_id: int | None = None,
         page: int = 1,
         page_size: int = 100,
     ) -> PostConnection:
         db = _get_db(info)
-        cat: str | None = str(category_id) if category_id is not None else None
 
         page_data = await service_list_posts(
-            db, page=page, limit=page_size, category_id=cat
+            db, page=page, limit=page_size, board_id=board_id
         )
 
         author_ids = list({p.author_id for p in page_data.items})
@@ -132,7 +131,7 @@ class Query:
                 title=p.title,
                 excerpt=p.excerpt,
                 content=p.content,
-                categoryId=p.category_id,
+                boardId=p.board_id,
                 tags=p.tags,
                 isPinned=p.is_pinned,
                 isFeatured=p.is_featured,
@@ -163,7 +162,7 @@ class Query:
             title=post_info.title,
             excerpt=post_info.excerpt,
             content=post_info.content,
-            categoryId=post_info.category_id,
+            boardId=post_info.board_id,
             tags=post_info.tags,
             isPinned=post_info.is_pinned,
             isFeatured=post_info.is_featured,

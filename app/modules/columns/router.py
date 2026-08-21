@@ -3,9 +3,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.err import BizError, CommonErr, respond
-from app.db.session import get_session
-from app.modules.auth.deps import CurrentUser, get_current_user
+from app.core.err import respond
+from app.db.session import get_read_session, get_session
+from app.modules.auth.deps import CurrentUser, RequireLevel, get_current_user
+from app.modules.auth.permissions import require_owner_or_admin
 from app.modules.columns.schemas import (
     ColumnApplicationCreate,
     ColumnApplicationInfo,
@@ -21,6 +22,7 @@ from app.modules.columns.service import (
     create_post,
     get_application,
     get_column,
+    get_column_by_slug,
     get_column_plan,
     get_post,
     list_applications,
@@ -28,7 +30,7 @@ from app.modules.columns.service import (
     list_posts,
     review_application,
 )
-from app.modules.common import ApiResp, ListData, ModuleStatus
+from app.modules.common import ApiResp, ModuleStatus, PageData
 
 router = APIRouter(prefix="/columns", tags=["columns"])
 
@@ -60,19 +62,18 @@ async def apply_column(
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> ColumnApplicationInfo:
-    if cur.id != info.user_id:
-        raise BizError(CommonErr.FORBIDDEN)
-    return await create_application(db, info)
+    return await create_application(db, cur.id, info)
 
 
-@router.get("/applications", response_model=ApiResp[ListData[ColumnApplicationInfo]])
+@router.get("/applications", response_model=ApiResp[PageData[ColumnApplicationInfo]])
 @respond
 async def get_applications(
-    db: AsyncSession = Depends(get_session),
+    cur: CurrentUser = RequireLevel("admin"),
+    db: AsyncSession = Depends(get_read_session),
     page: int = Query(1, ge=1),
     limit: int | None = Query(default=None, ge=1, le=200),
 ) -> dict[str, Any]:
-    return {"items": await list_applications(db, page=page, limit=limit)}
+    return await list_applications(db, page=page, limit=limit)
 
 
 @router.get(
@@ -80,9 +81,13 @@ async def get_applications(
 )
 @respond
 async def get_application_detail(
-    application_id: int, db: AsyncSession = Depends(get_session)
+    application_id: int,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_read_session),
 ) -> ColumnApplicationInfo:
-    return await get_application(db, application_id)
+    app = await get_application(db, application_id)
+    require_owner_or_admin(cur, app.user_id)
+    return app
 
 
 @router.post(
@@ -92,28 +97,34 @@ async def get_application_detail(
 async def review_column_application(
     application_id: int,
     info: ColumnApplicationReview,
-    cur: CurrentUser = Depends(get_current_user),
+    cur: CurrentUser = RequireLevel("admin"),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    if cur.id != info.reviewer_id:
-        raise BizError(CommonErr.FORBIDDEN)
-    return await review_application(db, application_id, info)
+    return await review_application(db, application_id, info, cur.id)
 
 
-@router.get("", response_model=ApiResp[ListData[ColumnInfo]])
+@router.get("", response_model=ApiResp[PageData[ColumnInfo]])
 @respond
 async def get_columns(
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
     page: int = Query(1, ge=1),
     limit: int | None = Query(default=None, ge=1, le=200),
 ) -> dict[str, Any]:
-    return {"items": await list_columns(db, page=page, limit=limit)}
+    return await list_columns(db, page=page, limit=limit)
+
+
+@router.get("/by-slug/{slug}", response_model=ApiResp[ColumnInfo])
+@respond
+async def get_column_detail_by_slug(
+    slug: str, db: AsyncSession = Depends(get_read_session)
+) -> ColumnInfo:
+    return await get_column_by_slug(db, slug)
 
 
 @router.get("/{column_id}", response_model=ApiResp[ColumnInfo])
 @respond
 async def get_column_detail(
-    column_id: int, db: AsyncSession = Depends(get_session)
+    column_id: int, db: AsyncSession = Depends(get_read_session)
 ) -> ColumnInfo:
     return await get_column(db, column_id)
 
@@ -126,25 +137,25 @@ async def publish_column_post(
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> ColumnPostInfo:
-    if cur.id != info.author_id:
-        raise BizError(CommonErr.FORBIDDEN)
-    return await create_post(db, column_id, info)
+    column = await get_column(db, column_id)
+    require_owner_or_admin(cur, column.owner_id)
+    return await create_post(db, column_id, info, cur.id)
 
 
-@router.get("/{column_id}/posts", response_model=ApiResp[ListData[ColumnPostInfo]])
+@router.get("/{column_id}/posts", response_model=ApiResp[PageData[ColumnPostInfo]])
 @respond
 async def get_column_posts(
     column_id: int,
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
     page: int = Query(1, ge=1),
     limit: int | None = Query(default=None, ge=1, le=200),
 ) -> dict[str, Any]:
-    return {"items": await list_posts(db, column_id, page=page, limit=limit)}
+    return await list_posts(db, column_id, page=page, limit=limit)
 
 
 @router.get("/{column_id}/posts/{post_id}", response_model=ApiResp[ColumnPostInfo])
 @respond
 async def get_column_post_detail(
-    column_id: int, post_id: int, db: AsyncSession = Depends(get_session)
+    column_id: int, post_id: int, db: AsyncSession = Depends(get_read_session)
 ) -> ColumnPostInfo:
     return await get_post(db, post_id, column_id=column_id)

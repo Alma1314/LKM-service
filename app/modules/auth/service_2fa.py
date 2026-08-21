@@ -30,6 +30,19 @@ from app.modules.auth.service_auth import issue_session_tokens, log_audit
 _TOTP_MAX_FAILED = 3
 
 
+async def get_enabled_totp(db: AsyncSession, user_id: int) -> TOTP | None:
+    """取用户**已启用**的 TOTP 记录，供各处判断"是否开启 2FA"复用。"""
+    return (
+        (
+            await db.execute(
+                select(TOTP).where(TOTP.user_id == user_id, TOTP.enabled.is_(True))
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
 def _check_totp_failed(totp_record: TOTP | None) -> None:
     if totp_record and totp_record.failed_attempts >= _TOTP_MAX_FAILED:
         raise BizError(
@@ -56,6 +69,25 @@ async def _reset_totp_failures(db: AsyncSession, totp_record: TOTP | None) -> No
     if totp_record and totp_record.failed_attempts > 0:
         totp_record.failed_attempts = 0
         await db.flush()
+
+
+async def _verify_totp_guarded(
+    db: AsyncSession, totp_record: TOTP, code: str
+) -> int | None:
+    """校验 TOTP 并管理失败计数。
+
+    失败次数超限抛 TOTP_CODE_INVALID；校验失败记录一次并抛 TOTP_CODE_INVALID；
+    成功清零失败计数并返回匹配的计数器（供重放保护）。
+    """
+    _check_totp_failed(totp_record)
+
+    plain_secret = decrypt_secret(str(totp_record.secret))
+    counter = verify_totp(plain_secret, code)
+    if counter is None:
+        await _record_totp_failure(db, totp_record)
+        raise BizError(AuthErr.TOTP_CODE_INVALID)
+    await _reset_totp_failures(db, totp_record)
+    return counter
 
 
 def _decode_temp_token(raw_token: str) -> dict[str, Any]:
@@ -176,13 +208,7 @@ async def setup_2fa_complete(
     if not totp_record or totp_record.enabled:
         raise BizError(AuthErr.TOTP_NOT_ENABLED)
 
-    _check_totp_failed(totp_record)
-
-    plain_secret = decrypt_secret(str(totp_record.secret))
-    if verify_totp(plain_secret, code) is None:
-        await _record_totp_failure(db, totp_record)
-        raise BizError(AuthErr.TOTP_CODE_INVALID)
-    await _reset_totp_failures(db, totp_record)
+    await _verify_totp_guarded(db, totp_record, code)
 
     totp_record.enabled = True
     totp_record.confirmed_saved = False
@@ -254,27 +280,11 @@ async def verify_2fa(
         ):
             raise BizError(AuthErr.RECOVERY_CODE_INVALID)
     elif code:
-        totp_record = (
-            (
-                await db.execute(
-                    select(TOTP).where(TOTP.user_id == user_id, TOTP.enabled.is_(True))
-                )
-            )
-            .scalars()
-            .first()
-        )
+        totp_record = await get_enabled_totp(db, user_id)
         if not totp_record:
             raise BizError(AuthErr.TOTP_NOT_ENABLED)
 
-        _check_totp_failed(totp_record)
-
-        plain_secret = decrypt_secret(str(totp_record.secret))
-        actual_counter = verify_totp(plain_secret, code)
-        if actual_counter is None:
-            await _record_totp_failure(db, totp_record)
-            raise BizError(AuthErr.TOTP_CODE_INVALID)
-
-        await _reset_totp_failures(db, totp_record)
+        actual_counter = await _verify_totp_guarded(db, totp_record, code)
 
         # 重放保护：原子地存储匹配的计数器
         if not await consume_once(
@@ -320,7 +330,12 @@ async def verify_2fa(
     return result
 
 
-async def disable_2fa(db: AsyncSession, user_id: int, code: str) -> dict[str, Any]:
+async def disable_2fa(
+    db: AsyncSession,
+    user_id: int,
+    code: str | None = None,
+    recovery_code: str | None = None,
+) -> dict[str, Any]:
     totp_record = (
         (await db.execute(select(TOTP).where(TOTP.user_id == user_id)))
         .scalars()
@@ -329,13 +344,7 @@ async def disable_2fa(db: AsyncSession, user_id: int, code: str) -> dict[str, An
     if not totp_record or not totp_record.enabled:
         raise BizError(AuthErr.TOTP_NOT_ENABLED)
 
-    _check_totp_failed(totp_record)
-
-    plain_secret = decrypt_secret(str(totp_record.secret))
-    if verify_totp(plain_secret, code) is None:
-        await _record_totp_failure(db, totp_record)
-        raise BizError(AuthErr.TOTP_CODE_INVALID)
-    await _reset_totp_failures(db, totp_record)
+    await verify_second_factor(db, user_id, code=code, recovery_code=recovery_code)
 
     totp_record.enabled = False
     totp_record.secret = ""
@@ -363,24 +372,49 @@ async def disable_2fa(db: AsyncSession, user_id: int, code: str) -> dict[str, An
     return {"message": "2FA disabled"}
 
 
-async def verify_user_totp(db: AsyncSession, user_id: int, code: str) -> None:
-    """校验已登录用户的 TOTP 码（不改状态、不消费，仅二次确认）。失败抛 TOTP_CODE_INVALID。"""
-    totp_record = (
-        (
-            await db.execute(
-                select(TOTP).where(TOTP.user_id == user_id, TOTP.enabled.is_(True))
-            )
-        )
-        .scalars()
-        .first()
-    )
+async def verify_second_factor(
+    db: AsyncSession,
+    user_id: int,
+    code: str | None = None,
+    recovery_code: str | None = None,
+) -> None:
+    """校验已登录用户的第二因素：TOTP 动态码或恢复码（二选一）。
+
+    - recovery_code 提供 → 原子消费对应恢复码（一次性），不再校验 TOTP；失败抛 RECOVERY_CODE_INVALID。
+    - code 提供 → 走 TOTP 校验（含失败计数/重放保护），失败抛 TOTP_CODE_INVALID。
+    - 两者都不提供 → 抛 TOTP_CODE_INVALID。
+    供危险操作 step-up、关闭 2FA、解绑绑定等「所有 2FA 场景」复用，恢复码作 TOTP 兜底。
+    """
+    if recovery_code:
+        code_hash = hashlib.sha256(recovery_code.encode()).hexdigest()
+        if not await consume_once(
+            db,
+            RecoveryCode,
+            {"used": True},
+            RecoveryCode.user_id == user_id,
+            RecoveryCode.code_hash == code_hash,
+            RecoveryCode.used.is_(False),
+        ):
+            raise BizError(AuthErr.RECOVERY_CODE_INVALID)
+        return
+
+    if not code:
+        raise BizError(AuthErr.TOTP_CODE_INVALID, "Missing verification code")
+
+    totp_record = await get_enabled_totp(db, user_id)
     if not totp_record:
         raise BizError(AuthErr.TOTP_NOT_ENABLED)
 
-    _check_totp_failed(totp_record)
+    await _verify_totp_guarded(db, totp_record, code)
 
-    plain_secret = decrypt_secret(str(totp_record.secret))
-    if verify_totp(plain_secret, code) is None:
-        await _record_totp_failure(db, totp_record)
-        raise BizError(AuthErr.TOTP_CODE_INVALID)
-    await _reset_totp_failures(db, totp_record)
+
+async def verify_user_totp(db: AsyncSession, user_id: int, code: str) -> None:
+    """校验已登录用户的 TOTP 码（不改状态、不消费，仅二次确认）。失败抛 TOTP_CODE_INVALID。
+
+    兼容旧调用（如既有 step-up/unbind 直接传 TOTP 码）。需恢复码兜底时请用 verify_second_factor。
+    """
+    totp_record = await get_enabled_totp(db, user_id)
+    if not totp_record:
+        raise BizError(AuthErr.TOTP_NOT_ENABLED)
+
+    await _verify_totp_guarded(db, totp_record, code)

@@ -1,0 +1,201 @@
+"""积分事件副作用测试：行为计数 / 成就解锁 / 任务推进与达标发分。"""
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.models import (
+    Achievement,
+    Task,
+    User,
+    UserAchievement,
+    UserBehaviorStat,
+    UserTaskProgress,
+)
+from app.modules.auth.security import hashpwd
+from app.modules.points.engine import (
+    EVENT_STAT_KEY,
+    STAT_TO_ACHIEVEMENT_TYPE,
+    apply_event_side_effects,
+)
+from app.modules.points.service import get_balance
+
+
+async def _user(db: AsyncSession, username: str = "alice") -> int:
+    u = User(
+        username=username,
+        email=f"{username}@e.com",
+        hashed_password=await hashpwd("secret123"),
+        account_level="normal",
+    )
+    db.add(u)
+    await db.flush()
+    return u.id
+
+
+async def _achievement(db: AsyncSession, key: str, type_: str, threshold: int) -> int:
+    a = Achievement(
+        key=key,
+        category="special",
+        icon="tabler:star",
+        name_key=f"a_{key}",
+        desc_key=f"d_{key}",
+        type=type_,
+        threshold=threshold,
+        reward_points=0,
+    )
+    db.add(a)
+    await db.flush()
+    return a.id
+
+
+async def _task(
+    db: AsyncSession,
+    key: str,
+    category: str,
+    requirement_count: int,
+    reward_points: int,
+) -> int:
+    t = Task(
+        key=key,
+        title_key=f"t_{key}",
+        desc_key=f"td_{key}",
+        category=category,
+        requirement_count=requirement_count,
+        reward_points=reward_points,
+    )
+    db.add(t)
+    await db.flush()
+    return t.id
+
+
+@pytest.mark.asyncio
+async def test_event_bumps_count_and_achievement(db: AsyncSession):
+    uid = await _user(db)
+    await _achievement(db, "a1", "post_count", threshold=1)
+    await apply_event_side_effects(db, uid, "post", "p100", today="2026-08-21")
+    stat = await db.get(UserBehaviorStat, uid)
+    assert stat is not None and stat.stats["post"] == 1
+    # 成就达阈值 → 解锁
+    ach = (
+        (await db.execute(select(Achievement).where(Achievement.type == "post_count")))
+        .scalars()
+        .first()
+    )
+    assert ach is not None
+    ua = (
+        (
+            await db.execute(
+                select(UserAchievement).where(
+                    UserAchievement.user_id == uid,
+                    UserAchievement.achievement_id == ach.id,
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert ua is not None and ua.unlocked and ua.progress == 1
+
+
+@pytest.mark.asyncio
+async def test_achieve_requires_threshold(db: AsyncSession):
+    """计数未达阈值时成就保持未解锁。"""
+    uid = await _user(db)
+    await _achievement(db, "a2", "like_count", threshold=5)
+    await apply_event_side_effects(db, uid, "like", "l1", today="2026-08-21")
+    ach = (
+        (await db.execute(select(Achievement).where(Achievement.type == "like_count")))
+        .scalars()
+        .first()
+    )
+    assert ach is not None
+    ua = (
+        (
+            await db.execute(
+                select(UserAchievement).where(
+                    UserAchievement.user_id == uid,
+                    UserAchievement.achievement_id == ach.id,
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert ua is not None and not ua.unlocked
+    assert ua.progress == 1
+
+
+@pytest.mark.asyncio
+async def test_task_progress_and_reward(db: AsyncSession):
+    """发帖推进当日任务，达标后额外发奖励分且只发一次。"""
+    uid = await _user(db)
+    await _task(db, "t1", "post", requirement_count=2, reward_points=30)
+    await apply_event_side_effects(db, uid, "post", "p1", today="2026-08-21")
+    await apply_event_side_effects(db, uid, "post", "p2", today="2026-08-21")
+    up = (
+        (
+            await db.execute(
+                select(UserTaskProgress).where(
+                    UserTaskProgress.user_id == uid,
+                    UserTaskProgress.period_date == "2026-08-21",
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert up is not None and up.completed and up.rewarded and up.progress == 2
+    # 达标额外发 30 分（幂等只发一次）
+    assert await get_balance(db, uid) == 30
+
+
+@pytest.mark.asyncio
+async def test_task_reward_not_duplicated(db: AsyncSession):
+    """同一天多次达标后不再重复发分。"""
+    uid = await _user(db)
+    await _task(db, "t2", "post", requirement_count=1, reward_points=10)
+    for ref in ("p1", "p2", "p3"):
+        await apply_event_side_effects(db, uid, "post", ref, today="2026-08-21")
+    assert await get_balance(db, uid) == 10
+
+
+@pytest.mark.asyncio
+async def test_checkin_task_force_progress(db: AsyncSession):
+    """打卡事件特判：requirement_count==1 的 checkin 任务置 progress=1 并解锁。"""
+    uid = await _user(db)
+    await _task(db, "t3", "checkin", requirement_count=1, reward_points=5)
+    await apply_event_side_effects(db, uid, "checkin", "c1", today="2026-08-21")
+    up = (
+        (
+            await db.execute(
+                select(UserTaskProgress).where(
+                    UserTaskProgress.user_id == uid,
+                    UserTaskProgress.period_date == "2026-08-21",
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert up is not None and up.completed and up.rewarded and up.progress == 1
+    assert await get_balance(db, uid) == 5
+
+
+@pytest.mark.asyncio
+async def test_event_stat_key_mapping(db: AsyncSession):
+    """事件→计数键 与 计数键→成就 type 映射为规划值（防回归）。"""
+    assert EVENT_STAT_KEY["post"] == "post"
+    assert EVENT_STAT_KEY["comment"] == "comment"
+    assert EVENT_STAT_KEY["file_approved"] == "file_approved"
+    assert STAT_TO_ACHIEVEMENT_TYPE["post"] == "post_count"
+    assert STAT_TO_ACHIEVEMENT_TYPE["like"] == "like_count"
+
+
+@pytest.mark.asyncio
+async def test_unknown_event_is_noop(db: AsyncSession):
+    """未知/未映射事件不抛错、不计数、不建统计行。"""
+    uid = await _user(db)
+    await apply_event_side_effects(db, uid, "unknown_event", "x", today="2026-08-21")
+    stat = await db.get(UserBehaviorStat, uid)
+    assert stat is None

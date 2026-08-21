@@ -4,13 +4,12 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
-from app.db.session import get_session
+from app.db.session import get_read_session, get_session
 from app.modules.auth.deps import CurrentUser, get_current_user
-from app.modules.common import ApiResp, ModuleStatus
+from app.modules.common import ApiResp, ModuleStatus, PageData
 from app.modules.forum.schemas import (
     CommentCreate,
     CommentInfo,
-    PageData,
     PostCreate,
     PostInfo,
 )
@@ -49,10 +48,10 @@ async def forum_status() -> ModuleStatus:
 async def get_posts(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    category_id: str | None = Query(default=None, max_length=50),
-    db: AsyncSession = Depends(get_session),
+    board_id: int | None = Query(default=None, ge=1),
+    db: AsyncSession = Depends(get_read_session),
 ) -> PageData[PostInfo]:
-    return await list_posts(db, page=page, limit=limit, category_id=category_id)
+    return await list_posts(db, page=page, limit=limit, board_id=board_id)
 
 
 @router.post("/posts", response_model=ApiResp[PostInfo])
@@ -80,7 +79,7 @@ async def like_forum_post(
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    return {"like_count": await like_post_service(db, post_id)}
+    return {"like_count": await like_post_service(db, post_id, cur.id)}
 
 
 @router.delete("/posts/{post_id}", response_model=ApiResp[dict[str, Any]])
@@ -100,7 +99,7 @@ async def get_post_comments(
     post_id: int,
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
 ) -> PageData[CommentInfo]:
     return await list_comments(db, post_id, page=page, limit=limit)
 

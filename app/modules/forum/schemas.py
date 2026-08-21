@@ -1,14 +1,15 @@
 import datetime
-import json
-from typing import Any, ClassVar, cast
+from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.modules.common import parse_tags
 
 
 class PostCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=120)
-    content: str = Field(..., min_length=1)
-    category_id: str = Field(..., min_length=1, max_length=50)
+    content: str = Field(..., min_length=1, max_length=200_000)
+    board_id: int = Field(..., ge=1)
     tags: list[str] = Field(default_factory=list)
 
 
@@ -21,7 +22,7 @@ class PostInfo(BaseModel):
     content: str
     author_id: int
     author_name: str = ""
-    category_id: str
+    board_id: int
     tags: list[str]
     is_pinned: bool
     is_featured: bool
@@ -34,13 +35,8 @@ class PostInfo(BaseModel):
 
     @field_validator("tags", mode="before")
     @classmethod
-    def _parse_tags(cls, v: Any) -> list[Any]:
-        if isinstance(v, list):
-            return cast(list[Any], v)
-        try:
-            return json.loads(v)
-        except (json.JSONDecodeError, TypeError):
-            return []
+    def _parse_tags(cls, v: object) -> list[str]:
+        return parse_tags(v)
 
 
 class CommentCreate(BaseModel):
@@ -60,10 +56,3 @@ class CommentInfo(BaseModel):
     parent_id: int | None = None
     like_count: int
     created_at: datetime.datetime
-
-
-class PageData[T](BaseModel):
-    items: list[T]
-    total: int
-    page: int
-    pages: int

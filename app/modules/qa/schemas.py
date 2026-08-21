@@ -1,0 +1,51 @@
+import datetime
+from typing import ClassVar
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class QuestionCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    situation: str = Field(..., min_length=1, max_length=5000)
+    content: str = Field(..., min_length=1, max_length=20000)
+    bounty_people: int = Field(..., ge=1, le=10)
+    bounty_per_person: int = Field(..., ge=0)
+    images: list[str] = Field(default_factory=list)  # 附件 URL/引用（后接真上传）
+
+
+class QuestionOut(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
+
+    id: int
+    author_id: int
+    title: str
+    situation: str
+    content: str
+    bounty_people: int
+    bounty_per_person: int
+    bounty_total: int
+    bounty_distributed: int
+    status: str
+    accepted_answer_id: int | None = None
+    answer_count: int = 0
+    created_at: datetime.datetime
+
+
+class AnswerCreate(BaseModel):
+    content: str = Field(..., min_length=1, max_length=10000)
+
+
+class AnswerOut(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
+
+    id: int
+    question_id: int
+    author_id: int
+    content: str
+    is_accepted: bool
+    created_at: datetime.datetime
+
+
+class QuestionDetail(QuestionOut):
+    answers: list[AnswerOut] = []
+    images: list[str] = []

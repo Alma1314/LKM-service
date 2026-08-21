@@ -6,6 +6,8 @@ dist/
 wheels/
 *.egg-info
 .vscode/
+docs
+!docs/openapi
 
 # Virtual environments
 .venv

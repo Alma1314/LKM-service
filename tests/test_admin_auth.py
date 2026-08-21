@@ -25,7 +25,7 @@ async def _create_user(
     user = User(
         username=username,
         email=f"{username}@example.com",
-        hashed_password=hashpwd(password),
+        hashed_password=await hashpwd(password),
         account_level=account_level,
     )
     db.add(user)
@@ -119,7 +119,7 @@ class TestAdminLogin:
         db.add(
             RefreshToken(
                 user_id=kind2.id,
-                token_hash=hashpwd("not-a-real-token")[0:64],
+                token_hash=(await hashpwd("not-a-real-token"))[0:64],
                 kind="web",
                 mfa_verified=False,
                 expires_at=datetime.datetime.now(datetime.UTC)
@@ -186,6 +186,29 @@ class TestAdminRefreshAndLogout:
 
         # 登出后旧 refresh 已被撤销，再用其刷新 → 应被拒
         # （httpx jar 里 cookie 已清，需手动塞回旧值验证撤销）
+        again = await client.post("/api/v1/admin/auth/refresh")
+        assert again.status_code == 403
+
+    async def should_reject_reuse_of_old_refresh_after_rotation(
+        self, db: AsyncSession, client: AsyncClient
+    ):
+        # 用独特用户名避开共享内存 admin 登录限流（5 次/300s）在本进程跨用例累计
+        await _create_user(db, username="root_reuse", account_level="admin")
+        login = await _login(client, "root_reuse")
+        assert login.status_code == 200
+
+        old_refresh = client.cookies.get("admin_refresh")
+        assert old_refresh
+
+        first = await client.post("/api/v1/admin/auth/refresh")
+        assert first.status_code == 200
+
+        # 旋转后，旧 refresh 已撤销：清掉旋转后写下的新 cookie（及历史遗留），
+        # 塞回旧值再刷新应被拒。cookie path 须与实际写入的 COOKIE_PATH（/api/v1）一致，
+        # 否则 httpx 会按最具体 path 优先发送旋转后的新 cookie，导致测不到旧值复用。
+        for cp in ("/api/v1", "/api/v1/admin"):
+            client.cookies.delete("admin_refresh", path=cp)
+        client.cookies.set("admin_refresh", old_refresh, path="/api/v1")
         again = await client.post("/api/v1/admin/auth/refresh")
         assert again.status_code == 403
 
@@ -302,3 +325,103 @@ class TestGetRealClientIp:
         from app.modules.admin.deps import get_real_client_ip
 
         assert get_real_client_ip(req) == "unknown"
+
+
+# ===================================================================
+# 改密撤销：updated_at 晚于 token iat 时旧 admin cookie 应失效（与前台一致）
+# ===================================================================
+
+
+class TestAdminPasswordChangeInvalidation:
+    async def should_invalidate_old_cookie_after_password_change(
+        self, db: AsyncSession, client: AsyncClient
+    ):
+        await _create_user(db, username="root_pwd", account_level="admin")
+        login = await _login(client, "root_pwd")
+        assert login.status_code == 200
+        assert client.cookies.get("admin_session")
+
+        user = (
+            (await db.execute(select(User).where(User.username == "root_pwd")))
+            .scalars()
+            .first()
+        )
+        assert user is not None
+        # 模拟改密：updated_at 晚于 token 签发时间（iat）超过 5 秒容差
+        user.updated_at = datetime.datetime.now(datetime.UTC) + datetime.timedelta(
+            seconds=10
+        )
+        await db.commit()
+
+        resp = await client.get("/api/v1/admin/auth/me")
+        assert resp.status_code == 403
+
+
+# ===================================================================
+# 管理员删除用户内容：require_admin_2fa 门禁（未 step-up → 401 code=4）
+# ===================================================================
+
+
+def _totp_code_now(secret: str) -> str:
+    """生成当前时间步的 TOTP 6 位码（与 security.verify_totp window=1 对齐）。"""
+    import base64
+    import hashlib
+    import hmac
+    import struct
+    import time
+
+    key = base64.b32decode(secret, casefold=True)
+    counter = int(time.time()) // 30
+    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    code = (
+        struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
+    ) % 1_000_000
+    return f"{code:06d}"
+
+
+class TestAdminContentDelete:
+    """DELETE /admin/content/* —— 危险写操作必须持有后台 2FA 信任。"""
+
+    async def _enable_admin_totp(self, db: AsyncSession, user_id: int) -> str:
+        """给管理员建一个已启用 TOTP 记录，返回明文 secret。"""
+        from app.modules.auth.models import TOTP
+        from app.modules.auth.security import encrypt_secret, generate_totp_secret
+
+        secret = generate_totp_secret()
+        db.add(TOTP(user_id=user_id, secret=encrypt_secret(secret), enabled=True))
+        await db.commit()
+        return secret
+
+    async def should_gate_without_2fa(self, db: AsyncSession, client: AsyncClient):
+        """未做 step-up 的 admin 会话调删除 → 401 code=4（MFA_REQUIRED）。"""
+        await _create_user(db, username="adm_del", account_level="admin")
+        login = await _login(client, "adm_del")
+        assert login.status_code == 200
+
+        resp = await client.delete("/api/v1/admin/content/post/99999")
+        assert resp.status_code == 401
+        assert resp.json()["code"] == 4  # CommonErr.MFA_REQUIRED
+
+    async def should_pass_gate_after_stepup(
+        self, db: AsyncSession, client: AsyncClient
+    ):
+        """完成 admin step-up（POST /admin/auth/2fa）后，删除能走到 service（不存在的帖→404）。"""
+        await _create_user(db, username="adm_del2", account_level="admin")
+        login = await _login(client, "adm_del2")
+        assert login.status_code == 200
+
+        user = (
+            (await db.execute(select(User).where(User.username == "adm_del2")))
+            .scalars()
+            .first()
+        )
+        secret = await self._enable_admin_totp(db, user.id)
+        stepup = await client.post(
+            "/api/v1/admin/auth/2fa", json={"code": _totp_code_now(secret)}
+        )
+        assert stepup.status_code == 200
+
+        # 已带 2FA 信任：删除不存在的帖子应到达 service 层 → 404 POST_NOT_FOUND，而非 401
+        resp = await client.delete("/api/v1/admin/content/post/99999")
+        assert resp.status_code == 404

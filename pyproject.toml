@@ -3,138 +3,98 @@ name = "backend"
 version = "0.0.1"
 description = "Add your description here"
 readme = "README.md"
+license = "AGPL-3.0-or-later"
 requires-python = ">=3.13"
 dependencies = [
-    "fastapi>=0.139.2",
     "pydantic[email]>=2.13.4",
     "fastapi[standard]>=0.139.2",
     "sqlalchemy>=2.0.0",
-    "psycopg2-binary>=2.9.0",
     "pydantic-settings>=2.0.0",
     "pyjwt[crypto]>=2.9.0",
     "cryptography>=43.0.0",
     "httpx>=0.28.0",
     "cbor2>=5.6.0",
-    "httpx2>=2.7.0",
-    "linqex>=2.0",
+    "strawberry-graphql>=0.263.0",
+    "aiosqlite>=0.22.1",
+    "asyncpg>=0.31.0",
+    "webauthn>=2,<3",
+    "argon2-cffi>=23.1.0",
+    "redis>=5.0.0",
+    "arq>=0.28.0",
+    "sentry-sdk>=2.0",
+    "boto3>=1.35.0",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 python_functions = ["test_*", "should_*"]
+asyncio_mode = "auto"
+markers = [
+    "integration: 需真实 Redis 的集成测试，默认排除，用 `uv run pytest -m integration` 显式运行",
+]
+addopts = ["-m", "not integration"]
 filterwarnings = [
     "error",
     "ignore::ResourceWarning",
 ]
 
-[tool.ruff]
-line-length = 120
-target-version = "py313"
-
-[[tool.uv.index]]
-url = "https://mirrors.aliyun.com/pypi/simple/"
-default = true
-
-[tool.ruff.lint]
-# ── 基础层：一定要开的 ──
-select = [
-    "F",       # Pyflakes — 未使用 import/变量、未定义名称等硬错误
-    "E",       # pycodestyle errors
-    "W",       # pycodestyle warnings
-    "I",       # isort — import 排序
-    "UP",      # pyupgrade — 自动升级到目标版本语法
-    "B",       # flake8-bugbear — 常见陷阱（可变默认参数、bare raise 等）
-    "C4",      # flake8-comprehensions — 可简化的列表推导
-    "SIM",     # flake8-simplify — 简化冗余逻辑
-    "RUF",     # ruff 专属规则
-    "FAST",    # flake8-fastapi — FastAPI 最佳实践
-    "ASYNC",   # flake8-async — 异步陷阱
-    "S",       # flake8-bandit — 安全审计（assert、硬编码密码、subprocess 等）
-    "T20",     # flake8-print — 禁止 print（用 logger）
-    "PT",      # flake8-pytest-style — pytest 最佳实践
-    "ARG",     # flake8-unused-arguments — 未使用的函数参数
-    "PTH",     # flake8-use-pathlib — 用 pathlib 替代 os.path
-    "N",       # pep8-naming — 命名规范
-    "COM",     # flake8-commas — 尾随逗号
-]
-
-# ── 逐条豁免：每个都有理由 ──
-ignore = [
-    # E501 — 行长。120 上限已经开了，剩余超长的是长 URL/SQL，不强制拆
-    "E501",
-    # B008 — 函数调用在默认参数里。FastAPI Depends() 必须这样写，无法避免
-    "B008",
-    # RUF001/002/003 — 中文字符在字符串/docstring/comment 里被误判为歧义 Unicode
-    "RUF001", "RUF002", "RUF003",
-    # S101 — assert。测试文件里大量使用，生产代码里靠 code review 把关
-    "S101",
-    # S106/S107 — 硬编码密码。config.py 里的默认值 "change-me-..." 是占位符，不是真密码
-    "S106", "S107",
-    # S603/S607 — subprocess 部分路径。blog git 模块需要调 git，路径校验在 service 层做
-    "S603", "S607",
-    # N806 — 函数内变量非小写。SQLAlchemy query 构建时用大写变量名是惯例
-    "N806",
-    # N815 — 类属性 mixedCase。SQLAlchemy mapped_column 继承 ORM 惯例
-    "N815",
-    # E402 — import 不在文件顶部。alembic env.py 和 lifespan 里有 sys.path 操作
-    "E402",
-    # ARG001/ARG002 — 未使用的函数/方法参数。FastAPI Depends 注入、接口约定的参数签名
-    "ARG001", "ARG002",
-    # INP001 — 隐式命名空间包。alembic/ 等目录不需要 __init__.py
-    "INP001",
-    # COM812 — 尾随逗号。和 ruff format 冲突，format 会自动处理
-    "COM812",
-    # T201 — print。lifespan 里的密钥校验用 print 到 stderr（在 logging 初始化之前）
-    "T201",
-    # BLE001 — blind except。session.py 和 err.py 里有兜底 except，已确认是刻意的
-    "BLE001",
-    # ASYNC240/220 — async 函数里阻塞 I/O。项目是同步栈，仅 passkey cleanup 是 async
-    "ASYNC240", "ASYNC220",
-    # FBT001/002 — 布尔位置参数。FastAPI Query(default=True) 是惯用写法
-    "FBT001", "FBT002",
-    # TRY003 — raise vanilla args。BizError 的 detail 是动态的，不抽成 exception 类
-    "TRY003",
-    # EM101/102 — exception 里用 raw string/f-string。BizError 不继承这些惯例
-    "EM101", "EM102",
-]
-
-[tool.ruff.lint.per-file-ignores]
-# 测试文件：允许 assert、魔法数字、print 调试
-"tests/**" = ["S101", "S106", "PLR2004", "T201", "ARG001", "ARG002"]
-# 配置文件：允许硬编码占位密码
-"app/core/config.py" = ["S105", "S106", "S107"]
-# alembic env.py：允许 import 不在顶部、print
-"alembic/**" = ["E402", "T201"]
-# main.py lifespan：允许 print（stderr 密钥校验，在 logging 之前）
-"app/main.py" = ["T201"]
-
-[tool.ruff.lint.isort]
-known-first-party = ["app"]
-
-[tool.ruff.lint.flake8-bandit]
-check-typed-exception = true
-
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
-
-[tool.pyright]
+[tool.basedpyright]
 include = ["app"]
 typeCheckingMode = "standard"
-reportUnknownArgumentType = false
-reportUnknownParameterType = false
-reportUnknownVariableType = false
-reportUnknownMemberType = false
-reportUnknownLambdaType = false
-reportMissingParameterType = false
+reportOverlappingOverload = false
+reportUnknownArgumentType = true
+reportUnknownParameterType = true
+reportUnknownVariableType = true
+reportUnknownMemberType = true
+reportUnknownLambdaType = true
+reportMissingParameterType = true
 reportMissingTypeStubs = false
-reportUnannotatedClassAttribute = false
+reportUnannotatedClassAttribute = true
 reportUnusedCallResult = false
-reportUnusedImport = false
+reportUnusedImport = true
+reportUnusedVariable = true
 
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
     "alembic>=1.13.0",
     "basedpyright>=1.39.9",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16",
+    "ty>=0.0.70",
+    "fakeredis>=2.22.0",
+    "locust>=2.46.3",
+    "moto>=5.0.0",
 ]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+extend-exclude = ["alembic", "blog_repos"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "RUF", "SIM", "ASYNC", "PERF", "ANN"]
+ignore = [
+    "RUF001",  # 中文全角标点/破折号非 bug，保留中文风格
+    "RUF002",
+    "RUF003",
+    "ANN401",  # 后端在 ORM/stub 边界刻意用 Any
+]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends", "fastapi.Security",
+    "fastapi.Query", "fastapi.Path", "fastapi.Header",
+    "fastapi.Cookie", "fastapi.Body", "fastapi.Form", "fastapi.File",
+    "app.modules.auth.deps.RequireLevel",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["ANN"]  # 测试函数不强制返回类型标注
+"main.py" = ["F401"]       # from app.main import app 是 uvicorn 入口
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ty.environment]
+python-version = "3.13"

@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.err import respond
 from app.db.session import get_session
 from app.modules.auth import service_passkey
-from app.modules.auth.deps import CurrentUser, get_current_user
+from app.modules.auth.deps import CurrentUser, get_current_user, require_2fa
 from app.modules.auth.schemas import (
     AuthTokenData,
     MessageResponse,
@@ -92,7 +92,7 @@ async def list_credentials(
 @respond
 async def delete_credential(
     cred_id: int,
-    cur: CurrentUser = Depends(get_current_user),
+    cur: CurrentUser = require_2fa,
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """通过数据库 ID 删除一个 Passkey 凭据。"""

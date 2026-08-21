@@ -10,11 +10,14 @@ from app.modules.auth.security import (
     decode_access_token,
     decode_temp_token,
     decrypt_secret,
+    dummy_verify,
     encrypt_secret,
     generate_recovery_codes,
     generate_totp_secret,
     get_totp_uri,
+    hashpwd,
     verify_totp,
+    verifypwd,
 )
 
 # ---------------------------------------------------------------------------
@@ -179,3 +182,25 @@ class TestEncryptDecrypt:
         assert c1 != c2
         assert decrypt_secret(c1) == plain
         assert decrypt_secret(c2) == plain
+
+
+# ---------------------------------------------------------------------------
+# Password hash (argon2) —— 必须异步化，offload 到线程池避免阻塞事件循环
+# ---------------------------------------------------------------------------
+
+
+class TestPasswordHash:
+    async def should_hash_and_verify_async(self):
+        import asyncio
+
+        assert asyncio.iscoroutinefunction(hashpwd)
+        hashed = await hashpwd("secret123456")
+        assert hashed != "secret123456"
+        assert await verifypwd("secret123456", hashed)
+        assert not await verifypwd("wrong-password", hashed)
+
+    async def should_dummy_verify_async(self):
+        import asyncio
+
+        assert asyncio.iscoroutinefunction(dummy_verify)
+        await dummy_verify()

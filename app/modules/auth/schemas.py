@@ -1,8 +1,9 @@
 import datetime
+import re
 from enum import StrEnum
 from typing import Annotated, Any, ClassVar
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 
 class ProfileRole(StrEnum):
@@ -17,6 +18,24 @@ def _validate_password(v: str) -> str:
 
 
 Password = Annotated[str, AfterValidator(_validate_password)]
+
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _validate_email_preserve_case(v: str) -> str:
+    """校验邮箱格式但**保留大小写原样**（大小写绝对敏感）。
+
+    Pydantic 内置 ``EmailStr`` 会把 domain 强制转小写，违背本项目「存储原值 + 精确匹配」
+    的大小写绝对敏感约定，故此处自定义：仅去首尾空白 + 宽松格式校验，不做任何小写转换。
+    """
+    v = v.strip()
+    if not _EMAIL_RE.match(v):
+        raise ValueError("Invalid email format")
+    return v
+
+
+RawEmail = Annotated[str, AfterValidator(_validate_email_preserve_case)]
 
 
 class ProfileInfo(BaseModel):
@@ -46,7 +65,7 @@ class UserRegLocal(BaseModel):
 class UserRegNormal(BaseModel):
     username: str = Field(..., min_length=1, max_length=100)
     password: Password = Field(...)
-    email: EmailStr | None = None
+    email: RawEmail | None = None
     phone: str | None = Field(None, min_length=5, max_length=20)
 
 
@@ -55,7 +74,7 @@ class UserRegByPhone(BaseModel):
 
 
 class UserRegByEmail(BaseModel):
-    email: EmailStr
+    email: RawEmail
 
 
 class UserLoginPassword(BaseModel):
@@ -113,7 +132,10 @@ class TOTPVerifyRequest(BaseModel):
 
 
 class TOTPDisableRequest(BaseModel):
-    code: str
+    """关闭 2FA / step-up 第二次因子：TOTP 动态码或恢复码二选一。"""
+
+    code: str | None = None
+    recovery_code: str | None = None
 
 
 # ── 通用消息响应 ──────────────────────────────────────────────
@@ -139,7 +161,7 @@ class RegByPhoneResponse(BaseModel):
 
 
 class RegByEmailResponse(BaseModel):
-    email: EmailStr
+    email: RawEmail
     message: str
 
 
@@ -271,6 +293,7 @@ class SettingsInfo(BaseModel):
 
 
 class UnbindRequest(BaseModel):
-    """DELETE /auth/settings/{type} —— 解绑请求体；已开启 2FA 时 code 必填。"""
+    """DELETE /auth/settings/{type} —— 解绑请求体；已开启 2FA 时 code/recovery_code 二选一。"""
 
     code: str | None = Field(default=None, min_length=6, max_length=6)
+    recovery_code: str | None = None

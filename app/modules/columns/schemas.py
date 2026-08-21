@@ -1,7 +1,8 @@
 import datetime
+import json
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.modules.columns.models import (
     ColumnApplicationStatus,
@@ -11,7 +12,6 @@ from app.modules.columns.models import (
 
 
 class ColumnApplicationCreate(BaseModel):
-    user_id: int
     title: str = Field(..., min_length=1, max_length=80)
     description: str = Field(..., min_length=1, max_length=300)
     reason: str = Field(..., min_length=1, max_length=500)
@@ -33,7 +33,6 @@ class ColumnApplicationInfo(BaseModel):
 
 
 class ColumnApplicationReview(BaseModel):
-    reviewer_id: int
     status: ColumnApplicationStatus
     review_note: str | None = Field(default=None, max_length=300)
 
@@ -46,17 +45,44 @@ class ColumnInfo(BaseModel):
     application_id: int | None = None
     title: str
     description: str
+    slug: str | None = None
     cover_url: str | None = None
+    author_name: str | None = None
+    author_title: str | None = None
+    author_bio: str | None = None
+    avatar_url: str | None = None
+    is_verified: bool = False
+    follower_count: int = 0
+    like_count: int = 0
+    subscribe_count: int = 0
+    article_count: int = 0
+    tags: list[str] = Field(default_factory=list)
+    badges: list[str] = Field(default_factory=list)
+    board_id: int | None = None
     status: ColumnStatus = ColumnStatus.ACTIVE
     created_at: datetime.datetime
     updated_at: datetime.datetime
 
+    @field_validator("tags", "badges", mode="before")
+    @classmethod
+    def _parse_str_list(cls, v: object) -> list[str]:
+        if isinstance(v, list):
+            return [str(x) for x in v]
+        if not isinstance(v, str):
+            return []
+        try:
+            parsed = json.loads(v)
+        except (json.JSONDecodeError, TypeError):
+            return []
+        if isinstance(parsed, list):
+            return [str(x) for x in parsed]
+        return []
+
 
 class ColumnPostCreate(BaseModel):
-    author_id: int
     title: str = Field(..., min_length=1, max_length=120)
     summary: str | None = Field(default=None, max_length=300)
-    content: str = Field(..., min_length=1)
+    content: str = Field(..., min_length=1, max_length=200_000)
 
 
 class ColumnPostInfo(BaseModel):
@@ -67,6 +93,11 @@ class ColumnPostInfo(BaseModel):
     author_id: int
     title: str
     summary: str | None = None
+    content: str = ""
+    cover_image: str | None = None
+    view_count: int = 0
+    like_count: int = 0
+    comment_count: int = 0
     status: ColumnPostStatus = ColumnPostStatus.DRAFT
     created_at: datetime.datetime
     updated_at: datetime.datetime

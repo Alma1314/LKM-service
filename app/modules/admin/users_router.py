@@ -10,9 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
 from app.db.models import ForumPost, LibraryFile, User
-from app.db.session import get_session
+from app.db.session import get_read_session
 from app.modules.auth.deps import CurrentUser
-from app.modules.common import ApiResp, ListData
+from app.modules.common import ApiResp, PageData, paginate_pages
 
 from .deps import require_admin
 from .schemas import AdminStats, AdminUserListItem
@@ -20,7 +20,7 @@ from .schemas import AdminStats, AdminUserListItem
 router = APIRouter(prefix="/admin", tags=["admin-data"])
 
 
-@router.get("/users", response_model=ApiResp[ListData[AdminUserListItem]])
+@router.get("/users", response_model=ApiResp[PageData[AdminUserListItem]])
 @respond
 async def admin_list_users(
     page: int = Query(1, ge=1),
@@ -28,7 +28,7 @@ async def admin_list_users(
     keyword: str | None = None,
     include_pii: bool = False,
     _cur: CurrentUser = require_admin,
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
 ) -> dict[str, Any]:
     """
     用户管理列表。默认隐藏 email/phone（PII），可按用户名/邮箱筛选。
@@ -63,7 +63,12 @@ async def admin_list_users(
         )
         items.append(item.model_dump())
 
-    return {"items": items, "total": total}
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "pages": paginate_pages(total, size),
+    }
 
 
 async def _safe_count(db: AsyncSession, stmt: Any) -> int:
@@ -78,7 +83,7 @@ async def _safe_count(db: AsyncSession, stmt: Any) -> int:
 @respond
 async def admin_stats(
     _cur: CurrentUser = require_admin,
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_read_session),
 ) -> AdminStats:
     """仪表盘聚合统计：注册用户数 / 帖子数 / 文件数 / 待审核文件数。"""
     user_count = await _safe_count(db, select(func.count(User.id)))

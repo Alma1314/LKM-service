@@ -1,9 +1,4 @@
-"""Alembic environment configuration for online/offline migrations.
-
-Provides both ``run_migrations_offline`` (generate SQL) and
-``run_migrations_online`` (direct DB execution).  Imports all app
-models so ``autogenerate`` can detect schema changes.
-"""
+"""Alembic environment configuration for online/offline migrations."""
 
 import sys
 from logging.config import fileConfig

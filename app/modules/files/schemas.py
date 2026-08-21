@@ -1,12 +1,9 @@
-from __future__ import annotations
-
-import json
-from datetime import datetime
-from typing import Generic, TypeVar
+import datetime
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-T = TypeVar("T")
+from app.modules.common import parse_tags
 
 
 class FileCreate(BaseModel):
@@ -18,9 +15,9 @@ class FileCreate(BaseModel):
 
 
 class FileInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
 
-    item_id: int = -1
+    id: int
     original_name: str
     uploader_id: int
     uploader_name: str = ""
@@ -29,27 +26,29 @@ class FileInfo(BaseModel):
     category_id: str
     category_name: str = ""
     description: str
-    tags: list[str] | str
+    tags: list[str]
     status: str
     review_comment: str | None = None
     download_count: int
     view_count: int
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime.datetime
 
     @field_validator("tags", mode="before")
     @classmethod
-    def _parse_tags(cls, v):
-        if isinstance(v, list):
-            return v
-        try:
-            return json.loads(v)
-        except (json.JSONDecodeError, TypeError):
-            return []
+    def _parse_tags(cls, v: object) -> list[str]:
+        return parse_tags(v)
 
 
-class PageData[T](BaseModel):
-    items: list[T]
-    total: int
-    page: int
-    pages: int
+class UploadInitResp(BaseModel):
+    mode: Literal["direct", "sync"]
+    upload_id: str | None = None  # direct 时
+    presigned_url: str | None = None  # direct 时
+    file: FileInfo | None = None  # 预留(当前 sync 前端回退 multipart, 故常 None)
+
+
+class DownloadUrlInfo(BaseModel):
+    """下载 URL 描述对象：frontend 依 kind 分叉下载方式。"""
+
+    kind: Literal["backend", "presigned"]
+    url: str
+    expires_in: int | None = None
