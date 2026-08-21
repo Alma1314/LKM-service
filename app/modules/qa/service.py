@@ -15,6 +15,7 @@ from app.core.err import BizError
 from app.db.models import QAAnswer, QAQuestion, QAQuestionImage
 from app.db.repo import get_or_raise
 from app.modules.common import PageData, paginate_offset, paginate_pages
+from app.modules.points.rules import enqueue_points_event
 from app.modules.points.service import reward, spend
 from app.modules.qa.errors import QaErr
 from app.modules.qa.schemas import (
@@ -185,6 +186,8 @@ async def accept_answer(
     a.is_accepted = True
     q.accepted_answer_id = a.id
     await db.flush()
+    # 采纳回答事件入队（仅计数，QA 已按悬赏派发，不加分）
+    await enqueue_points_event(a.author_id, "answer_accepted", f"answer:{a.id}")
     await bump_collection_version("qa")
     return AnswerOut.model_validate(a)
 

@@ -25,3 +25,45 @@ class LeaderboardEntry(BaseModel):
     user_id: int
     display_name: str
     balance: int
+    title: str = (
+        "active"  # 稳定 key，前端 i18n 映射 contributionData.leaderboard.titles.*
+    )
+
+
+class AchievementOut(BaseModel):
+    id: int
+    key: str
+    category: str
+    icon: str
+    name_key: str
+    desc_key: str
+    type: str
+    threshold: int
+    reward_points: int
+    sort_order: int
+    progress: int = 0
+    unlocked: bool = False
+
+
+class TaskOut(BaseModel):
+    id: int
+    key: str
+    title_key: str
+    desc_key: str
+    category: str
+    requirement_count: int
+    reward_points: int
+    sort_order: int
+    current_progress: int = 0
+    completed: bool = False
+
+
+class ExchangeItemOut(BaseModel):
+    id: int
+    key: str
+    name_key: str
+    desc_key: str
+    points_cost: int
+    stock: int
+    is_virtual: bool
+    sort_order: int

@@ -7,7 +7,7 @@ from arq.connections import RedisSettings
 from arq.worker import Worker
 
 from app.core.config import settings
-from app.tasks import cleanup, notify, reconcile_blog_repos, send
+from app.tasks import cleanup, notify, points_worker, reconcile_blog_repos, send
 
 
 def _ensure_models() -> None:
@@ -41,9 +41,11 @@ _ensure_models()
 SEND_QUEUE = "arq:queue:send"  # 高优发送队列
 NOTIFY_QUEUE = "arq:queue:notify"  # 对象事件通知队列
 DEFAULT_QUEUE = "arq:queue"  # 默认队列，预留重活
+POINTS_QUEUE = "arq:queue:points"  # 积分事件队列
 
 SEND_FUNCTIONS = [send.send_code, send.send_magic_link]
 NOTIFY_FUNCTIONS = [notify.notify_upload]
+POINTS_FUNCTIONS = [points_worker.apply_point_event]
 
 
 def _redis_settings() -> RedisSettings:
@@ -97,8 +99,22 @@ async def run_default_worker() -> None:
             ),  # 每小时整点清扫
             cron(
                 reconcile_blog_repos.reconcile_blog_repos,
-                weekday="thurs", hour=4, minute=0,
+                weekday="thurs",
+                hour=4,
+                minute=0,
             ),  # 每周四 04:00 对账孤儿博客仓库
         ],
+    )
+    await w.async_run()
+
+
+async def run_points_worker() -> None:
+    """积分事件队列专属 worker（compose worker-points 入口）。"""
+    w = Worker(
+        POINTS_FUNCTIONS,
+        queue_name=POINTS_QUEUE,
+        redis_settings=_redis_settings(),
+        max_tries=5,
+        max_jobs=10,
     )
     await w.async_run()

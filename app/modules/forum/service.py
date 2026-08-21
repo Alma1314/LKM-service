@@ -22,6 +22,7 @@ from app.modules.forum.schemas import (
     PostCreate,
     PostInfo,
 )
+from app.modules.points.rules import enqueue_points_event
 
 
 def _author_name(user: User) -> str:
@@ -130,6 +131,8 @@ async def create_post(db: AsyncSession, author_id: int, info: PostCreate) -> Pos
     )
     db.add(post)
     await db.flush()
+    # 发帖事件入队（异步计分，不阻塞 200）
+    await enqueue_points_event(author_id, "post", f"post:{post.id}")
 
     names = await _author_map(db, [post.author_id])
     return _post_to_schema(post, names.get(post.author_id, ""))
@@ -177,6 +180,8 @@ async def like_post(db: AsyncSession, post_id: int, user_id: int) -> int:
     db.add(ForumPostLike(user_id=user_id, post_id=post_id))
     post.like_count += 1
     await db.flush()
+    # 仅新增点赞路径入队（幂等分支不含）
+    await enqueue_points_event(user_id, "like", f"post:{post_id}")
     return post.like_count
 
 
@@ -252,6 +257,8 @@ async def create_comment(
     db.add(comment)
     post.comment_count += 1
     await db.flush()
+    # 评论事件入队（异步入账）
+    await enqueue_points_event(user_id, "comment", f"comment:{comment.id}")
 
     names = await _author_map(db, [comment.user_id])
     return _comment_to_schema(comment, names.get(comment.user_id, ""))

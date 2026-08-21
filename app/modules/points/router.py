@@ -2,11 +2,26 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
-from app.db.session import get_read_session
+from app.db.session import get_read_session, get_session
 from app.modules.auth.deps import CurrentUser, get_current_user
 from app.modules.common import ApiResp, ModuleStatus, PageData
-from app.modules.points.schemas import BalanceOut, LeaderboardEntry, LedgerEntry
-from app.modules.points.service import get_balance, leaderboard, list_ledger
+from app.modules.points.schemas import (
+    AchievementOut,
+    BalanceOut,
+    ExchangeItemOut,
+    LeaderboardEntry,
+    LedgerEntry,
+    TaskOut,
+)
+from app.modules.points.service import (
+    do_checkin,
+    get_balance,
+    leaderboard,
+    list_achievements,
+    list_exchange_items,
+    list_ledger,
+    list_tasks,
+)
 
 
 def _status() -> ModuleStatus:
@@ -50,10 +65,46 @@ async def my_ledger(
     return await list_ledger(db, cur.id, page=page, limit=limit)
 
 
+@router.post("/checkin", response_model=ApiResp[dict])
+@respond
+async def checkin(
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> dict:
+    return await do_checkin(db, cur.id)
+
+
 @router.get("/leaderboard", response_model=ApiResp[list[LeaderboardEntry]])
 @respond
 async def points_leaderboard(
     limit: int = Query(50, ge=1, le=100),
+    period: str = Query("total"),
     db: AsyncSession = Depends(get_read_session),
 ) -> list[LeaderboardEntry]:
-    return await leaderboard(db, limit=limit)
+    return await leaderboard(db, limit=limit, period=period)
+
+
+@router.get("/achievements", response_model=ApiResp[list[AchievementOut]])
+@respond
+async def points_achievements(
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_read_session),
+) -> list[AchievementOut]:
+    return await list_achievements(db, user_id=cur.id)
+
+
+@router.get("/tasks", response_model=ApiResp[list[TaskOut]])
+@respond
+async def points_tasks(
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_read_session),
+) -> list[TaskOut]:
+    return await list_tasks(db, user_id=cur.id)
+
+
+@router.get("/exchange-items", response_model=ApiResp[list[ExchangeItemOut]])
+@respond
+async def points_exchange_items(
+    db: AsyncSession = Depends(get_read_session),
+) -> list[ExchangeItemOut]:
+    return await list_exchange_items(db)

@@ -44,6 +44,7 @@ from app.modules.articles.schemas import (
 from app.modules.auth.deps import CurrentUser
 from app.modules.auth.schemas import ProfileInfo
 from app.modules.common import paginate_pages, tag_names_sequence
+from app.modules.points.rules import enqueue_points_event
 
 # 默认阅读速度：中文约 300 字/分钟
 READING_SPEED_CPS = 300
@@ -347,6 +348,8 @@ async def toggle_article_like(
         await db.flush()
         await _bump_article_count(db, article.id, "likes", 1)
         liked = True
+        # 仅新增点赞路径入队（取消点赞不重复计分）
+        await enqueue_points_event(user_id, "like", f"article:{article.id}")
     like_count = (
         await db.execute(
             select(func.count())

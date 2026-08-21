@@ -213,7 +213,8 @@ class TestVerifyMagicLink:
             await svc.verify_magic_link(db, raw_token, purpose="login")
         assert exc.value.errcode == AuthErr.TOTP_SETUP_REQUIRED
 
-    async def should_return_temp_token_when_2fa_required(self, db: AsyncSession):
+    async def should_login_with_totp_without_forced_2fa(self, db: AsyncSession):
+        """登录不再强制 2FA：已启用 TOTP 的普通用户验证魔法链接直接得完整会话（危险操作时才 step-up）。"""
         user = await _create_user(
             db, email="secure@example.com", account_level="normal"
         )
@@ -226,7 +227,7 @@ class TestVerifyMagicLink:
 
         svc = _service()
         result = await svc.verify_magic_link(db, raw_token, purpose="login")
-        assert result["requires_2fa"] is True
-        assert result["temp_token"] is not None
-        assert result["access_token"] is None
-        assert result["refresh_token"] is None
+        assert result["requires_2fa"] is False
+        assert result["temp_token"] is None
+        assert result["access_token"] is not None
+        assert result["refresh_token"] is not None

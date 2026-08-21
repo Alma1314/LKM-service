@@ -30,6 +30,7 @@ from app.modules.exam.schemas import (
     SubmitAnswersRequest,
     SubmitResult,
 )
+from app.modules.points.rules import enqueue_points_event
 
 # 等级/角色唯一派升使用的排名表（与 auth.deps._LEVEL_ORDER 及
 # docs/后台管理权限等级需求总结.md 口径一致，仅 >= 提升，不下放）。
@@ -280,6 +281,8 @@ async def submit_attempt(
         await db.flush()
         certificate_id = cert.id
         await _apply_unlock(db, exam, user_id)
+        # 认证通过事件入队（竞赛计分）
+        await enqueue_points_event(user_id, "competition", f"cert:{certificate_id}")
 
     return SubmitResult(
         attempt_id=attempt.id,

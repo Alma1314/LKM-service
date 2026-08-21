@@ -29,6 +29,7 @@ from app.modules.files.schemas import (
     FileInfo,
     UploadInitResp,
 )
+from app.modules.points.rules import enqueue_points_event
 from app.modules.storage.base import StorageBackend
 from app.modules.storage.errors import StorageErr
 from app.modules.storage.factory import get_storage
@@ -376,6 +377,10 @@ async def review_file(
                     _raise_storage_as_file(exc)
     else:
         await db.flush()
+
+    # 仅审核通过时给归属者加分（f.status 已设为 target_status）
+    if f.status == FileStatus.APPROVED:
+        await enqueue_points_event(f.uploader_id, "file_approved", f"file:{f.id}")
 
     names = await _uploader_map(db, [f.uploader_id])
     return _file_to_schema(f, names.get(f.uploader_id, ""))

@@ -249,8 +249,8 @@ class TestLoginPassword:
         assert result.get("setup_required") is True
         assert result["temp_token"] is not None
 
-    async def should_return_temp_token_when_2fa_required(self, db: AsyncSession):
-        """If user has TOTP enabled, login returns requires_2fa=True and a temp_token."""
+    async def should_login_with_totp_without_forced_2fa(self, db: AsyncSession):
+        """登录不再强制 2FA：已启用 TOTP 的普通用户直接得完整会话令牌（危险操作时才 step-up）。"""
         from app.db.models import User
         from app.modules.auth.models import TOTP
 
@@ -272,10 +272,10 @@ class TestLoginPassword:
         await db.flush()
 
         result = await _login(db, "secure", "secret123456")
-        assert result["requires_2fa"] is True
-        assert result["temp_token"]
-        assert result["access_token"] is None
-        assert result["refresh_token"] is None
+        assert result["requires_2fa"] is False
+        assert result["temp_token"] is None
+        assert result["access_token"] is not None
+        assert result["refresh_token"] is not None
 
 
 # ===================================================================

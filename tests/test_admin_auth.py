@@ -203,8 +203,12 @@ class TestAdminRefreshAndLogout:
         first = await client.post("/api/v1/admin/auth/refresh")
         assert first.status_code == 200
 
-        # 旋转后，旧 refresh 已撤销：清掉新 cookie，塞回旧值再刷新应被拒
-        client.cookies.set("admin_refresh", old_refresh, path="/api/v1/admin")
+        # 旋转后，旧 refresh 已撤销：清掉旋转后写下的新 cookie（及历史遗留），
+        # 塞回旧值再刷新应被拒。cookie path 须与实际写入的 COOKIE_PATH（/api/v1）一致，
+        # 否则 httpx 会按最具体 path 优先发送旋转后的新 cookie，导致测不到旧值复用。
+        for cp in ("/api/v1", "/api/v1/admin"):
+            client.cookies.delete("admin_refresh", path=cp)
+        client.cookies.set("admin_refresh", old_refresh, path="/api/v1")
         again = await client.post("/api/v1/admin/auth/refresh")
         assert again.status_code == 403
 
