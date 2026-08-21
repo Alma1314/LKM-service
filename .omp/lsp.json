@@ -1,0 +1,13 @@
+{
+  "servers": {
+    "ty": {
+      "command": "ty",
+      "args": ["server"],
+      "fileTypes": [".py", ".pyi"],
+      "rootMarkers": ["pyproject.toml", ".git", "ty.toml"]
+    },
+    "basedpyright": {
+      "disabled": true
+    }
+  }
+}

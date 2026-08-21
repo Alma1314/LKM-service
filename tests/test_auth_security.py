@@ -1,5 +1,4 @@
 import time
-from typing import Any
 
 import jwt
 import pytest
@@ -25,9 +24,8 @@ from app.modules.auth.security import (
 # JWT – access token
 # ---------------------------------------------------------------------------
 
-
 class TestAccessToken:
-    async def should_create_and_decode(self):
+    def should_create_and_decode(self):
         token = create_access_token(user_id=1, account_level="normal", role="member")
         payload = decode_access_token(token)
         assert payload["user_id"] == 1
@@ -35,16 +33,16 @@ class TestAccessToken:
         assert payload["role"] == "member"
         assert payload["type"] == "access"
 
-    async def should_reject_wrong_secret(self):
+    def should_reject_wrong_secret(self):
         token = create_access_token(user_id=2, account_level="normal", role="member")
         wrong_key = "wrong-secret-key-hopefully-not-used"
         with pytest.raises(jwt.exceptions.InvalidSignatureError):
             jwt.decode(token, wrong_key, algorithms=[settings.jwt_algorithm])
 
-    async def should_reject_expired_token(self):
+    def should_reject_expired_token(self):
         # Build an already-expired JWT manually
         now = int(time.time())
-        payload: dict[str, Any] = {
+        payload = {
             "user_id": 3,
             "account_level": "normal",
             "role": "member",
@@ -52,16 +50,13 @@ class TestAccessToken:
             "iat": now - 9999,
             "exp": now - 3600,  # expired 1 hour ago
         }
-        token = jwt.encode(
-            payload, settings.jwt_secret, algorithm=settings.jwt_algorithm
-        )
+        token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
         with pytest.raises(jwt.exceptions.ExpiredSignatureError):
             decode_access_token(token)
 
-    async def should_reject_non_access_type(self):
+    def should_reject_non_access_type(self):
         token = create_temp_token(user_id=4)
-        # audience 锁定：temp token（lkm:temp）被喂给 access 解码器时将被拒绝
-        with pytest.raises(jwt.exceptions.InvalidAudienceError):
+        with pytest.raises(ValueError, match="non-access token"):
             decode_access_token(token)
 
 
@@ -69,18 +64,16 @@ class TestAccessToken:
 # JWT – temp token
 # ---------------------------------------------------------------------------
 
-
 class TestTempToken:
-    async def should_create_and_decode(self):
+    def should_create_and_decode(self):
         token = create_temp_token(user_id=5)
         payload = decode_temp_token(token)
         assert payload["user_id"] == 5
         assert payload["type"] == "temp"
 
-    async def should_reject_non_temp_type(self):
+    def should_reject_non_temp_type(self):
         token = create_access_token(user_id=6, account_level="normal", role="member")
-        # audience 锁定：access token（lkm:web）被喂给 temp 解码器时将被拒绝
-        with pytest.raises(jwt.exceptions.InvalidAudienceError):
+        with pytest.raises(ValueError, match="non-temp token"):
             decode_temp_token(token)
 
 
@@ -88,24 +81,22 @@ class TestTempToken:
 # TOTP
 # ---------------------------------------------------------------------------
 
-
 class TestTOTP:
-    async def should_generate_valid_secret(self):
+    def should_generate_valid_secret(self):
         secret = generate_totp_secret()
         assert len(secret) >= 16  # base32 encoding of 20 bytes
         # should be base32 decodable
         import base64
-
         base64.b32decode(secret, casefold=True)
 
-    async def should_generate_uri(self):
+    def should_generate_uri(self):
         secret = generate_totp_secret()
         uri = get_totp_uri(secret, "alice", "TestIssuer")
         assert uri.startswith("otpauth://totp/")
         assert "alice" in uri
         assert "TestIssuer" in uri
 
-    async def should_verify_valid_code(self):
+    def should_verify_valid_code(self):
         secret = generate_totp_secret()
         # Generate a valid TOTP code from secret for time step now
         import base64
@@ -118,16 +109,16 @@ class TestTOTP:
         msg = struct.pack(">Q", now)
         h = hmac.new(key, msg, hashlib.sha1).digest()
         offset = h[-1] & 0x0F
-        code = (struct.unpack(">I", h[offset : offset + 4])[0] & 0x7FFFFFFF) % 1_000_000
+        code = (struct.unpack(">I", h[offset:offset + 4])[0] & 0x7FFFFFFF) % 1_000_000
         code_str = f"{code:06d}"
 
         assert verify_totp(secret, code_str, window=0) is not None
 
-    async def should_reject_wrong_code(self):
+    def should_reject_wrong_code(self):
         secret = generate_totp_secret()
         assert verify_totp(secret, "000000", window=0) is None
 
-    async def should_accept_code_within_window(self):
+    def should_accept_code_within_window(self):
         secret = generate_totp_secret()
         import base64
         import hashlib
@@ -140,7 +131,7 @@ class TestTOTP:
         msg = struct.pack(">Q", prev_time)
         h = hmac.new(key, msg, hashlib.sha1).digest()
         offset = h[-1] & 0x0F
-        code = (struct.unpack(">I", h[offset : offset + 4])[0] & 0x7FFFFFFF) % 1_000_000
+        code = (struct.unpack(">I", h[offset:offset + 4])[0] & 0x7FFFFFFF) % 1_000_000
         code_str = f"{code:06d}"
 
         assert verify_totp(secret, code_str, window=1) is not None
@@ -150,20 +141,19 @@ class TestTOTP:
 # Recovery codes
 # ---------------------------------------------------------------------------
 
-
 class TestRecoveryCodes:
-    async def should_generate_n_codes(self):
+    def should_generate_n_codes(self):
         codes = generate_recovery_codes(10)
         assert len(codes) == 10
 
-    async def should_be_unique(self):
+    def should_be_unique(self):
         codes = generate_recovery_codes(100)
         plains = [c[0] for c in codes]
         hashes = [c[1] for c in codes]
         assert len(set(plains)) == 100
         assert len(set(hashes)) == 100
 
-    async def should_have_correct_tuple_structure(self):
+    def should_have_correct_tuple_structure(self):
         codes = generate_recovery_codes(5)
         for plain, hashed in codes:
             assert isinstance(plain, str)
@@ -177,15 +167,14 @@ class TestRecoveryCodes:
 # Encrypt / Decrypt
 # ---------------------------------------------------------------------------
 
-
 class TestEncryptDecrypt:
-    async def should_roundtrip_secret(self):
+    def should_roundtrip_secret(self):
         plain = "JBSWY3DPEHPK3PXP"
         cipher = encrypt_secret(plain)
         assert cipher != plain
         assert decrypt_secret(cipher) == plain
 
-    async def should_produce_different_ciphertexts(self):
+    def should_produce_different_ciphertexts(self):
         plain = "JBSWY3DPEHPK3PXP"
         c1 = encrypt_secret(plain)
         c2 = encrypt_secret(plain)
