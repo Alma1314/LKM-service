@@ -23,8 +23,9 @@ REFRESH_NAME = "admin_refresh"
 ACCESS_TOKEN_MINUTES = 15
 # 与前台/后台分离的 audience：后台 access cookie 只认本 audience，防被前台或 temp token 冒用
 _ADMIN_AUD = "lkm:admin"
-# cookie Path 须与浏览器发出的真实域路径一致（开发/默认 /api/v1/admin）
-COOKIE_PATH = f"/{settings.api_prefix.strip('/')}/admin"
+# cookie Path 需覆盖 admin 后台全部路径（含 /api/v1/boards、/projects 等危险操作端点），
+# 故扩展到整个 API 前缀而非 /admin 子路径；type=admin + 专属 audience 仍保证前台不认。
+COOKIE_PATH = f"/{settings.api_prefix.strip('/')}"
 # 危险操作 step-up 2FA 的信任窗口：验证通过后 1 小时内不再重复要求
 MFA_TRUST_SECONDS = 3600
 

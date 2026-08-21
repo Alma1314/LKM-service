@@ -8,7 +8,11 @@ from app.core.err import respond
 from app.db.models import ArticleCategory
 from app.db.session import get_read_session, get_session
 from app.modules.articles.schemas import ArticleDetail
-from app.modules.auth.deps import CurrentUser, get_current_user, get_optional_user
+from app.modules.auth.deps import (
+    CurrentUser,
+    get_current_user,
+    get_optional_user,
+)
 from app.modules.blog.schemas import (
     BlogCommentCreate,
     BlogCommentInfo,

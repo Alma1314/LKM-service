@@ -1,0 +1,141 @@
+"""后台内容删除端点：/admin/content/*（管理员删除用户内容）。
+
+高风险写操作：须持有有效后台 2FA 信任（require_admin_2fa，1 小时窗口），
+删除后记录审计（谁删了谁的内容）。仅 account_level=admin 可访问。
+普通用户删除自己的内容走各自的）前台端点（无 2FA）。
+"""
+
+from typing import Any
+
+from fastapi import APIRouter, Depends, Request
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.err import respond
+from app.db.session import get_session
+from app.modules.articles.service import (
+    delete_article_comment as delete_article_comment_svc,
+)
+from app.modules.auth.deps import CurrentUser
+from app.modules.auth.service_auth import log_audit
+from app.modules.blog.service import (
+    delete_comment as delete_blog_comment_svc,
+)
+from app.modules.blog.service import (
+    delete_series as delete_blog_series_svc,
+)
+from app.modules.common import ApiResp
+from app.modules.forum.service import delete_post as delete_forum_post_svc
+
+from .deps import get_real_client_ip, require_admin_2fa
+
+router = APIRouter(prefix="/admin/content", tags=["admin-content"])
+
+
+async def _audit_admin_delete(
+    db: AsyncSession,
+    request: Request,
+    admin_id: int,
+    target_user_id: int,
+    action: str,
+    detail: str,
+) -> None:
+    """记录管理员删除内容审计：user_id=被删内容作者，detail 含内容与执行者。"""
+    await log_audit(
+        db,
+        target_user_id,
+        action,
+        detail=f"{detail} by admin={admin_id}",
+        ip_address=get_real_client_ip(request),
+    )
+
+
+@router.delete("/post/{post_id}", response_model=ApiResp[dict[str, Any]])
+@respond
+async def admin_delete_post(
+    post_id: int,
+    request: Request,
+    cur: CurrentUser = require_admin_2fa,
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """管理员删除用户帖子。"""
+    author_id = await delete_forum_post_svc(db, post_id, cur.id, as_admin=True)
+    await _audit_admin_delete(
+        db,
+        request,
+        cur.id,
+        author_id,
+        "admin_delete_post",
+        f"post={post_id}",
+    )
+    return {"ok": True}
+
+
+@router.delete("/series/{series_id}", response_model=ApiResp[dict[str, Any]])
+@respond
+async def admin_delete_series(
+    series_id: int,
+    request: Request,
+    cur: CurrentUser = require_admin_2fa,
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """管理员删除用户专栏系列。"""
+    owner_id = await delete_blog_series_svc(db, series_id, cur.id, as_admin=True)
+    await _audit_admin_delete(
+        db,
+        request,
+        cur.id,
+        owner_id,
+        "admin_delete_series",
+        f"series={series_id}",
+    )
+    return {"ok": True}
+
+
+@router.delete(
+    "/blog-comment/{series_id}/{comment_id}",
+    response_model=ApiResp[dict[str, Any]],
+)
+@respond
+async def admin_delete_blog_comment(
+    series_id: int,
+    comment_id: int,
+    request: Request,
+    cur: CurrentUser = require_admin_2fa,
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """管理员删除用户博客系列评论。"""
+    author_id = await delete_blog_comment_svc(
+        db, series_id, comment_id, cur.id, as_admin=True
+    )
+    await _audit_admin_delete(
+        db,
+        request,
+        cur.id,
+        author_id,
+        "admin_delete_blog_comment",
+        f"series={series_id} comment={comment_id}",
+    )
+    return {"ok": True}
+
+
+@router.delete(
+    "/article-comment/{comment_id}", response_model=ApiResp[dict[str, Any]]
+)
+@respond
+async def admin_delete_article_comment(
+    comment_id: int,
+    request: Request,
+    cur: CurrentUser = require_admin_2fa,
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """管理员删除用户文章评论。"""
+    author_id = await delete_article_comment_svc(db, comment_id, cur.id, as_admin=True)
+    await _audit_admin_delete(
+        db,
+        request,
+        cur.id,
+        author_id,
+        "admin_delete_article_comment",
+        f"comment={comment_id}",
+    )
+    return {"ok": True}

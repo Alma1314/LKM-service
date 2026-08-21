@@ -419,18 +419,23 @@ async def list_article_comments(db: AsyncSession, slug: str) -> list[ArticleComm
 
 
 async def delete_article_comment(
-    db: AsyncSession, comment_id: int, user_id: int
-) -> None:
+    db: AsyncSession,
+    comment_id: int,
+    user_id: int,
+    as_admin: bool = False,
+) -> int:
     comment = await get_or_raise(
         db,
         ArticleComment,
         ArticleErr.COMMENT_NOT_FOUND,
         ArticleComment.id == comment_id,
     )
-    if comment.user_id != user_id:
+    if not as_admin and comment.user_id != user_id:
         raise BizError(CommonErr.FORBIDDEN)
+    author_id = comment.user_id
     await db.delete(comment)
     await _bump_article_count(db, comment.article_id, "comments", -1)
+    return author_id
 
 
 # ————— 分类 CRUD（写操作走 service，读列表复用 list_categories） —————

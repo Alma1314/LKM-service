@@ -64,8 +64,11 @@ def create_access_token(
     role: str,
     trust_device: bool = False,
     token_version: int = 0,
+    mfa_verified: bool = False,
+    mfa_at: int | None = None,
 ) -> str:
     now = int(time.time())
+    verified_at = mfa_at if mfa_at is not None else now
     payload: dict[str, Any] = {
         "user_id": user_id,
         "account_level": account_level,
@@ -73,6 +76,10 @@ def create_access_token(
         "trust_device": trust_device,
         "type": _ACCESS_TYPE,
         "token_version": token_version,
+        # 危险操作 step-up 2FA 标记 + 信任时刻（epoch 秒）：防前台删除等危险端点被未二次验证的会话滥用。
+        # 1 小时窗口由 auth/deps.get_current_user_2fa 校验；刷新轮换经 refresh_tokens.mfa_at 继承原点，窗口不重置。
+        "mfa": mfa_verified,
+        "mfa_at": verified_at if mfa_verified else None,
         "aud": _AUD_WEB,
         "iat": now,
         "exp": now + settings.access_token_expire_minutes * 60,

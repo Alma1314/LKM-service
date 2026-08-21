@@ -78,7 +78,11 @@ def hash_refresh_token(raw: str) -> str:
 
 
 async def store_refresh_token(
-    db: AsyncSession, user_id: int, raw: str, mfa_verified: bool = False
+    db: AsyncSession,
+    user_id: int,
+    raw: str,
+    mfa_verified: bool = False,
+    mfa_at: datetime.datetime | None = None,
 ) -> datetime.datetime:
     """持久化哈希后的刷新令牌并返回其过期时间（timezone-aware datetime）。"""
     days = settings.refresh_token_expire_days
@@ -87,6 +91,7 @@ async def store_refresh_token(
         user_id=user_id,
         token_hash=hash_refresh_token(raw),
         mfa_verified=mfa_verified,
+        mfa_at=mfa_at,
         expires_at=expires_str,
     )
     db.add(tok)
@@ -100,22 +105,36 @@ async def issue_session_tokens(
     *,
     trust_device: bool = False,
     mfa_verified: bool = False,
+    mfa_at: datetime.datetime | None = None,
 ) -> tuple[str, str]:
-    """发放访问令牌 + 刷新令牌，返回 (access_token, raw_refresh)。"""
+    """发放访问令牌 + 刷新令牌，返回 (access_token, raw_refresh)。
+
+    mfa_verified=True 时把 step-up 2FA 标记（含信任时刻 mfa_at，默认 now）编入 access token，
+    并同步写入刷新记录，供 1 小时信任窗口与刷新轮换继承使用。
+    """
     # async 下不能对未加载的 relationship 做 lazy load，统一确保 profile 已初始化
     if "profile" not in user.__dict__:
         await db.refresh(user, attribute_names=["profile"])
     profile = user.profile
     role = profile.role if profile else "member"
+    verified_at = mfa_at if mfa_at is not None else datetime.datetime.now(datetime.UTC)
     access_token = create_access_token(
         user_id=user.id,
         account_level=user.account_level,
         role=role,
         trust_device=trust_device,
         token_version=user.token_version,
+        mfa_verified=mfa_verified,
+        mfa_at=int(verified_at.timestamp()) if mfa_verified else None,
     )
     raw_refresh = generate_refresh_token()
-    await store_refresh_token(db, user.id, raw_refresh, mfa_verified=mfa_verified)
+    await store_refresh_token(
+        db,
+        user.id,
+        raw_refresh,
+        mfa_verified=mfa_verified,
+        mfa_at=verified_at if mfa_verified else None,
+    )
     return access_token, raw_refresh
 
 
@@ -747,8 +766,10 @@ async def refresh_access_token(db: AsyncSession, raw_refresh: str) -> dict[str, 
 
     # 登录不再强制 admin MFA（对齐 GitHub 缓动）：刷新会话保持原有保证级别即可，
     # 危险操作的安全由 admin 后台 step-up（require_admin_2fa）在请求时校验。
+    # 前台同样继承本会话的 step-up 2FA 信任原点（stored.mfa_at），
+    # 避免 15min access token 轮换把危险操作的 1 小时信任窗口重置。
     access_token, raw_new = await issue_session_tokens(
-        db, user, mfa_verified=stored.mfa_verified
+        db, user, mfa_verified=stored.mfa_verified, mfa_at=stored.mfa_at
     )
     return {"access_token": access_token, "refresh_token": raw_new}
 

@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr
-from app.db.models import expires_at
+from app.db.models import User, expires_at
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import RefreshToken
 
@@ -398,6 +398,29 @@ class TestRefresh:
         old_hash = hashlib.sha256(raw.encode()).hexdigest()
         old = await _get(db, RefreshToken, RefreshToken.token_hash == old_hash)
         assert old.revoked_at is not None
+
+    async def should_inherit_stepup_mfa_trust_on_refresh(self, db: AsyncSession):
+        """前台 step-up 2FA 信任（mfa_at 原点）应随刷新轮换继承，1h 窗口不被 15min access 轮换重置。"""
+        from app.modules.auth.security import decode_access_token
+        from app.modules.auth.service_auth import issue_session_tokens
+
+        await _reg_local(db, username="alice", password="secret123456")
+        user = (await db.execute(select(User).where(User.username == "alice"))).scalars().first()
+        assert user is not None
+
+        _, raw = await issue_session_tokens(db, user, mfa_verified=True)
+        svc = _service()
+        new = await svc.refresh_access_token(db, raw)
+        payload = decode_access_token(new["access_token"])
+        assert payload["mfa"] is True
+        assert payload["mfa_at"] is not None
+        # 刷新不延长信任：新 access token 的 mfa_at 应仍是不晚于当前时刻（保留原点，而非 now）
+        assert payload["mfa_at"] <= int(datetime.datetime.now(datetime.UTC).timestamp()) + 2
+
+        # 未做 step-up 的普通会话刷新后仍无 mfa 标记
+        result = await _reg_local(db, username="bob", password="other1234567")
+        new_plain = await svc.refresh_access_token(db, result["refresh_token"])
+        assert decode_access_token(new_plain["access_token"])["mfa"] is not True
 
     async def should_reject_revoked_token(self, db: AsyncSession):
         result = await _reg_local(db, username="alice")

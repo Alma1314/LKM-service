@@ -323,14 +323,16 @@ async def update_series(
     return _series_to_info(series)
 
 
-async def delete_series(db: AsyncSession, series_id: int, user_id: int) -> None:
+async def delete_series(
+    db: AsyncSession, series_id: int, user_id: int, as_admin: bool = False
+) -> int:
     series = await get_or_raise(
         db,
         BlogSeries,
         BlogErr.SERIES_NOT_FOUND,
         BlogSeries.id == series_id,
     )
-    if series.owner_id != user_id:
+    if not as_admin and series.owner_id != user_id:
         raise BizError(CommonErr.FORBIDDEN)
 
     await asyncio.to_thread(git_svc.delete_repo, series.repo_name)
@@ -348,11 +350,10 @@ async def delete_series(db: AsyncSession, series_id: int, user_id: int) -> None:
     )
     if qrow is not None:
         await db.delete(qrow)
+    owner_id = series.owner_id
     await db.delete(series)
     await db.flush()
-
-
-# ---- star toggle ----
+    return owner_id
 
 
 async def toggle_star(db: AsyncSession, series_id: int, user_id: int) -> BlogStarStatus:
@@ -469,8 +470,12 @@ async def list_comments(db: AsyncSession, series_id: int) -> list[BlogCommentInf
 
 
 async def delete_comment(
-    db: AsyncSession, series_id: int, comment_id: int, user_id: int
-) -> None:
+    db: AsyncSession,
+    series_id: int,
+    comment_id: int,
+    user_id: int,
+    as_admin: bool = False,
+) -> int:
     comment = await get_or_raise(
         db,
         BlogComment,
@@ -478,10 +483,12 @@ async def delete_comment(
         BlogComment.id == comment_id,
         BlogComment.series_id == series_id,
     )
-    if comment.user_id != user_id:
+    if not as_admin and comment.user_id != user_id:
         raise BizError(CommonErr.FORBIDDEN)
+    author_id = comment.user_id
     await db.delete(comment)
     await db.flush()
+    return author_id
 
 
 # ---- files ----

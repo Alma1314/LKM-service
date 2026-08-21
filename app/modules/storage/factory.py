@@ -17,6 +17,7 @@ def get_storage() -> StorageBackend:
             bucket=settings.s3_bucket,
             prefix=settings.s3_prefix,
             endpoint_url=settings.s3_endpoint_url,
+            public_endpoint_url=settings.s3_public_endpoint_url,
             region_name=settings.s3_region,
             aws_access_key_id=settings.s3_access_key,
             aws_secret_access_key=settings.s3_secret_key,

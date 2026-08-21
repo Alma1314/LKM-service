@@ -246,7 +246,7 @@ async def unbind(
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    """解绑邮箱 / 手机号 / GitHub。已开启 2FA 时需携带 TOTP 码二次验证。"""
+    """解绑邮箱 / 手机号 / GitHub。已开启 2FA 时需携带 TOTP 码或恢复码二次验证。"""
     if binding_type not in _ALLOWED_UNBIND:
         raise BizError(
             CommonErr.INVALID_INPUT, f"Unsupported binding type: {binding_type}"
@@ -260,40 +260,38 @@ async def unbind(
         options=(selectinload(User.oauth_bindings),),
     )
 
-    if binding_type in ("email", "phone"):
-        # 2FA 门槛：已开启 2FA 必须带 TOTP 码
-        totp = await service_2fa.get_enabled_totp(db, cur.id)
-        if totp is not None:
-            if not body.code:
-                raise BizError(
-                    AuthErr.TOTP_CODE_INVALID, "2FA 已开启，解绑需要动态验证码"
-                )
-            await service_2fa.verify_user_totp(db, cur.id, body.code)
-
-        # 保留至少一种登录方式：normal 用户要求 email/phone/github 至少留一个
-        if _count_login_ways(user) <= 1:
+    # 2FA 门槛：三种解绑（email/phone/github）已开启 2FA 时都必须二次验证（TOTP 或恢复码）
+    totp = await service_2fa.get_enabled_totp(db, cur.id)
+    if totp is not None:
+        if not body.code and not body.recovery_code:
             raise BizError(
-                CommonErr.INVALID_INPUT,
-                "至少需要保留一种登录方式（邮箱/手机号/GitHub）",
+                AuthErr.TOTP_CODE_INVALID, "2FA 已开启，解绑需要动态验证码"
             )
-
-        if binding_type == "email":
-            user.email = None
-        else:
-            user.phone = None
-        await db.flush()
-        return {"message": f"{binding_type} unbound"}
-
-    # github
-    result = await db.execute(
-        sa_delete(UserOAuth).where(
-            UserOAuth.user_id == cur.id, UserOAuth.provider == "github"
+        await service_2fa.verify_second_factor(
+            db, cur.id, code=body.code, recovery_code=body.recovery_code
         )
-    )
+
+    # 保留至少一种登录方式：normal 用户要求 email/phone/github 至少留一个
+    if _count_login_ways(user) <= 1:
+        raise BizError(
+            CommonErr.INVALID_INPUT,
+            "至少需要保留一种登录方式（邮箱/手机号/GitHub）",
+        )
+
+    if binding_type == "email":
+        user.email = None
+    elif binding_type == "phone":
+        user.phone = None
+    else:  # github
+        result = await db.execute(
+            sa_delete(UserOAuth).where(
+                UserOAuth.user_id == cur.id, UserOAuth.provider == "github"
+            )
+        )
+        if (getattr(result, "rowcount", 0) or 0) == 0:
+            raise BizError(CommonErr.INVALID_INPUT, "GitHub 尚未绑定")
     await db.flush()
-    if (getattr(result, "rowcount", 0) or 0) == 0:
-        raise BizError(CommonErr.INVALID_INPUT, "GitHub 尚未绑定")
-    return {"message": "github unbound"}
+    return {"message": f"{binding_type} unbound"}
 
 
 def _count_login_ways(user: User) -> int:

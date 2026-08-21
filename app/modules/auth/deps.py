@@ -2,6 +2,7 @@
 
 import datetime as _dt
 import os
+import time as _time
 from typing import Any
 
 from fastapi import Depends, Header
@@ -137,6 +138,37 @@ def RequireLevel(min_level: str) -> Any:
         return cur
 
     return Depends(checker)
+
+
+# 前台危险操作 step-up 2FA 的信任窗口：验证通过后 1 小时内不再重复要求（与后台 admin/deps 同值）
+MFA_TRUST_SECONDS = 3600
+
+
+async def get_current_user_2fa(
+    token: str = Depends(_parse_bearer),
+    cur: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """前台危险操作依赖：在有效会话之上，另要求本会话已通过 step-up 2FA 且信任未过期（1 小时）。
+
+    校验失败抛 CommonErr.MFA_REQUIRED，前端据此弹 TOTP 验证（POST /auth/2fa/step-up）后重试。
+    未启用 TOTP 的用户同样无法满足 mfa 标记，一并引导先启用 2FA（与后台 require_admin_2fa 行为一致）。
+    """
+    try:
+        payload = decode_access_token(token)
+    except (PyJWTError, ValueError) as exc:
+        raise BizError(CommonErr.MFA_REQUIRED) from exc
+    if not payload.get("mfa"):
+        raise BizError(CommonErr.MFA_REQUIRED, "MFA required")
+    mfa_at = payload.get("mfa_at")
+    if mfa_at is None:
+        raise BizError(CommonErr.MFA_REQUIRED, "MFA required")
+    tried_at = float(mfa_at)
+    if _time.time() - tried_at > MFA_TRUST_SECONDS:
+        raise BizError(CommonErr.MFA_REQUIRED, "MFA trust expired")
+    return cur
+
+
+require_2fa = Depends(get_current_user_2fa)
 
 
 def get_sms_provider() -> SmsProvider:

@@ -135,14 +135,22 @@ async def create_post(db: AsyncSession, author_id: int, info: PostCreate) -> Pos
     return _post_to_schema(post, names.get(post.author_id, ""))
 
 
-async def delete_post(db: AsyncSession, post_id: int, current_user_id: int) -> None:
+async def delete_post(
+    db: AsyncSession,
+    post_id: int,
+    current_user_id: int,
+    as_admin: bool = False,
+) -> int:
+    """删除帖子并返回作者 id。普通用户只能删自己的；as_admin=True（管理员代删）跳过 owner 校验。"""
     post = await get_or_raise(
         db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id
     )
-    if post.author_id != current_user_id:
+    if not as_admin and post.author_id != current_user_id:
         raise BizError(CommonErr.FORBIDDEN)
+    author_id = post.author_id
     await db.delete(post)
     await db.flush()
+    return author_id
 
 
 async def like_post(db: AsyncSession, post_id: int, user_id: int) -> int:

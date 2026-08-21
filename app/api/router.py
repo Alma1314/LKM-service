@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.modules.admin.auth_router import router as admin_router
+from app.modules.admin.content_router import router as admin_content_router
 from app.modules.admin.reports_router import router as admin_reports_router
 from app.modules.admin.users_router import router as admin_data_router
 from app.modules.articles.router import router as articles_router
@@ -32,6 +33,7 @@ api_router.include_router(health_router)
 api_router.include_router(members_router)
 api_router.include_router(avatars_router)
 api_router.include_router(admin_router)
+api_router.include_router(admin_content_router)
 api_router.include_router(admin_data_router)
 api_router.include_router(admin_reports_router)
 api_router.include_router(auth_router)

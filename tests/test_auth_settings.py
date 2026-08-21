@@ -452,6 +452,63 @@ class TestUnbind:
             await db.execute(select(UserOAuth.id).where(UserOAuth.user_id == user.id))
         ).scalars().first() is None
 
+    async def should_require_2fa_for_github_unbind(self, db: AsyncSession):
+        """解绑 GitHub 已开启 2FA 时，同样要求二次验证（TOTP 或恢复码）。"""
+        from app.modules.auth.models import TOTP
+
+        user = await self._reg_with_bindings(db)
+        db.add(TOTP(user_id=user.id, secret="s", enabled=True))
+        await db.flush()
+        from app.modules.auth.router_settings import unbind
+
+        with pytest.raises(BizError) as exc:
+            await unbind(
+                "github",
+                UnbindRequest(code=None),
+                cur=_FakeCurrentUser(user.id, account_level="normal"),
+                db=db,
+            )
+        assert exc.value.errcode == AuthErr.TOTP_CODE_INVALID
+
+    async def should_unbind_github_with_recovery_code(self, db: AsyncSession):
+        """解绑 GitHub 已开启 2FA 时，可用合法恢复码兜底完成。"""
+        import hashlib
+
+        from app.modules.auth.models import TOTP, RecoveryCode, UserOAuth
+        from app.modules.auth.router_settings import unbind
+
+        user = await self._reg_with_bindings(db)
+        db.add(TOTP(user_id=user.id, secret="s", enabled=True))
+        db.add(
+            UserOAuth(
+                user_id=user.id,
+                provider="github",
+                provider_user_id="123",
+                provider_email="gh@example.com",
+            )
+        )
+        db.add(
+            RecoveryCode(
+                user_id=user.id,
+                code_hash=hashlib.sha256(b"rc-gh-1").hexdigest(),
+                used=False,
+            )
+        )
+        await db.flush()
+
+        data = _unwrap(
+            await unbind(
+                "github",
+                UnbindRequest(code=None, recovery_code="rc-gh-1"),
+                cur=_FakeCurrentUser(user.id, account_level="normal"),
+                db=db,
+            )
+        )
+        assert data["data"]["message"] == "github unbound"
+        assert (
+            await db.execute(select(UserOAuth.id).where(UserOAuth.user_id == user.id))
+        ).scalars().first() is None
+
     async def should_reject_invalid_type(self, db: AsyncSession):
         user = await self._reg_with_bindings(db)
         from app.core.err import BizError

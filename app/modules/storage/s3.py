@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from app.core.err import BizError
@@ -78,6 +79,7 @@ class S3Storage:
         prefix: str,
         client: Any = None,
         endpoint_url: str = "",
+        public_endpoint_url: str = "",
         region_name: str = "",
         aws_access_key_id: str = "",
         aws_secret_access_key: str = "",
@@ -92,6 +94,24 @@ class S3Storage:
             aws_access_key_id=aws_access_key_id or None,
             aws_secret_access_key=aws_secret_access_key or None,
         )
+        # 预签名 URL 对浏览器暴露的公网 endpoint。签名与请求 host 必须一致，故用
+        # 独立 client（endpoint=公网）生成 preset 签名，否则 host 与签名不符会 403。
+        # 空则复用内网 client（浏览器可直连时才适用）。
+        self._public_client = self._client
+        if public_endpoint_url:
+            # MinIO 校验预签名用 SigV4；boto3 对非 AWS 标准 endpoint 默认 SigV2 会 403。
+            # 需显式 s3v4 + path 寻址，并给 region（SigV4 要求），公网 host 供浏览器直连。
+            self._public_client = boto3.client(
+                "s3",
+                endpoint_url=public_endpoint_url,
+                region_name=region_name or "us-east-1",
+                aws_access_key_id=aws_access_key_id or None,
+                aws_secret_access_key=aws_secret_access_key or None,
+                config=Config(
+                    signature_version="s3v4",
+                    s3={"addressing_style": "path"},
+                ),
+            )
 
     def _key(self, bucket_key: str) -> str:
         # bucket_key 已是 files/<...> 逻辑 key，直接拼 prefix；避免双斜杠
@@ -179,15 +199,16 @@ class S3Storage:
             ) from exc
 
     def presign_download(self, bucket_key: str, *, expires: int) -> str:
-        # 预签名 URL 为本地签名计算（无网络），可同步调用
-        return self._client.generate_presigned_url(
+        # 预签名 URL 为本地签名计算（无网络），可同步调用。
+        # 用公网 client（endpoint=public）生成，保证 URL host 与签名一致。
+        return self._public_client.generate_presigned_url(
             "get_object",
             Params={"Bucket": self.bucket, "Key": self._key(bucket_key)},
             ExpiresIn=expires,
         )
 
     def presign_upload(self, bucket_key: str, *, expires: int) -> str:
-        return self._client.generate_presigned_url(
+        return self._public_client.generate_presigned_url(
             "put_object",
             Params={"Bucket": self.bucket, "Key": self._key(bucket_key)},
             ExpiresIn=expires,

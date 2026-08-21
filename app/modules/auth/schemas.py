@@ -132,7 +132,10 @@ class TOTPVerifyRequest(BaseModel):
 
 
 class TOTPDisableRequest(BaseModel):
-    code: str
+    """关闭 2FA / step-up 第二次因子：TOTP 动态码或恢复码二选一。"""
+
+    code: str | None = None
+    recovery_code: str | None = None
 
 
 # ── 通用消息响应 ──────────────────────────────────────────────
@@ -290,6 +293,7 @@ class SettingsInfo(BaseModel):
 
 
 class UnbindRequest(BaseModel):
-    """DELETE /auth/settings/{type} —— 解绑请求体；已开启 2FA 时 code 必填。"""
+    """DELETE /auth/settings/{type} —— 解绑请求体；已开启 2FA 时 code/recovery_code 二选一。"""
 
     code: str | None = Field(default=None, min_length=6, max_length=6)
+    recovery_code: str | None = None

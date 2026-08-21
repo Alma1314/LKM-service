@@ -17,10 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, respond
 from app.db.models import User, expires_at, now_iso
-from app.db.repo import consume_once
+from app.db.repo import consume_once, get_or_raise
 from app.db.session import get_session
 from app.modules.auth import security, service_2fa
-from app.modules.auth.deps import CurrentUser, RequireLevel
+from app.modules.auth.deps import CurrentUser, RequireLevel, get_current_user
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import SetupTransaction
 from app.modules.auth.schemas import (
@@ -189,8 +189,10 @@ async def disable_2fa(
     cur: CurrentUser = RequireLevel("normal"),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    """为当前用户禁用 2FA。需要有效的 TOTP 码。"""
-    result = await service_2fa.disable_2fa(db, cur.id, body.code)
+    """为当前用户禁用 2FA。需要有效的 TOTP 码或恢复码。"""
+    result = await service_2fa.disable_2fa(
+        db, cur.id, code=body.code, recovery_code=body.recovery_code
+    )
     return result
 
 
@@ -203,3 +205,34 @@ async def get_2fa_status(
     """返回当前用户 2FA 是否已开启。"""
     totp = await service_2fa.get_enabled_totp(db, cur.id)
     return {"enabled": totp is not None}
+
+
+@router.post("/step-up", response_model=ApiResp[TOTPVerifyResponse])
+@respond
+async def step_up_2fa(
+    body: TOTPDisableRequest,
+    cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """前台危险操作 step-up：验证当前已登录用户的第二因素（TOTP 或恢复码），通过后签发带 2FA 信任的 access token。
+
+    信任窗口 1 小时（auth/deps.MFA_TRUST_SECONDS），期间前台删除类危险端点
+    （require_2fa）不再重复要求。未通过则不更新信任，仅抛 TOTP/RECOVERY 相关错误。
+    返回新 access/refresh token（`mfa`/`mfa_at` 标记已编入 access token）。
+    """
+    await check_code_rate_limit("2fa:stepup", max_count=10, window=3600)
+    await service_2fa.verify_second_factor(
+        db, cur.id, code=body.code, recovery_code=body.recovery_code
+    )
+
+    user = await get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == cur.id)
+    access_token, raw_refresh = await issue_session_tokens(
+        db, user, mfa_verified=True
+    )
+    return {
+        "access_token": access_token,
+        "refresh_token": raw_refresh,
+        "user_id": int(user.id),
+        "account_level": str(user.account_level),
+        "mfa_verified": True,
+    }
