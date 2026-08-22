@@ -14,8 +14,10 @@ from app.db.models import Report
 from app.db.session import get_read_session
 from app.modules.auth.deps import CurrentUser
 from app.modules.common import ApiResp, PageData, paginate_pages
+from app.modules.rbac.permissions import Permission
 
 from .deps import require_admin
+from .permissions import require_permission
 from .schemas import AdminReportListItem
 
 router = APIRouter(prefix="/admin", tags=["admin-data"])
@@ -33,6 +35,7 @@ async def admin_list_reports(
     """
     举报审核列表。可按状态过滤（pending/resolved/dismissed），倒序分页。
     """
+    await require_permission(db, _cur, Permission.admin_reports_view)
     query = select(Report)
     count_q = select(func.count(Report.id))
 

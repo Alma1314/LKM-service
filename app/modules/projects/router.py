@@ -9,10 +9,10 @@ from app.core.cache import (
     collection_version,
     make_key,
 )
-from app.core.err import respond
+from app.core.err import BizError, CommonErr, respond
 from app.db.session import get_read_session, get_session
 from app.modules.admin.deps import require_admin_2fa
-from app.modules.auth.deps import CurrentUser, RequireLevel
+from app.modules.auth.deps import CurrentUser
 from app.modules.common import ApiResp, ListData, ModuleStatus
 from app.modules.projects.schemas import (
     ProjectApplicationCreate,
@@ -26,6 +26,9 @@ from app.modules.projects.service import (
     review_application,
     submit_application,
 )
+from app.modules.rbac.deps import RequirePermission
+from app.modules.rbac.permissions import Permission, composible_role
+from app.modules.rbac.service import role_has_permission
 
 
 def _status() -> ModuleStatus:
@@ -72,7 +75,7 @@ async def project_detail(
 @respond
 async def submit_app(
     info: ProjectApplicationCreate,
-    cur: CurrentUser = RequireLevel("normal"),
+    cur: CurrentUser = RequirePermission(Permission.projects_application_create),
     db: AsyncSession = Depends(get_session),
 ) -> ProjectApplicationOut:
     return await submit_application(db, cur.id, info)
@@ -88,6 +91,13 @@ async def review_app(
     _cur: Annotated[CurrentUser, require_admin_2fa],
     db: AsyncSession = Depends(get_session),
 ) -> ProjectApplicationOut:
+    # require_admin_2fa 已保证 admin 会话 + 2FA 信任；此处再叠加 projects_application_review
+    # 权限点（super_admin 有，org_member 无）。校验失败按 FORBIDDEN 返回。
+    role = composible_role(_cur.account_level, _cur.role)
+    if not await role_has_permission(
+        db, role, Permission.projects_application_review
+    ):
+        raise BizError(CommonErr.FORBIDDEN)
     result = await review_application(db, app_id, _cur.id, body)
     await bump_collection_version("projects")
     return result

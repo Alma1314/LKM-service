@@ -1,0 +1,173 @@
+"""RBAC 权限点与复合角色定义（代码侧事实源）。
+
+权限点命名两段式 ``域.动作``；对象级权限点加 owner 前缀。复合角色为
+``{account_level}:{profile.role}``（见 spec §3.1）。角色→权限默认映射
+``DEFAULT_GRANTS`` 供 seed 落库；运行期以 ``role_permissions`` 表为准。
+"""
+
+from enum import StrEnum
+from typing import NamedTuple
+
+
+class Permission(StrEnum):
+    """全部权限点（代码侧枚举，运行期以 DB 映射为准）。"""
+
+    # member 域
+    comment_create = "member.comment_create"
+    avatar_update = "member.avatar_update"
+    # forum 域
+    forum_post_create = "forum.post_create"
+    forum_post_like = "forum.post_like"
+    forum_comment_create = "forum.comment_create"
+    forum_view_hidden = "forum.view_hidden"
+    # boards 域
+    boards_create_application = "boards.create_application"
+    boards_review_application = "boards.review_application"
+    boards_manage = "boards.manage"
+    # articles 域（全官方文章，仅 super_admin）
+    articles_publish = "articles.publish"
+    articles_review = "articles.review"
+    articles_category_manage = "articles.category_manage"
+    # columns 域
+    columns_application_create = "columns.application_create"
+    columns_application_review = "columns.application_review"
+    columns_publish = "columns.publish"
+    # files 域
+    files_upload = "files.upload"
+    files_download = "files.download"
+    files_review = "files.review"
+    # projects 域
+    projects_application_create = "projects.application_create"
+    projects_application_review = "projects.application_review"
+    projects_create = "projects.create"
+    projects_review = "projects.review"
+    # 后台 admin 域
+    admin_dashboard = "admin.dashboard"
+    admin_reports_view = "admin.reports_view"
+    admin_users_manage = "admin.users_manage"
+    admin_content_review = "admin.content_review"
+    # 对象级权限点（配 require_owner 依赖内查属主）
+    article_owner_publish = "article.owner_publish"
+    article_owner_comment_delete = "article.owner_comment_delete"
+    column_owner_publish = "column.owner_publish"
+    board_owner_manage = "board.owner_manage"
+    forum_owner_delete = "forum.owner_delete"
+    forum_owner_comment_delete = "forum.owner_comment_delete"
+    file_owner_delete = "file.owner_delete"
+    file_owner_update = "file.owner_update"
+    project_owner_update = "project.owner_update"
+
+
+class Result(StrEnum):
+    """默认映射粒度：一种权限点通常多个角色都有，用 Result 标记授予与否。"""
+
+    GRANTED = "granted"
+
+
+class Grant(NamedTuple):
+    permission: Permission
+    result: Result = Result.GRANTED
+
+
+def composible_role(account_level: str, role: str) -> str:
+    """复合角色字符串：``{account_level}:{role}``。"""
+    return f"{account_level}:{role}"
+
+
+# 各复合角色默认授予的权限点。KEY = 复合角色名。
+DEFAULT_GRANTS: dict[str, tuple[Grant, ...]] = {
+    "local:member": (
+        Grant(Permission.avatar_update),
+    ),
+    "normal:member": (
+        Grant(Permission.comment_create),
+        Grant(Permission.avatar_update),
+        Grant(Permission.forum_post_create),
+        Grant(Permission.forum_post_like),
+        Grant(Permission.forum_comment_create),
+        Grant(Permission.boards_create_application),
+        Grant(Permission.columns_application_create),
+        Grant(Permission.files_upload),
+        Grant(Permission.files_download),
+        Grant(Permission.projects_application_create),
+    ),
+    "normal:columnist": (
+        Grant(Permission.comment_create),
+        Grant(Permission.avatar_update),
+        Grant(Permission.forum_post_create),
+        Grant(Permission.forum_post_like),
+        Grant(Permission.forum_comment_create),
+        Grant(Permission.boards_create_application),
+        Grant(Permission.columns_application_create),
+        Grant(Permission.columns_publish),
+        Grant(Permission.files_upload),
+        Grant(Permission.files_download),
+        Grant(Permission.projects_application_create),
+    ),
+    "normal:author": (
+        Grant(Permission.comment_create),
+        Grant(Permission.avatar_update),
+        Grant(Permission.forum_post_create),
+        Grant(Permission.forum_post_like),
+        Grant(Permission.forum_comment_create),
+        Grant(Permission.boards_create_application),
+        Grant(Permission.columns_application_create),
+        Grant(Permission.columns_publish),
+        Grant(Permission.files_upload),
+        Grant(Permission.files_download),
+        Grant(Permission.projects_application_create),
+        Grant(Permission.projects_create),
+    ),
+    "admin:org_member": (
+        Grant(Permission.comment_create),
+        Grant(Permission.avatar_update),
+        Grant(Permission.forum_post_create),
+        Grant(Permission.forum_post_like),
+        Grant(Permission.forum_comment_create),
+        Grant(Permission.boards_create_application),
+        Grant(Permission.columns_application_create),
+        Grant(Permission.files_upload),
+        Grant(Permission.files_download),
+        Grant(Permission.projects_application_create),
+        Grant(Permission.admin_dashboard),
+        Grant(Permission.admin_reports_view),
+        Grant(Permission.forum_view_hidden),
+    ),
+    "admin:super_admin": (
+        Grant(Permission.comment_create),
+        Grant(Permission.avatar_update),
+        Grant(Permission.forum_post_create),
+        Grant(Permission.forum_post_like),
+        Grant(Permission.forum_comment_create),
+        Grant(Permission.files_upload),
+        Grant(Permission.files_download),
+        Grant(Permission.boards_create_application),
+        Grant(Permission.columns_application_create),
+        Grant(Permission.columns_publish),
+        Grant(Permission.projects_application_create),
+        Grant(Permission.projects_create),
+        Grant(Permission.articles_publish),
+        Grant(Permission.articles_review),
+        Grant(Permission.articles_category_manage),
+        Grant(Permission.columns_application_review),
+        Grant(Permission.boards_review_application),
+        Grant(Permission.boards_manage),
+        Grant(Permission.files_review),
+        Grant(Permission.projects_application_review),
+        Grant(Permission.projects_review),
+        Grant(Permission.admin_dashboard),
+        Grant(Permission.admin_reports_view),
+        Grant(Permission.admin_users_manage),
+        Grant(Permission.admin_content_review),
+        Grant(Permission.forum_view_hidden),
+        Grant(Permission.board_owner_manage),
+        Grant(Permission.article_owner_publish),
+        Grant(Permission.article_owner_comment_delete),
+        Grant(Permission.column_owner_publish),
+        Grant(Permission.forum_owner_delete),
+        Grant(Permission.forum_owner_comment_delete),
+        Grant(Permission.file_owner_delete),
+        Grant(Permission.file_owner_update),
+        Grant(Permission.project_owner_update),
+    ),
+}

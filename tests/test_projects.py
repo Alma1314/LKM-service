@@ -379,7 +379,16 @@ class TestProjectRoute:
         )
         assert resp.status_code == 403
 
-        # normal 用户可提交
+        # normal 用户可提交（RBAC 需授 projects.application_create 权限点）
+        from app.db.models import RolePermission
+
+        db.add(
+            RolePermission(
+                role_name="normal:member",
+                permission="projects.application_create",
+            )
+        )
+        await db.flush()
         n_user = await _user(db, "norm", level="normal")
         token = create_access_token(
             user_id=n_user, account_level="normal", role="member"

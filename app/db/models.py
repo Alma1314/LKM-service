@@ -1154,3 +1154,17 @@ class ProjectMember(Base):
 
     project: Mapped[Project] = relationship(back_populates="members")
     user: Mapped[User | None] = relationship(foreign_keys=[user_id])
+
+
+class RolePermission(Base):
+    """RBAC：复合角色→权限点 映射。角色即 ``{account_level}:{profile.role}``。"""
+
+    __tablename__ = "role_permissions"
+    __table_args__ = (UniqueConstraint("role_name", "permission"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    role_name: Mapped[str] = mapped_column(String(40), nullable=False)
+    permission: Mapped[str] = mapped_column(String(80), nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )

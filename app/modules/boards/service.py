@@ -68,10 +68,15 @@ async def get_board_ex(db: AsyncSession, board_id: int) -> Board:
 
 
 async def update_board_ex(
-    db: AsyncSession, board_id: int, owner_id: int, patch: BoardUpdate
+    db: AsyncSession,
+    board_id: int,
+    owner_id: int,
+    patch: BoardUpdate,
+    *,
+    is_admin: bool = False,
 ) -> BoardOut:
     board = await get_board_ex(db, board_id)
-    _assert_owner(board, owner_id)
+    _assert_owner(board, owner_id, is_admin)
     data = patch.model_dump(exclude_unset=True)
     for k, v in data.items():
         setattr(board, k, v)
@@ -79,8 +84,12 @@ async def update_board_ex(
     return _board_to_schema(board)
 
 
-def _assert_owner(board: Board, current_user_id: int) -> None:
-    if board.owner_id != current_user_id:
+def _assert_owner(
+    board: Board, current_user_id: int, is_admin: bool = False
+) -> None:
+    # 防御性断言：非属主且非 admin(代管) → 拒。路由层 check_owner 已先做对象级
+    # 判定(board_owner_manage)，此处 is_admin 由路由传 cur.role=="super_admin" 放行代管。
+    if board.owner_id != current_user_id and not is_admin:
         raise BizError(BoardErr.NOT_BOARD_OWNER)
 
 
@@ -157,8 +166,10 @@ async def ban_user(
     board: Board,
     actor_id: int,
     body: BanRequest,
+    *,
+    is_admin: bool = False,
 ) -> None:
-    _assert_owner(board, actor_id)
+    _assert_owner(board, actor_id, is_admin)
     already = await db.scalar(
         select(BoardBan.id).where(
             BoardBan.board_id == board.id,
@@ -181,9 +192,14 @@ async def ban_user(
 
 
 async def unban_user(
-    db: AsyncSession, board: Board, actor_id: int, target_user_id: int
+    db: AsyncSession,
+    board: Board,
+    actor_id: int,
+    target_user_id: int,
+    *,
+    is_admin: bool = False,
 ) -> None:
-    _assert_owner(board, actor_id)
+    _assert_owner(board, actor_id, is_admin)
     await db.execute(
         sa_delete(BoardBan).where(
             BoardBan.board_id == board.id,

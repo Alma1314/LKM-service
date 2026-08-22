@@ -6,7 +6,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.err import BizError, CommonErr
 from app.db.models import ForumComment, ForumPost, ForumPostLike, User
 from app.db.repo import get_or_raise
 from app.modules.common import (
@@ -144,12 +143,15 @@ async def delete_post(
     current_user_id: int,
     as_admin: bool = False,
 ) -> int:
-    """删除帖子并返回作者 id。普通用户只能删自己的；as_admin=True（管理员代删）跳过 owner 校验。"""
+    """删除帖子并返回作者 id。
+
+    属主判定已上移到路由层（forum router 用 check_owner 兜底）；本函数不再做
+    owner 断言。as_admin=True（管理员代删，见 admin content_router）保留原行为，
+    不参 owner 判定。current_user_id 暂留作签名兼容（调用方传参，未实际使用）。
+    """
     post = await get_or_raise(
         db, ForumPost, ForumErr.POST_NOT_FOUND, ForumPost.id == post_id
     )
-    if not as_admin and post.author_id != current_user_id:
-        raise BizError(CommonErr.FORBIDDEN)
     author_id = post.author_id
     await db.delete(post)
     await db.flush()

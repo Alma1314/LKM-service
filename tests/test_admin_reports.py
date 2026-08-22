@@ -8,8 +8,11 @@ from typing import Any
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Report, User
+from sqlalchemy import select
+
+from app.db.models import Profile, Report, RolePermission, User
 from app.modules.auth.security import hashpwd
+from app.modules.rbac.permissions import Permission
 
 
 async def _create_user(
@@ -25,9 +28,26 @@ async def _create_user(
         account_level=account_level,
     )
     db.add(user)
+    await db.flush()
+    # 后台 RBAC：admin 用户缺省为 super_admin 角色（reports 端点需 admin_reports_view）
+    if account_level == "admin":
+        db.add(Profile(user_id=user.id, role="super_admin", nickname=username))
     await db.commit()
     await db.refresh(user)
     return user
+
+
+async def _grant(db: AsyncSession, perm: Permission) -> None:
+    """给 admin:super_admin 授指定权限点（幂等，复刻 super_admin DEFAULT_GRANTS）。"""
+    exists = await db.scalar(
+        select(RolePermission.id).where(
+            RolePermission.role_name == "admin:super_admin",
+            RolePermission.permission == perm.value,
+        )
+    )
+    if exists is None:
+        db.add(RolePermission(role_name="admin:super_admin", permission=perm.value))
+    await db.flush()
 
 
 def _login(client: AsyncClient, username: str) -> Any:
@@ -84,6 +104,7 @@ class TestAdminReports:
     ) -> None:
         await _create_user(db, username="root", account_level="admin")
         await _seed_reports(db)
+        await _grant(db, Permission.admin_reports_view)
         await _login(client, "root")
 
         resp = await client.get("/api/v1/admin/reports")
@@ -108,6 +129,7 @@ class TestAdminReports:
     ) -> None:
         await _create_user(db, username="root", account_level="admin")
         await _seed_reports(db)
+        await _grant(db, Permission.admin_reports_view)
         await _login(client, "root")
 
         resp = await client.get("/api/v1/admin/reports", params={"status": "pending"})
@@ -120,6 +142,7 @@ class TestAdminReports:
         self, db: AsyncSession, client: AsyncClient
     ) -> None:
         await _create_user(db, username="root", account_level="admin")
+        await _grant(db, Permission.admin_reports_view)
         await _login(client, "root")
 
         resp = await client.get("/api/v1/admin/reports")

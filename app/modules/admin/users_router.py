@@ -15,8 +15,10 @@ from app.db.models import ForumPost, LibraryFile, User
 from app.db.session import get_read_session
 from app.modules.auth.deps import CurrentUser
 from app.modules.common import ApiResp, ListData, PageData, paginate_pages
+from app.modules.rbac.permissions import Permission
 
 from .deps import require_admin
+from .permissions import require_permission
 from .schemas import AdminStats, AdminTrendItem, AdminUserListItem
 
 router = APIRouter(prefix="/admin", tags=["admin-data"])
@@ -36,6 +38,7 @@ async def admin_list_users(
     用户管理列表。默认隐藏 email/phone（PII），可按用户名/邮箱筛选。
     include_pii 目前仅由调用方自决；若后续要分级管控，请额外加敏感级依赖。
     """
+    await require_permission(db, _cur, Permission.admin_users_manage)
     query = select(User)
     count_q = select(func.count(User.id))
 
@@ -88,6 +91,7 @@ async def admin_stats(
     db: AsyncSession = Depends(get_read_session),
 ) -> AdminStats:
     """仪表盘聚合统计：注册用户数 / 帖子数 / 文件数 / 待审核文件数。"""
+    await require_permission(db, _cur, Permission.admin_dashboard)
     user_count = await _safe_count(db, select(func.count(User.id)))
     post_count = await _safe_count(db, select(func.count(ForumPost.id)))
     file_count = await _safe_count(db, select(func.count(LibraryFile.id)))
@@ -111,6 +115,8 @@ async def admin_trend(
     db: AsyncSession = Depends(get_read_session),
 ) -> ListData[AdminTrendItem]:
     """后台趋势：最近 days 天每日新增注册用户数 + 新增帖子数（日期连续、缺日补 0）。"""
+
+    await require_permission(db, _cur, Permission.admin_dashboard)
 
     async def _deltas(col: Any) -> dict[date, int]:
         """按某时间列分组统计每日增量；单表异常返回空 dict（_safe_count 同款容错）。

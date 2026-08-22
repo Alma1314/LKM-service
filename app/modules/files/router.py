@@ -6,6 +6,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
+from app.db.models import LibraryFile
 from app.db.session import get_read_session, get_session
 from app.modules.auth.deps import CurrentUser, get_current_user
 from app.modules.common import ApiResp, ModuleStatus, PageData
@@ -31,6 +32,9 @@ from app.modules.files.service import (
 from app.modules.files.service import (
     create_file as create_file_service,
 )
+from app.modules.rbac.deps import RequirePermission
+from app.modules.rbac.permissions import Permission
+from app.modules.rbac.service import check_owner
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -67,7 +71,7 @@ async def upload_file(
     category_id: str = Form(default=""),
     description: str = Form(default=""),
     tags: str = Form(default="[]"),
-    cur: CurrentUser = Depends(get_current_user),
+    cur: CurrentUser = RequirePermission(Permission.files_upload),
     db: AsyncSession = Depends(get_session),
 ) -> FileInfo:
     try:
@@ -89,7 +93,7 @@ async def upload_file(
 @respond
 async def upload_init_endpoint(
     payload: FileCreate,
-    cur: CurrentUser = Depends(get_current_user),
+    cur: CurrentUser = RequirePermission(Permission.files_upload),
     db: AsyncSession = Depends(get_session),
 ) -> UploadInitResp:
     """预签名直传初始化：Local→sync，S3→direct（presigned PUT + upload_id）。"""
@@ -100,7 +104,7 @@ async def upload_init_endpoint(
 @respond
 async def confirm_upload_endpoint(
     upload_id: str,
-    cur: CurrentUser = Depends(get_current_user),
+    cur: CurrentUser = RequirePermission(Permission.files_upload),
     db: AsyncSession = Depends(get_session),
 ) -> FileInfo:
     """确认直传：回读对象→SHA3→去重→登记 PENDING。upload_id 为 str UUID。"""
@@ -119,7 +123,7 @@ async def get_file_detail(
 @respond
 async def download_file(
     file_id: int,
-    cur: CurrentUser = Depends(get_current_user),
+    cur: CurrentUser = RequirePermission(Permission.files_download),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     return {"download_count": await bump_download(db, file_id)}
@@ -131,16 +135,20 @@ async def review_uploaded_file(
     file_id: int,
     status: FileStatus = Form(...),
     review_comment: str | None = Form(default=None),
-    cur: CurrentUser = Depends(get_current_user),
+    cur: CurrentUser = RequirePermission(Permission.files_review),
     db: AsyncSession = Depends(get_session),
 ) -> FileInfo:
-    """管理员审核文件：通过 / 驳回（驳回时删除物理文件并联动同 hash 条目）。"""
+    """管理员审核文件：通过 / 驳回（驳回时删除物理文件并联动同 hash 条目）。
+
+    RBAC：审核能力由 files_review 权限点把关（RequirePermission 已拦无权限者），
+    故 here 一律传 is_admin=True 跳过 service 的 account_level==admin 门槛。
+    """
     return await review_file(
         db,
         file_id,
         target_status=status,
         review_comment=review_comment,
-        is_admin=cur.account_level == "admin",
+        is_admin=True,
     )
 
 
@@ -151,19 +159,28 @@ async def delete_uploaded_file(
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> FileInfo:
-    """软删除文件：管理员或文件所有者可操作，引用归零时清理磁盘。"""
+    """软删除文件：属主或持有 file.owner_delete 的管理员可操作。
+
+    属主判定在 handler 内用 check_owner 谓词：凭 file.owner_delete 权限点（仅 super_admin
+    持有）即可代管删任意文件，否则查 LibraryFile.uploader_id == cur.id（属主）。对象不存在
+    或非属主 → 403。通过后传 is_admin=True 给 delete_file，跳过 service 内部的二次属主校验
+    （否则 super_admin 凭权限点放行后仍会被 service 拦下，代删失效）。
+    """
+    await check_owner(
+        db, cur, file_id, LibraryFile, "uploader_id", Permission.file_owner_delete
+    )
     return await delete_file(
         db,
         file_id,
         actor_id=cur.id,
-        is_admin=cur.account_level == "admin",
+        is_admin=True,
     )
 
 
 @router.get("/{file_id}/preview")
 async def preview_file(
     file_id: int,
-    cur: CurrentUser = Depends(get_current_user),
+    cur: CurrentUser = RequirePermission(Permission.files_download),
     db: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
     """预览：仅 APPROVED 可访问，inline 流式返回，计 view_count。"""
@@ -174,7 +191,7 @@ async def preview_file(
 @respond
 async def download_file_url(
     file_id: int,
-    cur: CurrentUser = Depends(get_current_user),
+    cur: CurrentUser = RequirePermission(Permission.files_download),
     db: AsyncSession = Depends(get_session),
 ) -> DownloadUrlInfo:
     """签发下载 URL（本地→/content、S3→预签名），计 download_count。"""
@@ -184,7 +201,7 @@ async def download_file_url(
 @router.get("/{file_id}/content")
 async def download_file_content(
     file_id: int,
-    cur: CurrentUser = Depends(get_current_user),
+    cur: CurrentUser = RequirePermission(Permission.files_download),
     db: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
     """附件流式下载：仅 APPROVED 可访问。"""

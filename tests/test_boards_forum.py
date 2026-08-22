@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
-from app.db.models import Board, Profile, User
+from app.db.models import Board, Profile, RolePermission, User
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.boards.errors import BoardErr
 from app.modules.boards.schemas import BanRequest, BoardCreate
@@ -74,6 +74,29 @@ class TestBoardForumPosting:
         self, db: AsyncSession, username: str = "poster"
     ) -> tuple[int, str]:
         uid = await _user(db, username=username)
+        # RBAC：normal:member 发帖需显式授予 forum.post_create（生产由 seed_rbac 落默认授权，
+        # 测试库 create_all 不自动 seed，故按需补授权，避免路由 RequirePermission 先行 403）。
+        existing = (
+            (
+                await db.execute(
+                    select(RolePermission.id).where(
+                        RolePermission.role_name == "normal:member",
+                        RolePermission.permission == "forum.post_create",
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if existing is None:
+            db.add(
+                RolePermission(
+                    role_name="normal:member", permission="forum.post_create"
+                )
+            )
+        # 显式 flush：确保后续 HTTP 请求（RequirePermission 判权限）能看到该授权行。
+        # 依赖 autoflush 在"无中间 DB 操作"的用例（如本类 missing-board 用例）不稳定。
+        await db.flush()
         token = create_access_token(user_id=uid, account_level="normal", role="member")
         return uid, token
 

@@ -255,6 +255,16 @@ class TestColumnPosts:
 class TestColumnRoutes:
     async def _setup_user(self, db: AsyncSession) -> tuple[int, str]:
         """Create a user in DB and return (user_id, bearer_token)."""
+        from app.db.models import RolePermission
+
+        # RBAC 迁移后写操作需权限点：为 normal:member 授 columns.application_create，
+        # 与生产 DEFAULT_GRANTS seed 一致，确保「本人可申请」类用例在权限校验下通过。
+        db.add(
+            RolePermission(
+                role_name="normal:member", permission="columns.application_create"
+            )
+        )
+        await db.flush()
         user_id = await _user(db, username="testuser", email="test@example.com")
         token = create_access_token(
             user_id=user_id, account_level="normal", role="member"

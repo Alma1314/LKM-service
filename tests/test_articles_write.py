@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr
-from app.db.models import Article, Profile, User
+from app.db.models import Article, Profile, RolePermission, User
 from app.db.models import ArticleCategory as ArticleCategoryORM
 from app.modules.articles.errors import ArticleErr
 from app.modules.articles.schemas import (
@@ -303,7 +303,11 @@ class TestArticlePermission:
     async def test_write_endpoint_super_admin_ok(
         self, db: AsyncSession, client: AsyncClient
     ) -> None:
-        """super_admin（DB 档 account_level=admin + profile.role=super_admin）→ 创建 200。"""
+        """super_admin（DB 档 account_level=admin + profile.role=super_admin，且授予 articles.publish）→ 创建 200。"""
+        # RBAC 迁移后写端点由 RequirePermission(articles.publish) 把关：官方文章仅 super_admin。
+        # 测试库 create_all 不自动 seed 权限映射，故在此按生产 DEFAULT_GRANTS 显式补授权。
+        db.add(RolePermission(role_name="admin:super_admin", permission="articles.publish"))
+        await db.flush()
         cid = await _category(db, slug="news")
         uid = await _user(db, username="root", level="admin", role="super_admin")
         token = create_access_token(

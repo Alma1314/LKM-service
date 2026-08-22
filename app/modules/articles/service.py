@@ -508,7 +508,11 @@ async def delete_category_ex(db: AsyncSession, category_id: int) -> None:
 
 
 def assert_super_admin(cur: CurrentUser) -> None:
-    """断言超级管理员：需 account_level==\"admin\" 且 role==\"super_admin\"。"""
+    """断言超级管理员：需 account_level==\"admin\" 且 role==\"super_admin\"。
+
+    仅供测试单测/RBAC 迁移过渡保留；生产已由路由层权限点（articles_*）兜底，
+    无业务调用。勿删除定义（tests/test_articles_write.py 仍 import 单测）。
+    """
     if cur.account_level == "admin" and cur.role == "super_admin":
         return
     raise BizError(CommonErr.FORBIDDEN)
