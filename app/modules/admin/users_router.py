@@ -2,6 +2,8 @@
 后台只读数据端点：/admin/users（用户列表）、/admin/stats（仪表盘统计）。
 """
 
+import contextlib
+from datetime import date, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
@@ -12,10 +14,10 @@ from app.core.err import respond
 from app.db.models import ForumPost, LibraryFile, User
 from app.db.session import get_read_session
 from app.modules.auth.deps import CurrentUser
-from app.modules.common import ApiResp, PageData, paginate_pages
+from app.modules.common import ApiResp, ListData, PageData, paginate_pages
 
 from .deps import require_admin
-from .schemas import AdminStats, AdminUserListItem
+from .schemas import AdminStats, AdminTrendItem, AdminUserListItem
 
 router = APIRouter(prefix="/admin", tags=["admin-data"])
 
@@ -99,3 +101,52 @@ async def admin_stats(
         file_count=file_count,
         file_pending_count=file_pending,
     )
+
+
+@router.get("/stats/trend", response_model=ApiResp[ListData[AdminTrendItem]])
+@respond
+async def admin_trend(
+    days: int = Query(14, ge=1, le=90),
+    _cur: CurrentUser = require_admin,
+    db: AsyncSession = Depends(get_read_session),
+) -> ListData[AdminTrendItem]:
+    """后台趋势：最近 days 天每日新增注册用户数 + 新增帖子数（日期连续、缺日补 0）。"""
+
+    async def _deltas(col: Any) -> dict[date, int]:
+        """按某时间列分组统计每日增量；单表异常返回空 dict（_safe_count 同款容错）。
+        func.date 在 SQLite 返回 'YYYY-MM-DD' 字符串，统一转 date 作 key。"""
+        out: dict[date, int] = {}
+        try:
+            rows = (
+                await db.execute(
+                    select(func.date(col).label("d"), func.count())
+                    .where(col >= start)
+                    .group_by("d")
+                )
+            ).all()
+        except Exception:
+            return out
+        for r in rows:
+            raw = r[0]
+            if raw is None:
+                continue
+            r0: str = raw if isinstance(raw, str) else str(raw)
+            with contextlib.suppress(ValueError):
+                out[date.fromisoformat(r0[:10])] = int(r[1] or 0)
+        return out
+
+    start = date.today() - timedelta(days=days - 1)
+    user_d = await _deltas(User.created_at)
+    post_d = await _deltas(ForumPost.created_at)
+
+    items: list[AdminTrendItem] = []
+    for i in range(days):
+        d = start + timedelta(days=i)
+        items.append(
+            AdminTrendItem(
+                date=d,
+                user_delta=int(user_d.get(d, 0)),
+                post_delta=int(post_d.get(d, 0)),
+            )
+        )
+    return ListData(items=items)

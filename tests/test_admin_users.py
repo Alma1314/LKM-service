@@ -152,3 +152,39 @@ class TestAdminStats:
         resp = await client.get("/api/v1/admin/stats")
         assert resp.status_code == 200
         assert resp.json()["code"] == 0
+
+
+class TestAdminTrend:
+    async def should_reject_non_admin(
+        self, db: AsyncSession, client: AsyncClient
+    ) -> None:
+        await _create_user(db, "member1", account_level="normal")
+        await _login(client, "member1")
+        resp = await client.get("/api/v1/admin/stats/trend")
+        assert resp.status_code in (401, 403)
+
+    async def should_return_daily_deltas(
+        self, db: AsyncSession, client: AsyncClient
+    ) -> None:
+        await _seed_stats(db)  # root+u0..u2 共4用户，1帖
+        await _login(client, "root")
+        resp = await client.get("/api/v1/admin/stats/trend", params={"days": 7})
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        items = data["items"]
+        assert len(items) == 7
+        # 找今天所在序列项：user_delta 至少含 _seed_stats 新增的4个同天增量
+        today = items[-1]
+        assert today["user_delta"] >= 4
+        assert today["post_delta"] >= 1
+        # 序列按日期升序、日期连续无缺
+        for i in range(1, len(items)):
+            assert items[i]["date"] > items[i - 1]["date"]
+
+    async def should_validate_days_bounds(
+        self, db: AsyncSession, client: AsyncClient
+    ) -> None:
+        await _create_user(db, "root", account_level="admin")
+        await _login(client, "root")
+        resp = await client.get("/api/v1/admin/stats/trend", params={"days": 0})
+        assert resp.status_code == 422

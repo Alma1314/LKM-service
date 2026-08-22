@@ -8,7 +8,7 @@ import asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.modules.auth.models  # noqa: F401  注册全部 ORM 映射类（避免关系名无法解析）
+import app.modules.auth.models  # noqa: F401  # type: ignore[reportUnusedImport]  注册全部 ORM 映射类（避免关系名无法解析）
 from app.db.models import Report
 from app.db.session import new_session
 
