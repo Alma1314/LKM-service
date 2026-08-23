@@ -76,9 +76,7 @@ def composible_role(account_level: str, role: str) -> str:
 
 # 各复合角色默认授予的权限点。KEY = 复合角色名。
 DEFAULT_GRANTS: dict[str, tuple[Grant, ...]] = {
-    "local:member": (
-        Grant(Permission.avatar_update),
-    ),
+    "local:member": (Grant(Permission.avatar_update),),
     "normal:member": (
         Grant(Permission.comment_create),
         Grant(Permission.avatar_update),

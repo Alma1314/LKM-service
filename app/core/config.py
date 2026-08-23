@@ -103,7 +103,9 @@ class Settings(BaseSettings):
     # ---- 存储后端 ----
     storage_backend: str = "local"  # local | s3
     s3_endpoint_url: str = ""  # 留空=云 S3 默认 endpoint；填了=MinIO 本地(容器内连接用)
-    s3_public_endpoint_url: str = ""  # 直传/下载预签名 URL 对浏览器暴露的公网地址(填该服务的公网 host)
+    s3_public_endpoint_url: str = (
+        ""  # 直传/下载预签名 URL 对浏览器暴露的公网地址(填该服务的公网 host)
+    )
     s3_region: str = ""
     s3_bucket: str = "lkm"
     s3_access_key: str = ""

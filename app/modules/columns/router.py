@@ -76,7 +76,7 @@ async def get_applications(
     db: AsyncSession = Depends(get_read_session),
     page: int = Query(1, ge=1),
     limit: int | None = Query(default=None, ge=1, le=200),
-) -> dict[str, Any]:
+) -> PageData[ColumnApplicationInfo]:
     # RequireLevel("admin") 已保证 admin 会话；此处再叠加 columns_application_review
     # 权限点（super_admin 有，org_member 等普通 admin 无），与审核同权限（能看全部申请=能审核）。
     if not await role_has_permission(
@@ -137,7 +137,7 @@ async def get_columns(
     db: AsyncSession = Depends(get_read_session),
     page: int = Query(1, ge=1),
     limit: int | None = Query(default=None, ge=1, le=200),
-) -> dict[str, Any]:
+) -> PageData[ColumnInfo]:
     return await list_columns(db, page=page, limit=limit)
 
 
@@ -182,7 +182,7 @@ async def get_column_posts(
     db: AsyncSession = Depends(get_read_session),
     page: int = Query(1, ge=1),
     limit: int | None = Query(default=None, ge=1, le=200),
-) -> dict[str, Any]:
+) -> PageData[ColumnPostInfo]:
     return await list_posts(db, column_id, page=page, limit=limit)
 
 

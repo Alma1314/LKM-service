@@ -63,7 +63,7 @@ async def get_posts(
 async def create_forum_post(
     info: PostCreate,
     # 注意：RequirePermission(...) 已返回 Depends(checker)，不能再包一层 Depends()
-    #（否则双重包裹会令 FastAPI 把 Depends 对象当 callable 而报错）。与
+    # （否则双重包裹会令 FastAPI 把 Depends 对象当 callable 而报错）。与
     # tests/test_rbac_deps_factory 的用法一致：工厂返回值直接作参数默认值。
     cur: CurrentUser = RequirePermission(Permission.forum_post_create),
     db: AsyncSession = Depends(get_session),
@@ -97,7 +97,9 @@ async def delete_forum_post(
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     # 对象级权限：属主放行，或拥有 forum.owner_delete（admin 代管）放行。
-    await check_owner(db, cur, post_id, ForumPost, "author_id", Permission.forum_owner_delete)
+    await check_owner(
+        db, cur, post_id, ForumPost, "author_id", Permission.forum_owner_delete
+    )
     await delete_post_service(db, post_id, cur.id)
     return {"ok": True}
 

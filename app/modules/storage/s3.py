@@ -6,6 +6,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from typing import Any
 
 import boto3
@@ -44,23 +45,26 @@ def _save_multipart_sync(
             if size > max_bytes:
                 raise _TooLarge()
             part = client.upload_part(
-                Bucket=bucket, Key=key, UploadId=upload_id,
-                PartNumber=len(parts) + 1, Body=chunk,
+                Bucket=bucket,
+                Key=key,
+                UploadId=upload_id,
+                PartNumber=len(parts) + 1,
+                Body=chunk,
             )
             parts.append({"PartNumber": len(parts) + 1, "ETag": part["ETag"]})
         if not parts:
             raise _TooLarge()
         client.complete_multipart_upload(
-            Bucket=bucket, Key=key, UploadId=upload_id,
+            Bucket=bucket,
+            Key=key,
+            UploadId=upload_id,
             MultipartUpload={"Parts": parts},
         )
         return size
     except BaseException:
-        # 出错（含超限）时中止未完成的 multipart，避免孤儿分片
-        try:
+        # 出错（含超限）时中止未完成的 multipart，避免孤儿分片（中止失败不影响原异常抛出）
+        with suppress(Exception):
             client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
-        except Exception:
-            pass
         raise
 
 

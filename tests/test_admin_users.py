@@ -43,9 +43,7 @@ async def _grant_super_admin(db: AsyncSession, *perms: Permission) -> None:
             )
         )
         if exists is None:
-            db.add(
-                RolePermission(role_name="admin:super_admin", permission=p.value)
-            )
+            db.add(RolePermission(role_name="admin:super_admin", permission=p.value))
     await db.flush()
 
 
@@ -82,7 +80,11 @@ class TestAdminUsersList:
         await _create_user(db, "root", account_level="admin")
         await _create_user(db, "alice", account_level="normal", email="a@priv.io")
         await _login_admin(
-            db, client, "root", Permission.admin_users_manage, Permission.admin_dashboard
+            db,
+            client,
+            "root",
+            Permission.admin_users_manage,
+            Permission.admin_dashboard,
         )
 
         resp = await client.get("/api/v1/admin/users")
@@ -101,9 +103,7 @@ class TestAdminUsersList:
     ) -> None:
         await _create_user(db, "root", account_level="admin")
         await _create_user(db, "bob", account_level="normal", email="bob@priv.io")
-        await _login_admin(
-            db, client, "root", Permission.admin_users_manage
-        )
+        await _login_admin(db, client, "root", Permission.admin_users_manage)
 
         resp = await client.get("/api/v1/admin/users", params={"include_pii": "true"})
         assert resp.status_code == 200

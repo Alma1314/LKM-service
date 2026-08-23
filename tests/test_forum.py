@@ -167,9 +167,7 @@ class TestForumPosts:
         author = await _user(db)
         other = await _user(db, username="mallory", email="mallory@example.com")
         post = await _post(db, author_id=author)
-        tok = create_access_token(
-            user_id=other, account_level="normal", role="member"
-        )
+        tok = create_access_token(user_id=other, account_level="normal", role="member")
         resp = await client.delete(
             f"/api/v1/forum/posts/{post.id}",
             headers={"Authorization": f"Bearer {tok}"},

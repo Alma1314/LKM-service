@@ -375,7 +375,11 @@ class TestRefresh:
         from app.modules.auth.service_auth import issue_session_tokens
 
         await _reg_local(db, username="alice", password="secret123456")
-        user = (await db.execute(select(User).where(User.username == "alice"))).scalars().first()
+        user = (
+            (await db.execute(select(User).where(User.username == "alice")))
+            .scalars()
+            .first()
+        )
         assert user is not None
 
         _, raw = await issue_session_tokens(db, user, mfa_verified=True)
@@ -385,7 +389,10 @@ class TestRefresh:
         assert payload["mfa"] is True
         assert payload["mfa_at"] is not None
         # 刷新不延长信任：新 access token 的 mfa_at 应仍是不晚于当前时刻（保留原点，而非 now）
-        assert payload["mfa_at"] <= int(datetime.datetime.now(datetime.UTC).timestamp()) + 2
+        assert (
+            payload["mfa_at"]
+            <= int(datetime.datetime.now(datetime.UTC).timestamp()) + 2
+        )
 
         # 未做 step-up 的普通会话刷新后仍无 mfa 标记
         result = await _reg_local(db, username="bob", password="other1234567")

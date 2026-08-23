@@ -444,9 +444,7 @@ class TestStepUp2FA:
         assert resp.status_code == 400
         assert resp.json()["code"] != 0
 
-    async def should_issue_mfa_token_on_valid_code(
-        self, client: Any, db: AsyncSession
-    ):
+    async def should_issue_mfa_token_on_valid_code(self, client: Any, db: AsyncSession):
         user = await _create_user(db, username="stepup_ok")
         secret = await _enable_totp_for_user(db, user.id)
         token = create_access_token(
@@ -469,7 +467,13 @@ class TestStepUp2FA:
 
         user = await _create_user(db, username="stepup_recovery")
         await _enable_totp_for_user(db, user.id)
-        db.add(RecoveryCode(user_id=user.id, code_hash=hashlib.sha256(b"rc-abc123").hexdigest(), used=False))
+        db.add(
+            RecoveryCode(
+                user_id=user.id,
+                code_hash=hashlib.sha256(b"rc-abc123").hexdigest(),
+                used=False,
+            )
+        )
         await db.flush()
         token = create_access_token(
             user_id=user.id, account_level="normal", role="member"
@@ -509,9 +513,6 @@ class TestDeleteNot2FAGated:
         token = create_access_token(
             user_id=user.id, account_level="normal", role="member"
         )
-        resp = await client.delete(
-            "/api/v1/forum/posts/999999", headers=_auth(token)
-        )
+        resp = await client.delete("/api/v1/forum/posts/999999", headers=_auth(token))
         # 能走到权限判定（而非被 2FA 门禁拦住）→ 不再是 401 code=4
         assert resp.status_code == 403
-

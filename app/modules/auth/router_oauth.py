@@ -40,7 +40,10 @@ async def github_callback(
 
 @router.post("/github/login/redirect", response_model=ApiResp[OAuthRedirectResponse])
 @respond
-async def github_bind_redirect(_cur: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_session)) -> dict[str, str]:
+async def github_bind_redirect(
+    _cur: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
     """返回用于绑定的 OAuth 授权 URL（从 JS 客户端调用）。"""
     url = await service_oauth.get_github_auth_url(db, purpose="bind")
     return {"url": url}

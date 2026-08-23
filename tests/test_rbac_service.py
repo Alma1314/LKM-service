@@ -14,7 +14,9 @@ async def seed_permission(db: DB, role: str, perm: str) -> None:
 async def test_role_has_granted(db: DB) -> None:
     await seed_permission(db, "normal:member", "forum.post_create")
     assert await role_has_permission(db, "normal:member", Permission.forum_post_create)
-    assert not await role_has_permission(db, "normal:member", Permission.articles_review)
+    assert not await role_has_permission(
+        db, "normal:member", Permission.articles_review
+    )
 
 
 async def test_role_missing_row(db: DB) -> None:

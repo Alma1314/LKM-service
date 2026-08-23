@@ -11,15 +11,19 @@ import sys
 
 from sqlalchemy import select
 
-from app.core.config import settings
+from app.db.models import Profile, User
 from app.db.session import dispose_engine, get_async_engine, new_session
-from app.modules.auth.security import hashpwd
 from app.modules.auth import models as _auth_models  # noqa: F401  预注册关联模型
-from app.db.models import User, Profile
+from app.modules.auth.security import hashpwd
 
 
 async def main() -> None:
-    username, email, phone, raw_password = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+    username, email, phone, raw_password = (
+        sys.argv[1],
+        sys.argv[2],
+        sys.argv[3],
+        sys.argv[4],
+    )
 
     get_async_engine()
     db = await new_session()
@@ -51,10 +55,13 @@ async def main() -> None:
         db.add(profile)
         await db.commit()
         await db.refresh(user)
-        print(f"[ok] 管理员创建成功: id={user.id} username={user.username} account_level={user.account_level}")
+        print(
+            f"[ok] 管理员创建成功: id={user.id} username={user.username} account_level={user.account_level}"
+        )
 
         # 验证登录链路：哈希可校验
         from app.modules.auth.security import verifypwd
+
         assert await verifypwd(raw_password, user.hashed_password), "密码校验异常"
         print("[ok] 密码哈希校验通过")
     finally:

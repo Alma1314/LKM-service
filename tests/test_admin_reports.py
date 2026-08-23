@@ -6,9 +6,8 @@
 from typing import Any
 
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Profile, Report, RolePermission, User
 from app.modules.auth.security import hashpwd

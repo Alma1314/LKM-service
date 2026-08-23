@@ -10,7 +10,6 @@ import sys
 
 from sqlalchemy import select
 
-from app.core.config import settings
 from app.db.models import User
 from app.db.session import dispose_engine, get_async_engine, new_session
 from app.modules.auth import service_2fa
@@ -28,8 +27,10 @@ async def main() -> None:
     db = await new_session()
     try:
         user = (
-            await db.execute(select(User).where(User.username == username))
-        ).scalars().first()
+            (await db.execute(select(User).where(User.username == username)))
+            .scalars()
+            .first()
+        )
         if user is None:
             print("[skip] 用户不存在")
             return

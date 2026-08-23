@@ -287,7 +287,9 @@ async def admin_verify_2fa(
             stored_refresh.mfa_verified = True
     await db.commit()
 
-    resp = resp_json(CommonErr.OK, data={**payload, "mfa_verified": True, "mfa_at": mfa_at})
+    resp = resp_json(
+        CommonErr.OK, data={**payload, "mfa_verified": True, "mfa_at": mfa_at}
+    )
     _set_access_cookie(resp, access_token)
     return resp
 

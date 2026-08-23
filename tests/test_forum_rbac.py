@@ -7,7 +7,9 @@ from app.modules.auth.security import create_access_token
 from tests.conftest import DB, Client
 
 
-async def _mk_user(db: DB, uname: str, level: str = "normal", role: str = "member") -> User:
+async def _mk_user(
+    db: DB, uname: str, level: str = "normal", role: str = "member"
+) -> User:
     # 注意：users.hashed_password 为 NOT NULL，传占位值以通过约束
     # （brief 的 _mk_user 省略了该字段，会导致 IntegrityError，此处补上）。
     user = User(
@@ -56,9 +58,11 @@ async def test_local_cannot_post(db: DB, client: Client) -> None:
     await _seed_perm(db, "normal:member", "forum.post_create")
     board = await _mk_board(db)
     user = await _mk_user(db, "local_u", level="local", role="member")
-    r = await client.post("/api/v1/forum/posts", headers=_headers(user), json={
-        "board_id": board.id, "title": "t", "content": "c"
-    })
+    r = await client.post(
+        "/api/v1/forum/posts",
+        headers=_headers(user),
+        json={"board_id": board.id, "title": "t", "content": "c"},
+    )
     assert r.status_code == 403
 
 
@@ -66,9 +70,11 @@ async def test_normal_can_post(db: DB, client: Client) -> None:
     await _seed_perm(db, "normal:member", "forum.post_create")
     board = await _mk_board(db)
     user = await _mk_user(db, "nomo", level="normal", role="member")
-    r = await client.post("/api/v1/forum/posts", headers=_headers(user), json={
-        "board_id": board.id, "title": "t", "content": "c"
-    })
+    r = await client.post(
+        "/api/v1/forum/posts",
+        headers=_headers(user),
+        json={"board_id": board.id, "title": "t", "content": "c"},
+    )
     assert r.status_code == 200
 
 
@@ -77,9 +83,11 @@ async def test_foreign_cannot_delete(db: DB, client: Client) -> None:
     board = await _mk_board(db)
     a = await _mk_user(db, "fred", level="normal", role="member")
     b = await _mk_user(db, "alice", level="normal", role="member")
-    rp = await client.post("/api/v1/forum/posts", headers=_headers(a), json={
-        "board_id": board.id, "title": "t", "content": "c"
-    })
+    rp = await client.post(
+        "/api/v1/forum/posts",
+        headers=_headers(a),
+        json={"board_id": board.id, "title": "t", "content": "c"},
+    )
     post_id = rp.json()["data"]["id"]
     r = await client.delete(f"/api/v1/forum/posts/{post_id}", headers=_headers(b))
     assert r.status_code == 403
@@ -90,9 +98,11 @@ async def test_owner_can_delete(db: DB, client: Client) -> None:
     await _seed_perm(db, "normal:member", "forum.owner_delete")
     board = await _mk_board(db)
     a = await _mk_user(db, "owner_u", level="normal", role="member")
-    rp = await client.post("/api/v1/forum/posts", headers=_headers(a), json={
-        "board_id": board.id, "title": "t", "content": "c"
-    })
+    rp = await client.post(
+        "/api/v1/forum/posts",
+        headers=_headers(a),
+        json={"board_id": board.id, "title": "t", "content": "c"},
+    )
     post_id = rp.json()["data"]["id"]
     r = await client.delete(f"/api/v1/forum/posts/{post_id}", headers=_headers(a))
     assert r.status_code == 200

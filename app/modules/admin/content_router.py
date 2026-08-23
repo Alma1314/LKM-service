@@ -123,9 +123,7 @@ async def admin_delete_blog_comment(
     return {"ok": True}
 
 
-@router.delete(
-    "/article-comment/{comment_id}", response_model=ApiResp[dict[str, Any]]
-)
+@router.delete("/article-comment/{comment_id}", response_model=ApiResp[dict[str, Any]])
 @respond
 async def admin_delete_article_comment(
     comment_id: int,

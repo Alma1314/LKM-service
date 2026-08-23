@@ -94,9 +94,7 @@ async def review_app(
     # require_admin_2fa 已保证 admin 会话 + 2FA 信任；此处再叠加 projects_application_review
     # 权限点（super_admin 有，org_member 无）。校验失败按 FORBIDDEN 返回。
     role = composible_role(_cur.account_level, _cur.role)
-    if not await role_has_permission(
-        db, role, Permission.projects_application_review
-    ):
+    if not await role_has_permission(db, role, Permission.projects_application_review):
         raise BizError(CommonErr.FORBIDDEN)
     result = await review_application(db, app_id, _cur.id, body)
     await bump_collection_version("projects")

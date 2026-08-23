@@ -38,11 +38,13 @@ async def _store_challenge(db: AsyncSession) -> tuple[str, str]:
     challenge_id = secrets.token_hex(16)
     challenge = _b64(os.urandom(32))
     expiry = expires_at(minutes=_CHALLENGE_TTL_MINUTES)
-    db.add(PasskeyChallenge(
-        challenge_id=challenge_id,
-        challenge=challenge,
-        expires_at=expiry,
-    ))
+    db.add(
+        PasskeyChallenge(
+            challenge_id=challenge_id,
+            challenge=challenge,
+            expires_at=expiry,
+        )
+    )
     await db.flush()
     return challenge_id, challenge
 
@@ -88,27 +90,35 @@ async def cleanup_expired_challenges() -> None:
     while True:
         await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
         try:
-            db = new_session()
+            db = await new_session()
             try:
                 from sqlalchemy import delete as sa_delete
                 from sqlalchemy import or_
+
                 now = now_iso()
                 result = await db.execute(
                     sa_delete(PasskeyChallenge).where(
-                        or_(PasskeyChallenge.consumed.is_(True), PasskeyChallenge.expires_at <= now)
+                        or_(
+                            PasskeyChallenge.consumed.is_(True),
+                            PasskeyChallenge.expires_at <= now,
+                        )
                     )
                 )
                 await db.commit()
-                deleted = int(result.rowcount) if result.rowcount else 0  # type: ignore[union-attr]
+                deleted = int(result.rowcount) if result.rowcount else 0  # ty: ignore[unresolved-attribute]
                 if deleted:
-                    _log.info("Cleaned up %d expired/consumed passkey challenges", deleted)
+                    _log.info(
+                        "Cleaned up %d expired/consumed passkey challenges", deleted
+                    )
             except (OSError, RuntimeError):
                 await db.rollback()
                 _log.exception("Failed to clean up expired passkey challenges")
             finally:
-                db.close()
+                await db.close()
         except Exception:
-            _log.exception("cleanup_expired_challenges: unexpected error outside DB session")
+            _log.exception(
+                "cleanup_expired_challenges: unexpected error outside DB session"
+            )
 
 
 def _parse_client_data(client_data_json_b64: str) -> dict:
@@ -117,13 +127,17 @@ def _parse_client_data(client_data_json_b64: str) -> dict:
         raw = _b64decode(client_data_json_b64)
         return json.loads(raw.decode("utf-8"))
     except Exception as exc:
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Invalid clientDataJSON") from exc
+        raise BizError(
+            AuthErr.PASSKEY_VERIFICATION_FAILED, "Invalid clientDataJSON"
+        ) from exc
 
 
 def _parse_authenticator_data(auth_data: bytes) -> dict:
     """按 WebAuthn 规范 §6.1 解析 authenticatorData。"""
     if len(auth_data) < 37:
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Authenticator data too short")
+        raise BizError(
+            AuthErr.PASSKEY_VERIFICATION_FAILED, "Authenticator data too short"
+        )
 
     rp_id_hash = auth_data[:32]
     flags = auth_data[32]
@@ -162,24 +176,37 @@ def _parse_cose_key(data: bytes) -> tuple[dict, int]:
     import cbor2
 
     cose = cbor2.loads(data)
-    key_type = cose.get(1)   # kty（密钥类型）
-    alg = cose.get(3)         # alg（算法）
+    key_type = cose.get(1)  # kty（密钥类型）
+    alg = cose.get(3)  # alg（算法）
     consumed = len(cbor2.dumps(cose))
 
     if key_type != 2:  # EC2（椭圆曲线）
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, f"Unsupported COSE key type: {key_type}")
+        raise BizError(
+            AuthErr.PASSKEY_VERIFICATION_FAILED,
+            f"Unsupported COSE key type: {key_type}",
+        )
 
     x_bytes = cose.get(-2)  # x 坐标
     y_bytes = cose.get(-3)  # y 坐标
-    crv = cose.get(-1)       # 曲线（必须为 1 = P-256）
+    crv = cose.get(-1)  # 曲线（必须为 1 = P-256）
 
     if crv != 1:
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, f"Unsupported EC curve: {crv}")
+        raise BizError(
+            AuthErr.PASSKEY_VERIFICATION_FAILED, f"Unsupported EC curve: {crv}"
+        )
 
     if not x_bytes or not y_bytes:
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Missing COSE key coordinates")
+        raise BizError(
+            AuthErr.PASSKEY_VERIFICATION_FAILED, "Missing COSE key coordinates"
+        )
 
-    return {"kty": key_type, "alg": alg, "crv": crv, "x": x_bytes, "y": y_bytes}, consumed
+    return {
+        "kty": key_type,
+        "alg": alg,
+        "crv": crv,
+        "x": x_bytes,
+        "y": y_bytes,
+    }, consumed
 
 
 def _verify_origin(expected_origin: str, client_data: dict) -> None:
@@ -202,13 +229,14 @@ def _verify_rp_id_hash(auth_data: dict) -> None:
 
 def _verify_user_presence(auth_data: dict) -> None:
     if not (auth_data["flags"] & 0x01):  # UP 标志位（用户在场）
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "User presence not verified")
+        raise BizError(
+            AuthErr.PASSKEY_VERIFICATION_FAILED, "User presence not verified"
+        )
+
 
 def _build_signed_data(auth_data_bytes: bytes, client_data_json_b64: str) -> bytes:
     """构建待验证的二进制数据：authenticatorData || SHA-256(clientDataJSON)。"""
-    client_data_hash = hashlib.sha256(
-        _b64decode(client_data_json_b64)
-    ).digest()
+    client_data_hash = hashlib.sha256(_b64decode(client_data_json_b64)).digest()
     return auth_data_bytes + client_data_hash
 
 
@@ -232,10 +260,9 @@ def _signature_to_der(raw_sig: bytes) -> bytes:
     inner = r_der + s_der
     return b"\x30" + bytes([len(inner)]) + inner
 
+
 async def begin_passkey_registration(db: AsyncSession, user_id: int) -> dict:
-    user = await get_or_raise(
-        db, User, AuthErr.USER_NOT_FOUND, User.id == user_id
-    )
+    user = await get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == user_id)
 
     challenge_id, challenge = await _store_challenge(db)
     user_handle = user_id.to_bytes(8, "big")
@@ -243,9 +270,7 @@ async def begin_passkey_registration(db: AsyncSession, user_id: int) -> dict:
     existing = (
         (
             await db.execute(
-                select(PasskeyCredential).where(
-                    PasskeyCredential.user_id == user_id
-                )
+                select(PasskeyCredential).where(PasskeyCredential.user_id == user_id)
             )
         )
         .scalars()
@@ -280,11 +305,14 @@ async def begin_passkey_registration(db: AsyncSession, user_id: int) -> dict:
         },
     }
 
-async def _prep_passkey_credential(db: AsyncSession, credential: dict, err: ErrCode) -> tuple[str, str, dict, str, dict]:
+
+async def _prep_passkey_credential(
+    db: AsyncSession, credential: dict, err: ErrCode
+) -> tuple[str, str, dict, str, dict]:
     """从 credential dict 提取并校验基础字段，消费 challenge。返回 (raw_id, challenge, response, client_data_json, client_data)。"""
-    raw_id: str = credential.get("rawId")  # type: ignore[assignment]
+    raw_id: str = credential.get("rawId")  # ty: ignore[invalid-assignment]
     challenge_id: str | None = credential.get("challenge_id")
-    response: dict = credential.get("response", {})  # type: ignore[assignment]
+    response: dict = credential.get("response", {})
 
     if not raw_id or not challenge_id:
         raise BizError(err, "rawId and challenge_id required")
@@ -293,7 +321,7 @@ async def _prep_passkey_credential(db: AsyncSession, credential: dict, err: ErrC
     if not challenge:
         raise BizError(err, "Challenge expired or invalid")
 
-    client_data_json_b64: str = response.get("clientDataJSON")  # type: ignore[assignment]
+    client_data_json_b64: str = response.get("clientDataJSON")  # ty: ignore[invalid-assignment]
     client_data = _parse_client_data(client_data_json_b64)
     _verify_origin(settings.origin, client_data)
     _verify_challenge(challenge, client_data)
@@ -304,21 +332,33 @@ async def _prep_passkey_credential(db: AsyncSession, credential: dict, err: ErrC
 async def complete_passkey_registration(
     db: AsyncSession, user_id: int, credential: dict
 ) -> dict:
-    raw_id, _challenge, response, client_data_json_b64, _client_data = await _prep_passkey_credential(
+    (
+        raw_id,
+        _challenge,
+        response,
+        client_data_json_b64,
+        _client_data,
+    ) = await _prep_passkey_credential(
         db, credential, AuthErr.PASSKEY_REGISTRATION_FAILED
     )
 
     attestation_object_b64 = response.get("attestationObject")
 
     if not client_data_json_b64 or not attestation_object_b64:
-        raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "clientDataJSON and attestationObject required")
+        raise BizError(
+            AuthErr.PASSKEY_REGISTRATION_FAILED,
+            "clientDataJSON and attestationObject required",
+        )
 
     try:
         attestation_bytes = _b64decode(str(attestation_object_b64))
         import cbor2
+
         att_obj = cbor2.loads(attestation_bytes)
     except Exception as exc:
-        raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "Invalid attestationObject") from exc
+        raise BizError(
+            AuthErr.PASSKEY_REGISTRATION_FAILED, "Invalid attestationObject"
+        ) from exc
 
     fmt = att_obj.get("fmt", "")
     auth_data_bytes = att_obj.get("authData", b"")
@@ -327,9 +367,11 @@ async def complete_passkey_registration(
     _verify_rp_id_hash(auth_data)
     _verify_user_presence(auth_data)
 
-    ata: dict = auth_data.get("attested_credential_data")  # type: ignore[assignment]
+    ata: dict = auth_data.get("attested_credential_data")  # ty: ignore[invalid-assignment]
     if not ata:
-        raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "No attested credential data")
+        raise BizError(
+            AuthErr.PASSKEY_REGISTRATION_FAILED, "No attested credential data"
+        )
 
     if fmt == "packed":
         att_stmt = att_obj.get("attStmt", {})
@@ -340,14 +382,17 @@ async def complete_passkey_registration(
             try:
                 x5c_0: bytes = x5c[0]  # pyright: ignore[reportAssignmentType]
                 cert = x509.load_der_x509_certificate(x5c_0)
-                signed_data_part = auth_data_bytes + hashlib.sha256(
-                    _b64decode(client_data_json_b64)
-                ).digest()
+                signed_data_part = (
+                    auth_data_bytes
+                    + hashlib.sha256(_b64decode(client_data_json_b64)).digest()
+                )
                 pubkey = cert.public_key()
                 if isinstance(pubkey, ec.EllipticCurvePublicKey):
                     pubkey.verify(sig, signed_data_part, ec.ECDSA(hashes.SHA256()))  # pyright: ignore[reportArgumentType]
             except Exception as exc:
-                raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "Attestation signature invalid") from exc
+                raise BizError(
+                    AuthErr.PASSKEY_REGISTRATION_FAILED, "Attestation signature invalid"
+                ) from exc
 
     cose_key = ata["cose_key"]
     x, y = cose_key["x"], cose_key["y"]
@@ -365,29 +410,26 @@ async def complete_passkey_registration(
         .first()
     )
     if existing:
-        raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, "Credential already registered")
+        raise BizError(
+            AuthErr.PASSKEY_REGISTRATION_FAILED, "Credential already registered"
+        )
 
     device_name = credential.get("device_name", "Unknown device")
 
     cred = PasskeyCredential(
         user_id=user_id,
-        credential_id=raw_id, # type: ignore[union-attr]
+        credential_id=raw_id,  # type: ignore[union-attr]
         public_key=_b64(public_key_bytes),
         sign_count=auth_data["sign_count"],
         device_name=device_name,
     )
     db.add(cred)
 
-    user = (
-        (
-            await db.execute(select(User).where(User.id == user_id))
-        )
-        .scalars()
-        .first()
-    )
+    user = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
     if user and str(user.account_level) == "local":
         await db.flush()
     return {"message": "Passkey registered successfully", "device_name": device_name}
+
 
 async def begin_passkey_login(db: AsyncSession) -> dict:
     challenge_id, challenge = await _store_challenge(db)
@@ -401,8 +443,15 @@ async def begin_passkey_login(db: AsyncSession) -> dict:
         },
     }
 
+
 async def complete_passkey_login(db: AsyncSession, credential: dict) -> dict:
-    raw_id, _challenge, response, client_data_json_b64, _client_data = await _prep_passkey_credential(
+    (
+        raw_id,
+        _challenge,
+        response,
+        client_data_json_b64,
+        _client_data,
+    ) = await _prep_passkey_credential(
         db, credential, AuthErr.PASSKEY_VERIFICATION_FAILED
     )
 
@@ -421,7 +470,9 @@ async def complete_passkey_login(db: AsyncSession, credential: dict) -> dict:
     _verify_user_presence(auth_data)
 
     passkey = await get_or_raise(
-        db, PasskeyCredential, AuthErr.PASSKEY_VERIFICATION_FAILED,
+        db,
+        PasskeyCredential,
+        AuthErr.PASSKEY_VERIFICATION_FAILED,
         PasskeyCredential.credential_id == raw_id,
         detail="Credential not found",
     )
@@ -432,10 +483,14 @@ async def complete_passkey_login(db: AsyncSession, credential: dict) -> dict:
     signature_der = _signature_to_der(signature_raw)
 
     try:
-        pubkey = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), public_key_bytes)
+        pubkey = ec.EllipticCurvePublicKey.from_encoded_point(
+            ec.SECP256R1(), public_key_bytes
+        )
         pubkey.verify(signature_der, signed_data, ec.ECDSA(hashes.SHA256()))
     except (InvalidSignature, ValueError, Exception):
-        raise BizError(AuthErr.PASSKEY_VERIFICATION_FAILED, "Invalid signature") from None
+        raise BizError(
+            AuthErr.PASSKEY_VERIFICATION_FAILED, "Invalid signature"
+        ) from None
 
     reported_count = auth_data["sign_count"]
     passkey.sign_count = max(passkey.sign_count, reported_count)
@@ -449,15 +504,15 @@ async def complete_passkey_login(db: AsyncSession, credential: dict) -> dict:
         raise BizError(AuthErr.ACCOUNT_LEVEL_INSUFFICIENT)
 
     from app.modules.auth.service_auth import finalize_auth_response
+
     return await finalize_auth_response(db, user)
+
 
 async def list_credentials(db: AsyncSession, user_id: int) -> list[dict]:
     creds = (
         (
             await db.execute(
-                select(PasskeyCredential).where(
-                    PasskeyCredential.user_id == user_id
-                )
+                select(PasskeyCredential).where(PasskeyCredential.user_id == user_id)
             )
         )
         .scalars()
@@ -473,9 +528,12 @@ async def list_credentials(db: AsyncSession, user_id: int) -> list[dict]:
         for c in creds
     ]
 
+
 async def delete_credential(db: AsyncSession, user_id: int, credential_id: int) -> dict:
     cred = await get_or_raise(
-        db, PasskeyCredential, AuthErr.PASSKEY_VERIFICATION_FAILED,
+        db,
+        PasskeyCredential,
+        AuthErr.PASSKEY_VERIFICATION_FAILED,
         PasskeyCredential.id == credential_id,
         PasskeyCredential.user_id == user_id,
         detail="Credential not found",

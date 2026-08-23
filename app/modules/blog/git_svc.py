@@ -113,9 +113,7 @@ def revparse_or_none(repo_name: str) -> str | None:
     return out or None
 
 
-def diff_tree_names(
-    repo_name: str, old_sha: str | None, new_sha: str
-) -> list[str]:
+def diff_tree_names(repo_name: str, old_sha: str | None, new_sha: str) -> list[str]:
     """返回 old_sha..new_sha 之间变更文件的路径列表（重命名取新路径）。
 
     old_sha 为空（首 push/空仓库前置）时给出 new_sha 树里全部文件路径。

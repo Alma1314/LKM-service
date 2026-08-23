@@ -30,4 +30,3 @@ FILES_TABLE_PLAN = {
         "created_at",
     ],
 }
-

@@ -30,6 +30,4 @@ async def require_permission(
     """
     role = composible_role(admin.account_level, admin.role)
     if not await role_has_permission(db, role, permission):
-        raise BizError(
-            CommonErr.FORBIDDEN, f"Missing permission: {permission.value}"
-        )
+        raise BizError(CommonErr.FORBIDDEN, f"Missing permission: {permission.value}")

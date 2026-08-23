@@ -61,9 +61,7 @@ async def list_applications(
     db: AsyncSession, page: int = 1, limit: int | None = None
 ) -> PageData[ColumnApplicationInfo]:
     """申请列表，统一返回 ``PageData``。不传 ``limit`` 时返回全部（page 恒为 1，pages 视总数）。"""
-    total = (
-        await db.scalar(select(func.count()).select_from(ColumnApplication)) or 0
-    )
+    total = await db.scalar(select(func.count()).select_from(ColumnApplication)) or 0
     stmt = select(ColumnApplication).order_by(ColumnApplication.id.desc())
     if limit is not None:
         stmt = stmt.offset(paginate_offset(page, limit)).limit(limit)

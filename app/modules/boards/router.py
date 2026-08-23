@@ -141,7 +141,9 @@ async def owner_update_board(
     db: AsyncSession = Depends(get_session),
 ) -> BoardOut:
     # 对象级权限：板块属主放行，或拥有 board_owner_manage（super_admin 代管）放行。
-    await check_owner(db, cur, board_id, Board, "owner_id", Permission.board_owner_manage)
+    await check_owner(
+        db, cur, board_id, Board, "owner_id", Permission.board_owner_manage
+    )
     result = await update_board_ex(
         db, board_id, cur.id, patch, is_admin=(cur.role == "super_admin")
     )
@@ -158,7 +160,9 @@ async def ban(
     cur: CurrentUserDep,
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, bool]:
-    await check_owner(db, cur, board_id, Board, "owner_id", Permission.board_owner_manage)
+    await check_owner(
+        db, cur, board_id, Board, "owner_id", Permission.board_owner_manage
+    )
     board = await get_board_ex(db, board_id)
     await ban_user(db, board, cur.id, body, is_admin=(cur.role == "super_admin"))
     return {"ok": True}
@@ -174,7 +178,9 @@ async def unban(
     cur: CurrentUserDep,
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, bool]:
-    await check_owner(db, cur, board_id, Board, "owner_id", Permission.board_owner_manage)
+    await check_owner(
+        db, cur, board_id, Board, "owner_id", Permission.board_owner_manage
+    )
     board = await get_board_ex(db, board_id)
     await unban_user(
         db, board, cur.id, target_user_id, is_admin=(cur.role == "super_admin")

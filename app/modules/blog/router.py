@@ -64,7 +64,7 @@ async def list_blog_series(
     cur: CurrentUser | None = Depends(get_optional_user),
     page: int = Query(1, ge=1),
     limit: int | None = Query(default=None, ge=1, le=200),
-) -> dict[str, Any]:
+) -> PageData[BlogSeriesInfo]:
     user_id = cur.id if cur else None
     return await list_series(db, current_user_id=user_id, page=page, limit=limit)
 

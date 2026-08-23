@@ -136,7 +136,14 @@ async def remove_article_comment(
 ) -> None:
     # 对象级权限：评论作者（user_id==cur.id）放行，或拥有 article_owner_comment_delete
     # 的 super_admin 代删。注意属主字段是 user_id（评论作者），非大文本的 author_id。
-    await check_owner(db, cur, comment_id, ArticleComment, "user_id", Permission.article_owner_comment_delete)
+    await check_owner(
+        db,
+        cur,
+        comment_id,
+        ArticleComment,
+        "user_id",
+        Permission.article_owner_comment_delete,
+    )
     # check_owner 已做对象级授权（属主或持 article.owner_comment_delete 的 super_admin），
     # service 层不再重复属主校验，故传 as_admin=True 跳过其内部 owner 检查。
     await delete_article_comment(db, comment_id, cur.id, as_admin=True)

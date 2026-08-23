@@ -6,6 +6,7 @@
 - create_access_token 的 role 为必填。
 - 上传端点走 multipart，且 create_file 需落盘，故涉上传用例需把 files_store_dir 指到 tmp_path。
 """
+
 import io
 
 from app.db.models import Profile, RolePermission, User
@@ -145,9 +146,7 @@ async def test_download_without_perm_is_403(
     fid = await _mk_file(db, client, tmp_path, monkeypatch, uploader, approved=True)
     # 下载者未授 files.download（不设权限 / 只授 upload）
     actor = await _mk_user(db, "dl_noperm", level="normal", role="member")
-    r = await client.post(
-        f"/api/v1/files/{fid}/download", headers=_h(actor)
-    )
+    r = await client.post(f"/api/v1/files/{fid}/download", headers=_h(actor))
     assert r.status_code == 403
 
 
@@ -161,9 +160,7 @@ async def test_download_with_perm_is_200(
     fid = await _mk_file(db, client, tmp_path, monkeypatch, uploader, approved=True)
     await _grant(db, "normal:member", "files.download")
     actor = await _mk_user(db, "dl2_ok", level="normal", role="member")
-    r = await client.post(
-        f"/api/v1/files/{fid}/download", headers=_h(actor)
-    )
+    r = await client.post(f"/api/v1/files/{fid}/download", headers=_h(actor))
     assert r.status_code == 200
 
 

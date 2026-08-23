@@ -27,26 +27,45 @@ def _make_repo(repo_dir: str, repo_name: str, files: dict[str, str]) -> str:
     bare = f"{repo_dir}/{repo_name}.git"
     subprocess.run(
         ["git", "init", "--bare", bare],
-        capture_output=True, check=True,
+        capture_output=True,
+        check=True,
     )
     blobs = {}
     for path, content in files.items():
-        blob = subprocess.run(
-            ["git", "--git-dir", bare, "hash-object", "-w", "--stdin"],
-            input=content.encode(), capture_output=True, check=True,
-        ).stdout.decode().strip()
+        blob = (
+            subprocess.run(
+                ["git", "--git-dir", bare, "hash-object", "-w", "--stdin"],
+                input=content.encode(),
+                capture_output=True,
+                check=True,
+            )
+            .stdout.decode()
+            .strip()
+        )
         blobs[path] = blob
     entries = [f"100644 blob {blobs[path]}\t{path.split('/')[-1]}" for path in files]
-    tree = subprocess.run(
-        ["git", "--git-dir", bare, "mktree"], input="\n".join(entries).encode(),
-        capture_output=True, check=True,
-    ).stdout.decode().strip()
-    commit = subprocess.run(
-        ["git", "--git-dir", bare, "commit-tree", tree, "-m", "init"],
-        capture_output=True, check=True,
-    ).stdout.decode().strip()
+    tree = (
+        subprocess.run(
+            ["git", "--git-dir", bare, "mktree"],
+            input="\n".join(entries).encode(),
+            capture_output=True,
+            check=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
+    commit = (
+        subprocess.run(
+            ["git", "--git-dir", bare, "commit-tree", tree, "-m", "init"],
+            capture_output=True,
+            check=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
     subprocess.run(
-        ["git", "--git-dir", bare, "update-ref", "refs/heads/master", commit], check=True
+        ["git", "--git-dir", bare, "update-ref", "refs/heads/master", commit],
+        check=True,
     )
     return commit
 

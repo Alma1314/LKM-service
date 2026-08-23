@@ -52,7 +52,9 @@ def _set_admin_cookie(client: Client, user: User, mfa_verified: bool = False) ->
 
 class TestAdminUsersManage:
     async def test_org_member_without_grant_forbidden(
-        self, db: DB, client: Client,
+        self,
+        db: DB,
+        client: Client,
     ) -> None:
         # org_member 默认（DEFAULT_GRANTS）不授 admin_users_manage → 403
         await _seed_perm(db, "admin:org_member", "admin.dashboard")
@@ -62,7 +64,9 @@ class TestAdminUsersManage:
         assert r.status_code == 403
 
     async def test_super_admin_with_grant_allowed(
-        self, db: DB, client: Client,
+        self,
+        db: DB,
+        client: Client,
     ) -> None:
         # super_admin 授 admin.users_manage → 200
         await _seed_perm(db, "admin:super_admin", "admin.users_manage")
@@ -74,7 +78,9 @@ class TestAdminUsersManage:
 
 class TestAdminReportsView:
     async def test_org_member_with_grant_allowed(
-        self, db: DB, client: Client,
+        self,
+        db: DB,
+        client: Client,
     ) -> None:
         # org_member 默认授 admin_reports_view（DEFAULT_GRANTS）→ 200
         await _seed_perm(db, "admin:org_member", "admin.reports_view")
@@ -84,7 +90,9 @@ class TestAdminReportsView:
         assert r.status_code == 200
 
     async def test_org_member_dashboard_allowed(
-        self, db: DB, client: Client,
+        self,
+        db: DB,
+        client: Client,
     ) -> None:
         # org_member 默认授 admin_dashboard → /auth/me 与 /stats 可访问
         await _seed_perm(db, "admin:org_member", "admin.dashboard")
@@ -96,7 +104,9 @@ class TestAdminReportsView:
 
 class TestAdminContentReview:
     async def test_org_member_without_grant_forbidden(
-        self, db: DB, client: Client,
+        self,
+        db: DB,
+        client: Client,
     ) -> None:
         # org_member 不授 admin_content_review → 越过 2FA 后仍 403（RBAC 收紧）
         await _seed_perm(db, "admin:org_member", "admin.dashboard")
@@ -106,7 +116,9 @@ class TestAdminContentReview:
         assert r.status_code == 403
 
     async def test_super_admin_with_grant_allowed(
-        self, db: DB, client: Client,
+        self,
+        db: DB,
+        client: Client,
     ) -> None:
         # super_admin 授 admin_content_review → 越过 2FA 后到达 service（帖不存在→404）
         await _seed_perm(db, "admin:super_admin", "admin.content_review")
@@ -118,7 +130,9 @@ class TestAdminContentReview:
 
 class TestAdminMe:
     async def test_super_admin_me_allowed(
-        self, db: DB, client: Client,
+        self,
+        db: DB,
+        client: Client,
     ) -> None:
         await _seed_perm(db, "admin:super_admin", "admin.dashboard")
         u = await _mk_user(db, "sadmin_me", role="super_admin")

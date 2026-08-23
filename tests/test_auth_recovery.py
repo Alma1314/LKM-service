@@ -350,9 +350,7 @@ class TestRecoverByContactEmail:
         code, _ = await _create_email_code(db, "alice@example.com", "reset")
 
         with pytest.raises(BizError) as exc:
-            await _svc().recover_by_contact(
-                db, "alice@example.com", code, "newpwd456"
-            )
+            await _svc().recover_by_contact(db, "alice@example.com", code, "newpwd456")
         assert exc.value.errcode == AuthErr.RECOVERY_NOT_SUPPORTED
 
     async def should_reset_failed_login_attempts_and_lock(self, db: AsyncSession):

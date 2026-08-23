@@ -298,16 +298,8 @@ class TestFilesRoutes:
         # 与生产 DEFAULT_GRANTS seed 一致（test_columns 迁移同款做法）。
         from app.db.models import RolePermission
 
-        db.add(
-            RolePermission(
-                role_name="normal:member", permission="files.upload"
-            )
-        )
-        db.add(
-            RolePermission(
-                role_name="normal:member", permission="files.download"
-            )
-        )
+        db.add(RolePermission(role_name="normal:member", permission="files.upload"))
+        db.add(RolePermission(role_name="normal:member", permission="files.download"))
         await db.flush()
         user_id = await _user(db, username=username, email=email)
         token = create_access_token(
@@ -686,11 +678,7 @@ class TestFilesPhase2AEndpoints:
         # 预览/下载端点需 files.download 权限点（test_columns 迁移同款做法）。
         from app.db.models import RolePermission
 
-        db.add(
-            RolePermission(
-                role_name="normal:member", permission="files.download"
-            )
-        )
+        db.add(RolePermission(role_name="normal:member", permission="files.download"))
         await db.flush()
         user_id = await _user(db, username="phase2a", email="phase2a@example.com")
         token = create_access_token(
@@ -873,11 +861,7 @@ class TestFilesPhase2BUploadInit:
         # upload-init/confirm 需 files.upload 权限点（test_columns 迁移同款做法）。
         from app.db.models import RolePermission
 
-        db.add(
-            RolePermission(
-                role_name="normal:member", permission="files.upload"
-            )
-        )
+        db.add(RolePermission(role_name="normal:member", permission="files.upload"))
         await db.flush()
         user_id = await _user(db, username="p2b", email="p2b@example.com")
         token = create_access_token(

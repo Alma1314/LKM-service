@@ -264,9 +264,7 @@ async def unbind(
     totp = await service_2fa.get_enabled_totp(db, cur.id)
     if totp is not None:
         if not body.code and not body.recovery_code:
-            raise BizError(
-                AuthErr.TOTP_CODE_INVALID, "2FA 已开启，解绑需要动态验证码"
-            )
+            raise BizError(AuthErr.TOTP_CODE_INVALID, "2FA 已开启，解绑需要动态验证码")
         await service_2fa.verify_second_factor(
             db, cur.id, code=body.code, recovery_code=body.recovery_code
         )

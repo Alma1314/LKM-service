@@ -5,6 +5,7 @@
 require_admin_2fa（危险操作 2FA，读 cookie），故审核用例需以 create_admin_access_token(mfa_verified=True)
 写入 client cookie 才能越 2FA 门槛，从而触达 handler 内 projects_application_review 权限点判定。
 """
+
 from sqlalchemy import select
 
 from app.db.models import Profile, ProjectApplication, RolePermission, User
@@ -13,7 +14,9 @@ from app.modules.auth.security import create_access_token
 from tests.conftest import DB, Client
 
 
-async def _mk_user(db: DB, uname: str, level: str = "normal", role: str = "member") -> User:
+async def _mk_user(
+    db: DB, uname: str, level: str = "normal", role: str = "member"
+) -> User:
     # users.hashed_password 为 NOT NULL，传占位值；Profile 列是 nickname（无 display_name）。
     user = User(
         username=uname,
@@ -67,7 +70,9 @@ def _app_payload(title: str = "LKM") -> dict[str, object]:
 
 
 class TestSubmitAppPermission:
-    async def test_member_without_grant_cannot_submit(self, db: DB, client: Client) -> None:
+    async def test_member_without_grant_cannot_submit(
+        self, db: DB, client: Client
+    ) -> None:
         # member（normal/member，未授 projects_application_create）提交 → 403（收紧证明）
         u = await _mk_user(db, "m0", level="normal", role="member")
         r = await client.post(
@@ -96,10 +101,16 @@ class TestReviewAppPermission:
         # org_member 未授 projects_application_review → 越 2FA 门槛后 403
         await _seed_perm(db, "admin:org_member", "projects.application_create")
         u = await _mk_user(db, "org0", level="admin", role="org_member")
-        db.add(ProjectApplication(
-            applicant_id=u.id, title="t", summary="s", description="d",
-            member_claims="[]", status="pending",
-        ))
+        db.add(
+            ProjectApplication(
+                applicant_id=u.id,
+                title="t",
+                summary="s",
+                description="d",
+                member_claims="[]",
+                status="pending",
+            )
+        )
         await db.flush()
         app_id = await db.scalar(select(ProjectApplication.id))
         _set_admin_mfa_cookie(client, u)
@@ -112,10 +123,16 @@ class TestReviewAppPermission:
         # super_admin 授 projects_application_review → 审核通过 200
         await _seed_perm(db, "admin:super_admin", "projects.application_review")
         u = await _mk_user(db, "sadmin", level="admin", role="super_admin")
-        db.add(ProjectApplication(
-            applicant_id=u.id, title="t", summary="s", description="d",
-            member_claims="[]", status="pending",
-        ))
+        db.add(
+            ProjectApplication(
+                applicant_id=u.id,
+                title="t",
+                summary="s",
+                description="d",
+                member_claims="[]",
+                status="pending",
+            )
+        )
         await db.flush()
         app_id = await db.scalar(select(ProjectApplication.id))
         _set_admin_mfa_cookie(client, u)
@@ -129,10 +146,16 @@ class TestReviewAppPermission:
         # 无 2FA 信任 cookie → 2FA 门槛拦截（MFA_REQUIRED → 401/403 依据 require_admin_2fa 行为）
         await _seed_perm(db, "admin:super_admin", "projects.application_review")
         u = await _mk_user(db, "no2fa", level="admin", role="super_admin")
-        db.add(ProjectApplication(
-            applicant_id=u.id, title="t", summary="s", description="d",
-            member_claims="[]", status="pending",
-        ))
+        db.add(
+            ProjectApplication(
+                applicant_id=u.id,
+                title="t",
+                summary="s",
+                description="d",
+                member_claims="[]",
+                status="pending",
+            )
+        )
         await db.flush()
         app_id = await db.scalar(select(ProjectApplication.id))
         # 注意：不 set 2FA cookie

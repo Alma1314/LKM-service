@@ -51,6 +51,7 @@ def _sign_assertion(key, auth_data: bytes, client_data_json_b64: str) -> bytes:
     Returns a raw 64-byte (r||s) signature in WebAuthn format.
     """
     import hashlib
+
     client_hash = hashlib.sha256(_b64decode(client_data_json_b64)).digest()
     signed = auth_data + client_hash
     der_sig = key.sign(signed, ec.ECDSA(hashes.SHA256()))
@@ -60,12 +61,14 @@ def _sign_assertion(key, auth_data: bytes, client_data_json_b64: str) -> bytes:
 def _der_to_raw(der_sig: bytes) -> bytes:
     """Convert a DER-encoded ECDSA signature to raw 64-byte r||s format."""
     from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+
     r, s = decode_dss_signature(der_sig)
     return r.to_bytes(32, "big") + s.to_bytes(32, "big")
 
 
 def _service():
     from app.modules.auth import service_passkey
+
     return service_passkey
 
 
@@ -79,7 +82,9 @@ async def _reg_local(db, username="alice", password="secret123456"):
     return user
 
 
-async def _reg_normal(db, username="bob", email="bob@test.com", password="secret123456"):
+async def _reg_normal(
+    db, username="bob", email="bob@test.com", password="secret123456"
+):
     """用 ORM 直接造一个带邮箱的 normal 用户。"""
     from app.db.models import User
 
@@ -94,7 +99,9 @@ async def _reg_normal(db, username="bob", email="bob@test.com", password="secret
     return user
 
 
-async def _register_passkey(db, user_id, credential_id, device_name="TestKey", key=None):
+async def _register_passkey(
+    db, user_id, credential_id, device_name="TestKey", key=None
+):
     """Helper: directly insert a PasskeyCredential with a valid EC key."""
     if key is None:
         key = _generate_ec_key()
@@ -164,35 +171,52 @@ class TestCompletePasskeyRegistration:
         pub_bytes = _public_key_bytes(key)
         cred_id_b64 = _b64(b"test-creds")
 
-        client_data = json.dumps({
-            "type": "webauthn.create",
-            "challenge": challenge,
-            "origin": "http://localhost:5173",
-        })
+        client_data = json.dumps(
+            {
+                "type": "webauthn.create",
+                "challenge": challenge,
+                "origin": "http://localhost:5173",
+            }
+        )
         client_data_b64 = _b64(client_data.encode("utf-8"))
 
         import cbor2
+
         auth_data = _make_authenticator_data("localhost", 0, flags=0x41)
         aaguid = b"\x00" * 16
         cred_id_bytes = b"test-creds"
-        cose_key = cbor2.dumps({1: 2, 3: -7, -1: 1, -2: pub_bytes[1:33], -3: pub_bytes[33:]})
-        attested = auth_data + aaguid + struct.pack(">H", len(cred_id_bytes)) + cred_id_bytes + cose_key
+        cose_key = cbor2.dumps(
+            {1: 2, 3: -7, -1: 1, -2: pub_bytes[1:33], -3: pub_bytes[33:]}
+        )
+        attested = (
+            auth_data
+            + aaguid
+            + struct.pack(">H", len(cred_id_bytes))
+            + cred_id_bytes
+            + cose_key
+        )
 
-        att_obj = cbor2.dumps({
-            "fmt": "none",
-            "attStmt": {},
-            "authData": attested,
-        })
+        att_obj = cbor2.dumps(
+            {
+                "fmt": "none",
+                "attStmt": {},
+                "authData": attested,
+            }
+        )
         att_obj_b64 = _b64(att_obj)
 
-        result = await svc.complete_passkey_registration(db, user.id, {
-            "rawId": cred_id_b64,
-            "challenge_id": challenge_id,
-            "response": {
-                "clientDataJSON": client_data_b64,
-                "attestationObject": att_obj_b64,
+        result = await svc.complete_passkey_registration(
+            db,
+            user.id,
+            {
+                "rawId": cred_id_b64,
+                "challenge_id": challenge_id,
+                "response": {
+                    "clientDataJSON": client_data_b64,
+                    "attestationObject": att_obj_b64,
+                },
             },
-        })
+        )
         assert result["message"] == "Passkey registered successfully"
 
     async def should_reject_wrong_challenge(self, db):
@@ -201,36 +225,54 @@ class TestCompletePasskeyRegistration:
         begin = await svc.begin_passkey_registration(db, user.id)
         challenge_id = begin["challenge_id"]
 
-        client_data = json.dumps({
-            "type": "webauthn.create",
-            "challenge": "wrong-challenge",
-            "origin": "http://localhost:5173",
-        })
+        client_data = json.dumps(
+            {
+                "type": "webauthn.create",
+                "challenge": "wrong-challenge",
+                "origin": "http://localhost:5173",
+            }
+        )
         client_data_b64 = _b64(client_data.encode("utf-8"))
 
         import cbor2
+
         key = _generate_ec_key()
         pub_bytes = _public_key_bytes(key)
         auth_data = _make_authenticator_data("localhost", 0, flags=0x41)
         aaguid = b"\x00" * 16
         cred_id_bytes = b"wrong-creds"
-        cose_key_cbor = cbor2.dumps({1: 2, 3: -7, -1: 1, -2: pub_bytes[1:33], -3: pub_bytes[33:]})
-        attested = auth_data + aaguid + struct.pack(">H", len(cred_id_bytes)) + cred_id_bytes + cose_key_cbor
+        cose_key_cbor = cbor2.dumps(
+            {1: 2, 3: -7, -1: 1, -2: pub_bytes[1:33], -3: pub_bytes[33:]}
+        )
+        attested = (
+            auth_data
+            + aaguid
+            + struct.pack(">H", len(cred_id_bytes))
+            + cred_id_bytes
+            + cose_key_cbor
+        )
         att_obj = cbor2.dumps({"fmt": "none", "attStmt": {}, "authData": attested})
         att_obj_b64 = _b64(att_obj)
 
         with pytest.raises(BizError) as exc:
-            await svc.complete_passkey_registration(db, user.id, {
-                "rawId": _b64(b"cred"),
-                "challenge_id": challenge_id,
-                "response": {
-                    "clientDataJSON": client_data_b64,
-                    "attestationObject": att_obj_b64,
+            await svc.complete_passkey_registration(
+                db,
+                user.id,
+                {
+                    "rawId": _b64(b"cred"),
+                    "challenge_id": challenge_id,
+                    "response": {
+                        "clientDataJSON": client_data_b64,
+                        "attestationObject": att_obj_b64,
+                    },
                 },
-            })
+            )
         # Challenge mismatch raises PASSKEY_VERIFICATION_FAILED (the generic
         # verification error code, used for both registration and login).
-        assert exc.value.errcode in (AuthErr.PASSKEY_REGISTRATION_FAILED, AuthErr.PASSKEY_VERIFICATION_FAILED)
+        assert exc.value.errcode in (
+            AuthErr.PASSKEY_REGISTRATION_FAILED,
+            AuthErr.PASSKEY_VERIFICATION_FAILED,
+        )
 
 
 # ==================================================================
@@ -264,26 +306,31 @@ class TestCompletePasskeyLogin:
         challenge_id = begin["challenge_id"]
         challenge = begin["public_key"]["challenge"]
 
-        client_data = json.dumps({
-            "type": "webauthn.get",
-            "challenge": challenge,
-            "origin": "http://localhost:5173",
-        })
+        client_data = json.dumps(
+            {
+                "type": "webauthn.get",
+                "challenge": challenge,
+                "origin": "http://localhost:5173",
+            }
+        )
         client_data_b64 = _b64(client_data.encode("utf-8"))
 
         auth_data = _make_authenticator_data("localhost", 1)
         signature = _sign_assertion(key, auth_data, client_data_b64)
         signature_b64 = _b64(signature)
 
-        result = await svc.complete_passkey_login(db, {
-            "rawId": cred_id,
-            "challenge_id": challenge_id,
-            "response": {
-                "authenticatorData": _b64(auth_data),
-                "clientDataJSON": client_data_b64,
-                "signature": signature_b64,
+        result = await svc.complete_passkey_login(
+            db,
+            {
+                "rawId": cred_id,
+                "challenge_id": challenge_id,
+                "response": {
+                    "authenticatorData": _b64(auth_data),
+                    "clientDataJSON": client_data_b64,
+                    "signature": signature_b64,
+                },
             },
-        })
+        )
         assert result["user_id"] == user.id
         assert result["access_token"] is not None
 
@@ -300,24 +347,29 @@ class TestCompletePasskeyLogin:
             challenge_id = begin["challenge_id"]
             challenge = begin["public_key"]["challenge"]
 
-            client_data = json.dumps({
-                "type": "webauthn.get",
-                "challenge": challenge,
-                "origin": "http://localhost:5173",
-            })
+            client_data = json.dumps(
+                {
+                    "type": "webauthn.get",
+                    "challenge": challenge,
+                    "origin": "http://localhost:5173",
+                }
+            )
             client_data_b64 = _b64(client_data.encode("utf-8"))
             auth_data = _make_authenticator_data("localhost", i + 1)
             signature = _sign_assertion(key, auth_data, client_data_b64)
 
-            result = await svc.complete_passkey_login(db, {
-                "rawId": cred_id,
-                "challenge_id": challenge_id,
-                "response": {
-                    "authenticatorData": _b64(auth_data),
-                    "clientDataJSON": client_data_b64,
-                    "signature": _b64(signature),
+            result = await svc.complete_passkey_login(
+                db,
+                {
+                    "rawId": cred_id,
+                    "challenge_id": challenge_id,
+                    "response": {
+                        "authenticatorData": _b64(auth_data),
+                        "clientDataJSON": client_data_b64,
+                        "signature": _b64(signature),
+                    },
                 },
-            })
+            )
             assert result["user_id"] == user.id
 
         pk = (
@@ -342,10 +394,13 @@ class TestCompletePasskeyLogin:
         begin = await svc.begin_passkey_login(db)
 
         with pytest.raises(BizError) as exc:
-            await svc.complete_passkey_login(db, {
-                "rawId": cred_id,
-                "challenge_id": begin["challenge_id"],
-            })
+            await svc.complete_passkey_login(
+                db,
+                {
+                    "rawId": cred_id,
+                    "challenge_id": begin["challenge_id"],
+                },
+            )
         assert exc.value.errcode == AuthErr.PASSKEY_VERIFICATION_FAILED
 
     async def should_reject_wrong_signature(self, db):
@@ -359,35 +414,39 @@ class TestCompletePasskeyLogin:
         begin = await svc.begin_passkey_login(db)
         challenge = begin["public_key"]["challenge"]
 
-        client_data = json.dumps({
-            "type": "webauthn.get",
-            "challenge": challenge,
-            "origin": "http://localhost:5173",
-        })
+        client_data = json.dumps(
+            {
+                "type": "webauthn.get",
+                "challenge": challenge,
+                "origin": "http://localhost:5173",
+            }
+        )
         client_data_b64 = _b64(client_data.encode("utf-8"))
         auth_data = _make_authenticator_data("localhost", 1)
         wrong_sig = _sign_assertion(wrong_key, auth_data, client_data_b64)
 
         with pytest.raises(BizError) as exc:
-            await svc.complete_passkey_login(db, {
-                "rawId": cred_id,
-                "challenge_id": begin["challenge_id"],
-                "response": {
-                    "authenticatorData": _b64(auth_data),
-                    "clientDataJSON": client_data_b64,
-                    "signature": _b64(wrong_sig),
+            await svc.complete_passkey_login(
+                db,
+                {
+                    "rawId": cred_id,
+                    "challenge_id": begin["challenge_id"],
+                    "response": {
+                        "authenticatorData": _b64(auth_data),
+                        "clientDataJSON": client_data_b64,
+                        "signature": _b64(wrong_sig),
+                    },
                 },
-            })
+            )
         assert exc.value.errcode == AuthErr.PASSKEY_VERIFICATION_FAILED
 
     async def should_reject_local_user_passkey_login(self, db):
         """A local user with a passkey should be rejected at login (completed manually)."""
         from app.db.models import User
+
         await _reg_local(db, username="localuser")
         user = (
-            (
-                await db.execute(select(User).where(User.username == "localuser"))
-            )
+            (await db.execute(select(User).where(User.username == "localuser")))
             .scalars()
             .first()
         )
@@ -399,25 +458,30 @@ class TestCompletePasskeyLogin:
         begin = await svc.begin_passkey_login(db)
         challenge = begin["public_key"]["challenge"]
 
-        client_data = json.dumps({
-            "type": "webauthn.get",
-            "challenge": challenge,
-            "origin": "http://localhost:5173",
-        })
+        client_data = json.dumps(
+            {
+                "type": "webauthn.get",
+                "challenge": challenge,
+                "origin": "http://localhost:5173",
+            }
+        )
         client_data_b64 = _b64(client_data.encode("utf-8"))
         auth_data = _make_authenticator_data("localhost", 1)
         signature = _sign_assertion(key, auth_data, client_data_b64)
 
         with pytest.raises(BizError) as exc:
-            await svc.complete_passkey_login(db, {
-                "rawId": cred_id,
-                "challenge_id": begin["challenge_id"],
-                "response": {
-                    "authenticatorData": _b64(auth_data),
-                    "clientDataJSON": client_data_b64,
-                    "signature": _b64(signature),
+            await svc.complete_passkey_login(
+                db,
+                {
+                    "rawId": cred_id,
+                    "challenge_id": begin["challenge_id"],
+                    "response": {
+                        "authenticatorData": _b64(auth_data),
+                        "clientDataJSON": client_data_b64,
+                        "signature": _b64(signature),
+                    },
                 },
-            })
+            )
         assert exc.value.errcode == AuthErr.ACCOUNT_LEVEL_INSUFFICIENT
 
     async def should_reject_wrong_rp_id(self, db):
@@ -430,24 +494,29 @@ class TestCompletePasskeyLogin:
         begin = await svc.begin_passkey_login(db)
         challenge = begin["public_key"]["challenge"]
 
-        client_data = json.dumps({
-            "type": "webauthn.get",
-            "challenge": challenge,
-            "origin": "http://localhost:5173",
-        })
+        client_data = json.dumps(
+            {
+                "type": "webauthn.get",
+                "challenge": challenge,
+                "origin": "http://localhost:5173",
+            }
+        )
         client_data_b64 = _b64(client_data.encode("utf-8"))
         auth_data = _make_authenticator_data("evil.com", 1)
 
         with pytest.raises(BizError) as exc:
-            await svc.complete_passkey_login(db, {
-                "rawId": cred_id,
-                "challenge_id": begin["challenge_id"],
-                "response": {
-                    "authenticatorData": _b64(auth_data),
-                    "clientDataJSON": client_data_b64,
-                    "signature": _b64(os.urandom(64)),
+            await svc.complete_passkey_login(
+                db,
+                {
+                    "rawId": cred_id,
+                    "challenge_id": begin["challenge_id"],
+                    "response": {
+                        "authenticatorData": _b64(auth_data),
+                        "clientDataJSON": client_data_b64,
+                        "signature": _b64(os.urandom(64)),
+                    },
                 },
-            })
+            )
         assert exc.value.errcode == AuthErr.PASSKEY_VERIFICATION_FAILED
 
 

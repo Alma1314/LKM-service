@@ -1,4 +1,5 @@
 """require_owner 底层谓词 check_owner：admin/属主/他人三分支。"""
+
 import pytest
 
 from app.core.err import BizError, CommonErr
@@ -48,25 +49,35 @@ async def _mk_post(db: DB, author_id: int) -> int:
 
 async def test_owner_allowed_by_id(db: DB) -> None:
     pid = await _mk_post(db, 7)
-    await check_owner(db, _actor(7), pid, ForumPost, "author_id", Permission.forum_owner_delete)
+    await check_owner(
+        db, _actor(7), pid, ForumPost, "author_id", Permission.forum_owner_delete
+    )
     # 无异常即通过
 
 
 async def test_foreign_forbidden(db: DB) -> None:
     pid = await _mk_post(db, 7)
     with pytest.raises(BizError) as exc:
-        await check_owner(db, _actor(99), pid, ForumPost, "author_id", Permission.forum_owner_delete)
+        await check_owner(
+            db, _actor(99), pid, ForumPost, "author_id", Permission.forum_owner_delete
+        )
     assert exc.value.errcode == CommonErr.FORBIDDEN
 
 
 async def test_admin_allowed(db: DB) -> None:
     pid = await _mk_post(db, 7)
-    await check_owner(db, _admin(1), pid, ForumPost, "author_id", Permission.forum_owner_delete)
+    await check_owner(
+        db, _admin(1), pid, ForumPost, "author_id", Permission.forum_owner_delete
+    )
 
 
 async def test_admin_requires_grant(db: DB) -> None:
     # admin 但如果 role 未被授予该 object 权限点（例如 admin:org_member 无 forum_owner_delete）则仍拒
     pid = await _mk_post(db, 7)
-    org = CurrentUser(id=2, account_level="admin", role="org_member", email=None, phone=None)
+    org = CurrentUser(
+        id=2, account_level="admin", role="org_member", email=None, phone=None
+    )
     with pytest.raises(BizError):
-        await check_owner(db, org, pid, ForumPost, "author_id", Permission.forum_owner_delete)
+        await check_owner(
+            db, org, pid, ForumPost, "author_id", Permission.forum_owner_delete
+        )

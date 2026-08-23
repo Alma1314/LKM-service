@@ -20,6 +20,7 @@ from app.modules.blog.errors import BlogErr
 @dataclass
 class BackfillResult:
     """一次 push 回填的统计：本次变更路径 / 已采纳 / 因 DB 更新被跳过。"""
+
     paths: list[str] = field(default_factory=list)
     upserted: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
@@ -27,6 +28,7 @@ class BackfillResult:
 
 def _sha3(content: str) -> str:
     import hashlib
+
     return hashlib.sha3_256(content.encode("utf-8")).hexdigest()
 
 

@@ -103,7 +103,9 @@ async def maybe_backfill_after_push(repo_name: str, old_sha: str | None) -> None
     try:
         series_id = await _resolve_series_id(db, repo_name)
         if series_id is None:
-            logger.warning("blog push 命中孤儿仓库(无 blog_series), 跳过回填: %s", repo_name)
+            logger.warning(
+                "blog push 命中孤儿仓库(无 blog_series), 跳过回填: %s", repo_name
+            )
             return
         await backfill.backfill_series_from_git(
             db,
