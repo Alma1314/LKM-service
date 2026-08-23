@@ -20,6 +20,9 @@ from app.core.config import settings
 
 @pytest.fixture(autouse=True)
 async def reset_redis_globals() -> AsyncIterator[None]:
+    # setup 和 teardown 都彻底复位：close 旧连接再置 None，杜绝上一测试残留的单例
+    # 或未关闭 pool 在本测试被 get_redis() 复用（偶发 cache_get 返回 None 的根因之一）。
+    await redis_mod.close_redis()
     redis_mod._client = None
     redis_mod._client_pool = None
     yield
