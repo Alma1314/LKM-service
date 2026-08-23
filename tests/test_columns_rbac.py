@@ -1,5 +1,7 @@
 """columns 迁移 RBAC：申请/审核/发布属主。"""
+
 from app.db.models import Column, Profile, RolePermission, User
+from app.modules.admin.deps import COOKIE_NAME, COOKIE_PATH, create_admin_access_token
 from app.modules.auth.security import create_access_token
 from tests.conftest import DB, Client
 
@@ -96,22 +98,28 @@ async def _grant(db: DB, role_name: str, *perms: str) -> None:
     await db.flush()
 
 
+def _set_admin_mfa_cookie(client: Client, user: User) -> None:
+    # review 端点走 require_admin_2fa（后台 cookie + step-up 2FA 信任），
+    # 故用后台 access token（mfa_verified=True）写入 client cookie 越过 2FA 门槛，
+    # 才触达 handler 内 columns.application_review 权限点判定。与 boards/projects 审核测试一致。
+    tok = create_admin_access_token(user, mfa_verified=True)
+    client.cookies.set(COOKIE_NAME, tok, path=COOKIE_PATH)
+
+
 async def test_super_admin_can_review_application(db: DB, client: Client) -> None:
     from app.db.models import ColumnApplication
 
-    # 申请人普通，super_admin 审核（admin 门槛 + columns.application_review 权限点）。
+    # 申请人普通，super_admin 审核（2FA 门槛 + columns.application_review 权限点）。
     applicant = await _mk_user(db, "app_owner", level="normal", role="member")
     await _grant(db, "admin:super_admin", "columns.application_review")
     u = await _mk_user(db, "cap_member", level="admin", role="super_admin")
     db.add(
-        ColumnApplication(
-            user_id=applicant.id, title="t", description="d", reason="r"
-        )
+        ColumnApplication(user_id=applicant.id, title="t", description="d", reason="r")
     )
     await db.flush()
+    _set_admin_mfa_cookie(client, u)
     r = await client.post(
         "/api/v1/columns/applications/1/review",
-        headers=_h(u, role="super_admin"),
         json={"status": "approved"},
     )
     assert r.status_code in (200, 201)
@@ -139,20 +147,18 @@ async def test_org_member_cannot_review_application(db: DB, client: Client) -> N
 
     applicant = await _mk_user(db, "org_rev_app", level="normal", role="member")
     db.add(
-        ColumnApplication(
-            user_id=applicant.id, title="t", description="d", reason="r"
-        )
+        ColumnApplication(user_id=applicant.id, title="t", description="d", reason="r")
     )
     await db.flush()
     # org_member 持有 columns.application_create（可申请）但【不授】application_review。
     await _grant(db, "admin:org_member", "columns.application_create")
     u = await _mk_user(db, "org_rev", level="admin", role="org_member")
+    # 越过 2FA 门槛后仍在 handler 内被判 FORBIDDEN → 403
+    _set_admin_mfa_cookie(client, u)
     r = await client.post(
         "/api/v1/columns/applications/1/review",
-        headers=_h(u, role="org_member"),
         json={"status": "approved"},
     )
-    # 越过 RequireLevel("admin") 门槛后在 handler 内被判 FORBIDDEN → 403
     assert r.status_code == 403
 
 
@@ -180,4 +186,3 @@ async def test_super_admin_can_publish_to_other_column(db: DB, client: Client) -
         json={"title": "t", "content": "c", "category": "x"},
     )
     assert r.status_code in (200, 201)
-

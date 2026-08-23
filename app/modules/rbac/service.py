@@ -1,4 +1,8 @@
-"""RBAC 权限判定：角色→权限点查表（带短 TTL 缓存，fail-open）。"""
+"""RBAC 权限判定：角色→权限点查表（带短 TTL 缓存）。
+
+判定失败按拒绝处理（fail-closed）：查无映射/缓存未命中均返回 False，由调用方
+（RequirePermission / require_permission）抛 FORBIDDEN。
+"""
 
 from typing import Any
 
@@ -57,7 +61,7 @@ async def check_owner(
     obj = await db.get(model, obj_id)
     if obj is None:
         # CommonErr 无 NOT_FOUND（仅 INVALID_INPUT/FORBIDDEN/INTERNAL_ERROR/MFA_REQUIRED）。
-        # 对象不存在时不返回 404（避免泄露资源存在性），统一 FORBIDDEN（与旧 require_owner_or_admin 一致）。
+        # 对象不存在时不返回 404（避免泄露资源存在性），统一 FORBIDDEN。
         raise BizError(CommonErr.FORBIDDEN)
     if getattr(obj, id_field) != cur.id:
         raise BizError(CommonErr.FORBIDDEN)

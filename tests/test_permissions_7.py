@@ -1,43 +1,9 @@
-"""模块7 分层权限下沉：require_owner_or_admin 判定 + 错误码注册收敛。"""
+"""模块7 错误码注册收敛（require_owner_or_admin 已随 RBAC 迁移删除）。"""
 
-import pytest
-
-from app.core.err import BizError, CommonErr
-from app.modules.auth.deps import CurrentUser
-from app.modules.auth.permissions import require_owner_or_admin
-
-
-def _actor(account_level: str = "normal", user_id: int = 100) -> CurrentUser:
-    return CurrentUser(
-        id=user_id,
-        account_level=account_level,
-        role="member",
-        email=None,
-        phone=None,
-    )
-
-
-def test_owner_allowed() -> None:
-    """属主本人放行，不抛错。"""
-    require_owner_or_admin(_actor(account_level="normal", user_id=5), 5)
-
-
-def test_admin_allowed() -> None:
-    """admin 一律放行（即使非属主）。"""
-    require_owner_or_admin(_actor(account_level="admin", user_id=1), 999)
-
-
-def test_foreign_normal_forbidden() -> None:
-    """普通成员访问他人资源 → FORBIDDEN。"""
-    with pytest.raises(BizError) as exc:
-        require_owner_or_admin(_actor(account_level="normal", user_id=2), 999)
-    assert exc.value.errcode == CommonErr.FORBIDDEN
-
-
-def test_local_foreign_forbidden() -> None:
-    """local 成员访问他人资源同样被拒。"""
-    with pytest.raises(BizError):
-        require_owner_or_admin(_actor(account_level="local", user_id=3), 999)
+from app.core.err import ERRTABLE, CommonErr, ErrCode
+from app.modules.columns.errors import ColumnErr
+from app.modules.files.errors import FileErr
+from app.modules.forum.errors import ForumErr
 
 
 def test_all_error_modules_register_without_duplicate() -> None:
@@ -51,10 +17,6 @@ def test_all_error_modules_register_without_duplicate() -> None:
     import app.modules.forum.errors
     import app.modules.members.errors
     import app.modules.starhope.errors  # noqa: F401
-    from app.core.err import ERRTABLE, ErrCode
-    from app.modules.columns.errors import ColumnErr
-    from app.modules.files.errors import FileErr
-    from app.modules.forum.errors import ForumErr
 
     # 抽样验证几个模块错误码确实已注册（否则 map_err 会 KeyError 转 500）
     samples: list[ErrCode] = [

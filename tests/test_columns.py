@@ -320,15 +320,16 @@ class TestColumnRoutes:
     async def should_reject_review_for_non_admin(
         self, client: AsyncClient, db: AsyncSession
     ) -> None:
-        user_id, token = await self._setup_user(db)
+        # review 走后台 cookie 会话（require_admin_2fa）：普通用户无 admin cookie → FORBIDDEN，
+        # 而非旧前台 RequireLevel(admin) 的 ACCOUNT_LEVEL_INSUFFICIENT。与 boards/projects 审核一致。
+        user_id, _ = await self._setup_user(db)
         await _application(db, user_id=user_id)
         resp = await client.post(
             "/api/v1/columns/applications/1/review",
-            headers={"Authorization": f"Bearer {token}"},
             json={"status": "approved"},
         )
         assert resp.status_code == 403
-        assert resp.json()["code"] == AuthErr.ACCOUNT_LEVEL_INSUFFICIENT
+        assert resp.json()["code"] == CommonErr.FORBIDDEN
 
     async def should_reject_post_for_non_owner(
         self, client: AsyncClient, db: AsyncSession

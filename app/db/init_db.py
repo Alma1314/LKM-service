@@ -95,6 +95,28 @@ async def _create_all() -> None:
         await conn.run_sync(Base.metadata.create_all)
 
 
+async def _seed_base_data() -> None:
+    """幂等写入 RBAC 默认角色→权限映射（role_permissions）。
+
+    独立会话执行并提交；seed 用 ``ON CONFLICT DO NOTHING`` 保证并发/重复执行安全
+    （见 app/modules/rbac/seed.py）。依赖 role_permissions 表已由前置 schema 初始化建出。
+    """
+    from app.db.session import new_session
+    from app.modules.rbac.seed import seed_rbac
+
+    db = await new_session()
+    try:
+        n = await seed_rbac(db)
+        await db.commit()
+    finally:
+        await db.close()
+    # n>0 仅首启/新增权限时发生；日志级即可，避免每个 worker 启动都打印噪音
+    if n:
+        import logging
+
+        logging.getLogger("lkm.init_db").info("seed_rbac inserted %d rows", n)
+
+
 async def init_db() -> None:
     """把数据库 schema 初始化到最新（多 worker 下用 Redis 锁串行化）。
 
@@ -102,14 +124,19 @@ async def init_db() -> None:
     开发免维护增量迁移——新增表只改 ``models.py`` 即可自动建。仅当显式设
     ``settings.use_alembic=True``（生产/历史库）才走 Alembic 增量迁移链
     （见 :func:`_create_all` 与 Alembic 各自的局限与取舍）。
+
+    schema 就绪后恒调用 :func:`_seed_base_data` 种入 RBAC 默认权限映射，消除新部署
+    需人工跑 ``python -m app.modules.rbac.seed`` 才能用后台/写端点的依赖。
     """
     from app.core.config import settings
 
     if not settings.use_alembic:
         await _create_all()
+        await _seed_base_data()
         return
     held = await _acquire_migration_lock()
     try:
         await asyncio.to_thread(_run_upgrade)
+        await _seed_base_data()
     finally:
         await _release_migration_lock(held)

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.err import BizError, CommonErr, respond
 from app.db.models import Column, ColumnApplication
 from app.db.session import get_read_session, get_session
+from app.modules.admin.deps import require_admin_2fa
 from app.modules.auth.deps import CurrentUser, RequireLevel, get_current_user
 from app.modules.columns.schemas import (
     ColumnApplicationCreate,
@@ -79,7 +80,9 @@ async def get_applications(
     # RequireLevel("admin") 已保证 admin 会话；此处再叠加 columns_application_review
     # 权限点（super_admin 有，org_member 等普通 admin 无），与审核同权限（能看全部申请=能审核）。
     if not await role_has_permission(
-        db, composible_role(cur.account_level, cur.role), Permission.columns_application_review
+        db,
+        composible_role(cur.account_level, cur.role),
+        Permission.columns_application_review,
     ):
         raise BizError(CommonErr.FORBIDDEN)
     return await list_applications(db, page=page, limit=limit)
@@ -97,7 +100,12 @@ async def get_application_detail(
     # 申请人本人（column.owner_publish 判属主 app.user_id==cur.id）可看；super_admin
     # 持有 owner 权限点可代看任意申请详情；他人 403。
     await check_owner(
-        db, cur, application_id, ColumnApplication, "user_id", Permission.column_owner_publish
+        db,
+        cur,
+        application_id,
+        ColumnApplication,
+        "user_id",
+        Permission.column_owner_publish,
     )
     return await get_application(db, application_id)
 
@@ -109,13 +117,15 @@ async def get_application_detail(
 async def review_column_application(
     application_id: int,
     info: ColumnApplicationReview,
-    cur: CurrentUser = RequireLevel("admin"),
+    cur: CurrentUser = require_admin_2fa,
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    # RequireLevel("admin") 已保证 admin 会话；此处再叠加 columns_application_review
-    # 权限点（super_admin 有，普通 admin 无）。校验失败按 FORBIDDEN 返回。
+    # require_admin_2fa 已保证 admin 会话 + 2FA 信任（危险操作 step-up，与 boards/projects 审核一致）；
+    # 此处再叠加 columns_application_review 权限点（super_admin 有，普通 admin 无）。校验失败按 FORBIDDEN 返回。
     if not await role_has_permission(
-        db, composible_role(cur.account_level, cur.role), Permission.columns_application_review
+        db,
+        composible_role(cur.account_level, cur.role),
+        Permission.columns_application_review,
     ):
         raise BizError(CommonErr.FORBIDDEN)
     return await review_application(db, application_id, info, cur.id)
@@ -159,7 +169,9 @@ async def publish_column_post(
     # （column.owner_id==cur.id）；super_admin 持有 owner 权限点可代发任意专栏。
     # 先 get_column 保留「专栏不存在→NOT_FOUND」语义，再由 check_owner 做属主/代管判定。
     await get_column(db, column_id)
-    await check_owner(db, cur, column_id, Column, "owner_id", Permission.column_owner_publish)
+    await check_owner(
+        db, cur, column_id, Column, "owner_id", Permission.column_owner_publish
+    )
     return await create_post(db, column_id, info, cur.id)
 
 
