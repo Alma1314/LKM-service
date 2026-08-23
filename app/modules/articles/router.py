@@ -42,7 +42,13 @@ from app.modules.articles.service import (
     update_category_ex,
 )
 from app.modules.auth.deps import CurrentUser, get_current_user
-from app.modules.common import ApiResp, ListData, PageData
+from app.modules.common import (
+    ApiResp,
+    ListData,
+    PageData,
+    PaginateDep,
+    PaginateParams,
+)
 from app.modules.rbac.deps import RequirePermission
 from app.modules.rbac.permissions import Permission
 from app.modules.rbac.service import check_owner
@@ -54,10 +60,9 @@ router = APIRouter(prefix="/articles", tags=["articles"])
 @respond
 async def get_articles(
     db: AsyncSession = Depends(get_read_session),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
-) -> dict[str, Any]:
-    return await list_articles(db, page=page, page_size=page_size)
+    pag: PaginateParams = Depends(PaginateDep()),
+) -> PageData[ArticleListItem]:
+    return await list_articles(db, page=pag.page, limit=pag.limit)
 
 
 @router.get("/categories", response_model=ApiResp[ListData[ArticleCategory]])
@@ -80,11 +85,10 @@ async def get_article_tags(
 @respond
 async def search_articles_endpoint(
     q: str = Query(..., min_length=1, max_length=100),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
+    pag: PaginateParams = Depends(PaginateDep()),
     db: AsyncSession = Depends(get_read_session),
-) -> dict[str, Any]:
-    return await search_articles(db, q=q, page=page, page_size=page_size)
+) -> PageData[ArticleListItem]:
+    return await search_articles(db, q=q, page=pag.page, limit=pag.limit)
 
 
 @router.get("/about", response_model=ApiResp[AboutItem])

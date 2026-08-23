@@ -9,7 +9,13 @@ from app.core.err import respond
 from app.db.models import LibraryFile
 from app.db.session import get_read_session, get_session
 from app.modules.auth.deps import CurrentUser, get_current_user
-from app.modules.common import ApiResp, ModuleStatus, PageData
+from app.modules.common import (
+    ApiResp,
+    ModuleStatus,
+    PageData,
+    PaginateDep,
+    PaginateParams,
+)
 from app.modules.files.models import FileStatus
 from app.modules.files.schemas import (
     DownloadUrlInfo,
@@ -52,15 +58,19 @@ async def files_status() -> ModuleStatus:
 @router.get("", response_model=ApiResp[PageData[FileInfo]])
 @respond
 async def get_files(
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    pag: PaginateParams = Depends(PaginateDep()),
     category_id: str | None = Query(default=None, max_length=50),
     status: str | None = Query(default=None, max_length=20),
     sort: str = Query(default="newest"),
     db: AsyncSession = Depends(get_read_session),
 ) -> PageData[FileInfo]:
     return await list_files(
-        db, page=page, limit=limit, category_id=category_id, status=status, sort=sort
+        db,
+        page=pag.page,
+        limit=pag.limit,
+        category_id=category_id,
+        status=status,
+        sort=sort,
     )
 
 

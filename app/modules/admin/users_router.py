@@ -14,7 +14,14 @@ from app.core.err import respond
 from app.db.models import ForumPost, LibraryFile, User
 from app.db.session import get_read_session
 from app.modules.auth.deps import CurrentUser
-from app.modules.common import ApiResp, ListData, PageData, paginate_pages
+from app.modules.common import (
+    ApiResp,
+    ListData,
+    PageData,
+    PaginateDep,
+    PaginateParams,
+    paginate_pages,
+)
 from app.modules.rbac.permissions import Permission
 
 from .deps import require_admin
@@ -27,13 +34,12 @@ router = APIRouter(prefix="/admin", tags=["admin-data"])
 @router.get("/users", response_model=ApiResp[PageData[AdminUserListItem]])
 @respond
 async def admin_list_users(
-    page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
     keyword: str | None = None,
     include_pii: bool = False,
     _cur: CurrentUser = require_admin,
+    pag: PaginateParams = Depends(PaginateDep()),
     db: AsyncSession = Depends(get_read_session),
-) -> dict[str, Any]:
+) -> PageData[AdminUserListItem]:
     """
     用户管理列表。默认隐藏 email/phone（PII），可按用户名/邮箱筛选。
     include_pii 目前仅由调用方自决；若后续要分级管控，请额外加敏感级依赖。
@@ -50,14 +56,13 @@ async def admin_list_users(
     total = (await db.execute(count_q)).scalar() or 0
     rows = (
         await db.execute(
-            query.order_by(User.id.desc()).offset((page - 1) * size).limit(size)
+            query.order_by(User.id.desc()).offset(pag.offset).limit(pag.limit)
         )
     ).scalars()
-    items: list[
-        Any
-    ] = []  # 列表元素来自各字段类型混合的 model_dump，用 Any 收窄容器泛型
-    for r in rows:
-        item = AdminUserListItem(
+    # 返回 schema 实例而非 model_dump，使响应体为 PageData 实例（Task 1 依赖
+    # isinstance 判定位以自动附带 X-Total 头）。
+    items = [
+        AdminUserListItem(
             id=int(r.id),
             username=r.username,
             account_level=str(r.account_level),
@@ -66,14 +71,15 @@ async def admin_list_users(
             email=r.email if include_pii else None,
             phone=r.phone if include_pii else None,
         )
-        items.append(item.model_dump())
+        for r in rows
+    ]
 
-    return {
-        "items": items,
-        "total": total,
-        "page": page,
-        "pages": paginate_pages(total, size),
-    }
+    return PageData(
+        items=items,
+        total=total,
+        page=pag.page,
+        pages=paginate_pages(total, pag.limit),
+    )
 
 
 async def _safe_count(db: AsyncSession, stmt: Any) -> int:

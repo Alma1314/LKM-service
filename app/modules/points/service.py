@@ -519,7 +519,9 @@ async def do_checkin(db: AsyncSession, user_id: int) -> dict:
     stat = (
         (
             await db.execute(
-                select(UserBehaviorStat).where(UserBehaviorStat.user_id == user_id)
+                select(UserBehaviorStat)
+                .where(UserBehaviorStat.user_id == user_id)
+                .with_for_update()
             )
         )
         .scalars()
@@ -528,6 +530,26 @@ async def do_checkin(db: AsyncSession, user_id: int) -> dict:
     if stat is None:
         stat = UserBehaviorStat(user_id=user_id, stats={})
         db.add(stat)
+        try:
+            await db.flush()
+        except IntegrityError:
+            # 品牌新用户并发首次打卡：with_for_update 仅守既有行，两个连接都看到
+            # None 后各自 insert → 后提交者撞 user_behavior_stats.user_id 主键被 409。
+            # 此处回滚本次插入，重取既有行（并发方已提交）继续，模型对齐 reward()。
+            await db.rollback()
+            stat = (
+                (
+                    await db.execute(
+                        select(UserBehaviorStat)
+                        .where(UserBehaviorStat.user_id == user_id)
+                        .with_for_update()
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if stat is None:  # 理论上不可达：刚有 IntegrityError 说明行已存在
+                raise
     today_checked = stat.last_checkin_date == today
     if today_checked:
         return {

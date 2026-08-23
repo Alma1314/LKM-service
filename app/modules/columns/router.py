@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr, respond
@@ -31,7 +31,13 @@ from app.modules.columns.service import (
     list_posts,
     review_application,
 )
-from app.modules.common import ApiResp, ModuleStatus, PageData
+from app.modules.common import (
+    ApiResp,
+    ModuleStatus,
+    PageData,
+    PaginateDep,
+    PaginateParams,
+)
 from app.modules.rbac.deps import RequirePermission
 from app.modules.rbac.permissions import Permission, composible_role
 from app.modules.rbac.service import check_owner, role_has_permission
@@ -74,8 +80,7 @@ async def apply_column(
 async def get_applications(
     cur: CurrentUser = RequireLevel("admin"),
     db: AsyncSession = Depends(get_read_session),
-    page: int = Query(1, ge=1),
-    limit: int | None = Query(default=None, ge=1, le=200),
+    pag: PaginateParams = Depends(PaginateDep()),
 ) -> PageData[ColumnApplicationInfo]:
     # RequireLevel("admin") 已保证 admin 会话；此处再叠加 columns_application_review
     # 权限点（super_admin 有，org_member 等普通 admin 无），与审核同权限（能看全部申请=能审核）。
@@ -85,7 +90,7 @@ async def get_applications(
         Permission.columns_application_review,
     ):
         raise BizError(CommonErr.FORBIDDEN)
-    return await list_applications(db, page=page, limit=limit)
+    return await list_applications(db, page=pag.page, limit=pag.limit)
 
 
 @router.get(
@@ -135,10 +140,9 @@ async def review_column_application(
 @respond
 async def get_columns(
     db: AsyncSession = Depends(get_read_session),
-    page: int = Query(1, ge=1),
-    limit: int | None = Query(default=None, ge=1, le=200),
+    pag: PaginateParams = Depends(PaginateDep()),
 ) -> PageData[ColumnInfo]:
-    return await list_columns(db, page=page, limit=limit)
+    return await list_columns(db, page=pag.page, limit=pag.limit)
 
 
 @router.get("/by-slug/{slug}", response_model=ApiResp[ColumnInfo])
@@ -180,10 +184,9 @@ async def publish_column_post(
 async def get_column_posts(
     column_id: int,
     db: AsyncSession = Depends(get_read_session),
-    page: int = Query(1, ge=1),
-    limit: int | None = Query(default=None, ge=1, le=200),
+    pag: PaginateParams = Depends(PaginateDep()),
 ) -> PageData[ColumnPostInfo]:
-    return await list_posts(db, column_id, page=page, limit=limit)
+    return await list_posts(db, column_id, page=pag.page, limit=pag.limit)
 
 
 @router.get("/{column_id}/posts/{post_id}", response_model=ApiResp[ColumnPostInfo])

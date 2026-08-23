@@ -199,3 +199,5 @@ class TestPermission:
         assert resp.status_code == 200
         body = resp.json()
         assert body["data"]["total"] == 1
+        # 统一分页依赖自动附加 X-Total 头（与 body total 一致）
+        assert resp.headers["X-Total"] == "1"

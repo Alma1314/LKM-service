@@ -42,7 +42,7 @@ from app.modules.articles.schemas import (
     CategoryOut,
 )
 from app.modules.auth.schemas import ProfileInfo
-from app.modules.common import paginate_pages, tag_names_sequence
+from app.modules.common import PageData, paginate_pages, tag_names_sequence
 from app.modules.points.rules import enqueue_points_event
 
 # 默认阅读速度：中文约 300 字/分钟
@@ -170,8 +170,8 @@ async def create_article(
 
 
 async def list_articles(
-    db: AsyncSession, page: int = 1, page_size: int = 50
-) -> dict[str, Any]:
+    db: AsyncSession, page: int = 1, limit: int = 50
+) -> PageData[ArticleListItem]:
     ver = await collection_version("articles")
 
     async def _load() -> dict[str, Any]:
@@ -181,20 +181,21 @@ async def list_articles(
         stmt = (
             select(Article)
             .order_by(Article.published.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
+            .offset((page - 1) * limit)
+            .limit(limit)
         )
         items = (await db.execute(stmt)).scalars().all()
         return {
             "items": [ArticleListItem.model_validate(a).model_dump() for a in items],
             "total": total,
             "page": page,
-            "pages": paginate_pages(total, page_size),
+            "pages": paginate_pages(total, limit),
         }
 
-    return await cached_read(
-        make_key("articles:list", ver, page, page_size), TTL_LIST_S, _load
+    payload = await cached_read(
+        make_key("articles:list", ver, page, limit), TTL_LIST_S, _load
     )
+    return PageData[ArticleListItem].model_validate(payload)
 
 
 async def get_article(db: AsyncSession, slug: str) -> ArticleDetail:
@@ -268,8 +269,8 @@ def _fts_search_stmt(q: str) -> tuple[Any, Any]:
 
 
 async def search_articles(
-    db: AsyncSession, q: str, page: int = 1, page_size: int = 50
-) -> dict[str, Any]:
+    db: AsyncSession, q: str, page: int = 1, limit: int = 50
+) -> PageData[ArticleListItem]:
     cond, rank = _fts_search_stmt(q)
     count_stmt = select(func.count()).select_from(Article).where(cond)
     total = (await db.execute(count_stmt)).scalar_one()
@@ -279,14 +280,14 @@ async def search_articles(
         stmt = stmt.order_by(rank.desc())
     else:
         stmt = stmt.order_by(Article.published.desc())
-    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+    stmt = stmt.offset((page - 1) * limit).limit(limit)
     items = (await db.execute(stmt)).scalars().all()
-    return {
-        "items": [ArticleListItem.model_validate(a) for a in items],
-        "total": total,
-        "page": page,
-        "pages": paginate_pages(total, page_size),
-    }
+    return PageData(
+        items=[ArticleListItem.model_validate(a) for a in items],
+        total=total,
+        page=page,
+        pages=paginate_pages(total, limit),
+    )
 
 
 async def list_tags(db: AsyncSession) -> list[dict[str, Any]]:

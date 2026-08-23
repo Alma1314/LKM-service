@@ -7,7 +7,7 @@ from typing import Any, cast
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.modules.common import ApiResp
+from app.modules.common import ApiResp, PageData
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +111,7 @@ def resp_json(
     *,
     data: Any = None,
     detail: str | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     status, msg = ERRTABLE[errcode]
 
@@ -119,6 +120,7 @@ def resp_json(
         content=ApiResp(code=errcode, msg=detail or msg, data=data).model_dump(
             mode="json"
         ),
+        headers=headers,
     )
 
 
@@ -150,4 +152,7 @@ def _wrap_result(result: Any) -> JSONResponse:
         if isinstance(payload, str):
             return resp_json(errcode, detail=payload)
         return resp_json(errcode, data=payload)
-    return resp_json(CommonErr.OK, data=result)
+    extra: dict[str, str] = {}
+    if isinstance(result, PageData):
+        extra["X-Total"] = str(result.total)
+    return resp_json(CommonErr.OK, data=result, headers=extra)

@@ -12,7 +12,14 @@ from app.core.cache import (
 from app.core.err import respond
 from app.db.session import get_read_session, get_session
 from app.modules.auth.deps import CurrentUser, RequireLevel, get_current_user
-from app.modules.common import ApiResp, ListData, ModuleStatus, PageData
+from app.modules.common import (
+    ApiResp,
+    ListData,
+    ModuleStatus,
+    PageData,
+    PaginateDep,
+    PaginateParams,
+)
 from app.modules.exam.schemas import (
     AttemptStartResp,
     CertificateOut,
@@ -71,19 +78,21 @@ async def create_exam(
 @router.get("", response_model=ApiResp[PageData[ExamOut]])
 @respond
 async def exam_list(
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
     type_: str | None = Query(default=None, alias="type", max_length=20),
+    pag: PaginateParams = Depends(PaginateDep()),
     db: AsyncSession = Depends(get_read_session),
 ) -> PageData[ExamOut]:
     async def load() -> PageData[ExamOut]:
-        items, total = await list_exams(db, page=page, limit=limit, type_=type_)
+        items, total = await list_exams(db, page=pag.page, limit=pag.limit, type_=type_)
         return PageData(
-            items=items, total=total, page=page, pages=(total + limit - 1) // limit
+            items=items,
+            total=total,
+            page=pag.page,
+            pages=(total + pag.limit - 1) // pag.limit,
         )
 
     ver = await collection_version("exam")
-    key = make_key("exam:list", ver, page, limit, type_)
+    key = make_key("exam:list", ver, pag.page, pag.limit, type_)
     return await cached_read(key, 60, load)
 
 

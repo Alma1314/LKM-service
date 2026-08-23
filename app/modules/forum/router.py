@@ -7,7 +7,13 @@ from app.core.err import respond
 from app.db.models import ForumPost
 from app.db.session import get_read_session, get_session
 from app.modules.auth.deps import CurrentUser, get_current_user
-from app.modules.common import ApiResp, ModuleStatus, PageData
+from app.modules.common import (
+    ApiResp,
+    ModuleStatus,
+    PageData,
+    PaginateDep,
+    PaginateParams,
+)
 from app.modules.forum.schemas import (
     CommentCreate,
     CommentInfo,
@@ -50,12 +56,11 @@ async def forum_status() -> ModuleStatus:
 @router.get("/posts", response_model=ApiResp[PageData[PostInfo]])
 @respond
 async def get_posts(
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    pag: PaginateParams = Depends(PaginateDep()),
     board_id: int | None = Query(default=None, ge=1),
     db: AsyncSession = Depends(get_read_session),
 ) -> PageData[PostInfo]:
-    return await list_posts(db, page=page, limit=limit, board_id=board_id)
+    return await list_posts(db, page=pag.page, limit=pag.limit, board_id=board_id)
 
 
 @router.post("/posts", response_model=ApiResp[PostInfo])
@@ -108,11 +113,10 @@ async def delete_forum_post(
 @respond
 async def get_post_comments(
     post_id: int,
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    pag: PaginateParams = Depends(PaginateDep()),
     db: AsyncSession = Depends(get_read_session),
 ) -> PageData[CommentInfo]:
-    return await list_comments(db, post_id, page=page, limit=limit)
+    return await list_comments(db, post_id, page=pag.page, limit=pag.limit)
 
 
 @router.post("/posts/{post_id}/comments", response_model=ApiResp[CommentInfo])

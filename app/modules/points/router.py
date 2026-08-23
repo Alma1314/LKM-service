@@ -4,7 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.err import respond
 from app.db.session import get_read_session, get_session
 from app.modules.auth.deps import CurrentUser, get_current_user
-from app.modules.common import ApiResp, ModuleStatus, PageData
+from app.modules.common import (
+    ApiResp,
+    ModuleStatus,
+    PageData,
+    PaginateDep,
+    PaginateParams,
+)
 from app.modules.points.schemas import (
     AchievementOut,
     BalanceOut,
@@ -58,11 +64,10 @@ async def my_balance(
 @respond
 async def my_ledger(
     cur: CurrentUser = Depends(get_current_user),
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    pag: PaginateParams = Depends(PaginateDep()),
     db: AsyncSession = Depends(get_read_session),
 ) -> PageData[LedgerEntry]:
-    return await list_ledger(db, cur.id, page=page, limit=limit)
+    return await list_ledger(db, cur.id, page=pag.page, limit=pag.limit)
 
 
 @router.post("/checkin", response_model=ApiResp[dict])

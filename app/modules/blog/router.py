@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,7 +39,7 @@ from app.modules.blog.service import (
     update_series,
     write_series_file,
 )
-from app.modules.common import ApiResp, ListData, PageData
+from app.modules.common import ApiResp, ListData, PageData, PaginateDep, PaginateParams
 
 router = APIRouter(prefix="/blog", tags=["blog"])
 
@@ -62,11 +62,12 @@ async def create_blog_series(
 async def list_blog_series(
     db: AsyncSession = Depends(get_read_session),
     cur: CurrentUser | None = Depends(get_optional_user),
-    page: int = Query(1, ge=1),
-    limit: int | None = Query(default=None, ge=1, le=200),
+    pag: PaginateParams = Depends(PaginateDep()),
 ) -> PageData[BlogSeriesInfo]:
     user_id = cur.id if cur else None
-    return await list_series(db, current_user_id=user_id, page=page, limit=limit)
+    return await list_series(
+        db, current_user_id=user_id, page=pag.page, limit=pag.limit
+    )
 
 
 @router.get("/series/{series_id}", response_model=ApiResp[BlogSeriesDetail])

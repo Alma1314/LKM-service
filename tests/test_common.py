@@ -1,9 +1,13 @@
-"""模块6 去重收敛：common 共享 helper（parse_tags / 分页 / 标签序列 / 批量 Profile）。"""
+"""common 共享 helper 与通用响应契约测试（parse_tags / 分页 / PageData 自动 X-Total 头）。"""
 
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.err import CommonErr, _wrap_result, resp_json
 from app.modules.common import (
     PageData,
+    PaginateDep,
+    PaginateParams,
     paginate_offset,
     paginate_pages,
     parse_tags,
@@ -66,3 +70,39 @@ async def test_get_profiles_by_user_ids_fills_none_for_missing(
 def test_PageData_shape() -> None:
     data = PageData[int](items=[1, 2], total=2, page=1, pages=1)
     assert data.model_dump()["pages"] == 1
+
+
+def test_pagedata_resp_includes_x_total() -> None:
+    pd = PageData(items=[{"a": "1"}], total=37, page=1, pages=2)
+    resp = _wrap_result(pd)
+    assert isinstance(resp, JSONResponse)
+    assert resp.headers["X-Total"] == "37"
+
+
+def test_pagedata_resp_x_total_zero_total() -> None:
+    resp = _wrap_result(PageData(items=[], total=0, page=1, pages=0))
+    assert isinstance(resp, JSONResponse)
+    assert resp.headers["X-Total"] == "0"
+
+
+def test_wrap_result_non_pagedata_no_x_total() -> None:
+    resp = _wrap_result([1, 2, 3])
+    assert "X-Total" not in resp.headers
+
+
+def test_resp_json_ok_data() -> None:
+    resp = resp_json(CommonErr.OK, data={"x": 1})
+    assert resp.status_code == 200
+
+
+async def test_paginate_defaults() -> None:
+    dep = PaginateDep()
+    p: PaginateParams = await dep(page=1, limit=20)
+    assert p.page == 1
+    assert p.limit == 20
+    assert p.offset == 0
+
+
+async def test_paginate_offset_calc() -> None:
+    p: PaginateParams = await PaginateDep()(page=3, limit=10)
+    assert p.offset == 20
