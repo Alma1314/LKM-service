@@ -284,12 +284,6 @@ async def _titles_for(db: AsyncSession, user_ids: list[int]) -> dict[int, str]:
     return {uid: _title_from_keys(keys) for uid, keys in unlocked_by_user.items()}
 
 
-async def _user_title(db: AsyncSession, user_id: int) -> str:
-    """按已解锁成就返回单个用户稳定 title key（供上层单查场景复用）。"""
-    keys = await _titles_for(db, [user_id])
-    return keys.get(user_id, "active")
-
-
 async def _fill_titles(db: AsyncSession, items: list[dict[str, Any]]) -> None:
     """就地给榜单 items 每项补 title（一次批量查询），为空列表时直接跳过。"""
     if not items:
@@ -525,7 +519,9 @@ async def do_checkin(db: AsyncSession, user_id: int) -> dict:
     stat = (
         (
             await db.execute(
-                select(UserBehaviorStat).where(UserBehaviorStat.user_id == user_id)
+                select(UserBehaviorStat)
+                .where(UserBehaviorStat.user_id == user_id)
+                .with_for_update()
             )
         )
         .scalars()
@@ -534,6 +530,26 @@ async def do_checkin(db: AsyncSession, user_id: int) -> dict:
     if stat is None:
         stat = UserBehaviorStat(user_id=user_id, stats={})
         db.add(stat)
+        try:
+            await db.flush()
+        except IntegrityError:
+            # 品牌新用户并发首次打卡：with_for_update 仅守既有行，两个连接都看到
+            # None 后各自 insert → 后提交者撞 user_behavior_stats.user_id 主键被 409。
+            # 此处回滚本次插入，重取既有行（并发方已提交）继续，模型对齐 reward()。
+            await db.rollback()
+            stat = (
+                (
+                    await db.execute(
+                        select(UserBehaviorStat)
+                        .where(UserBehaviorStat.user_id == user_id)
+                        .with_for_update()
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if stat is None:  # 理论上不可达：刚有 IntegrityError 说明行已存在
+                raise
     today_checked = stat.last_checkin_date == today
     if today_checked:
         return {

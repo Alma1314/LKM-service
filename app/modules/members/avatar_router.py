@@ -13,8 +13,8 @@ from fastapi.responses import StreamingResponse
 
 from app.core.err import BizError
 from app.modules.storage.base import StorageBackend
-from app.modules.storage.factory import get_storage
 from app.modules.storage.errors import StorageErr
+from app.modules.storage.factory import get_storage
 
 router = APIRouter(prefix="/avatars", tags=["avatars"])
 

@@ -294,6 +294,13 @@ class TestFilesRoutes:
         username: str = "tester",
         email: str = "tester@example.com",
     ) -> tuple[int, str]:
+        # RBAC 迁移后上传/下载需权限点：为 normal:member 授 files.upload/download，
+        # 与生产 DEFAULT_GRANTS seed 一致（test_columns 迁移同款做法）。
+        from app.db.models import RolePermission
+
+        db.add(RolePermission(role_name="normal:member", permission="files.upload"))
+        db.add(RolePermission(role_name="normal:member", permission="files.download"))
+        await db.flush()
         user_id = await _user(db, username=username, email=email)
         token = create_access_token(
             user_id=user_id, account_level="normal", role="member"
@@ -668,6 +675,11 @@ class TestFilesPhase2AEndpoints:
 
     # 端点需要登录 token；这里直接把 user/token 造好并给 client 用
     async def _authed(self, db: AsyncSession) -> tuple[int, str]:
+        # 预览/下载端点需 files.download 权限点（test_columns 迁移同款做法）。
+        from app.db.models import RolePermission
+
+        db.add(RolePermission(role_name="normal:member", permission="files.download"))
+        await db.flush()
         user_id = await _user(db, username="phase2a", email="phase2a@example.com")
         token = create_access_token(
             user_id=user_id, account_level="normal", role="member"
@@ -846,6 +858,11 @@ class TestFilesPhase2BUploadInit:
     """L-b 契约：Local→sync，S3→direct（presigned_url + upload_id）。"""
 
     async def _authed(self, db: AsyncSession) -> tuple[int, str]:
+        # upload-init/confirm 需 files.upload 权限点（test_columns 迁移同款做法）。
+        from app.db.models import RolePermission
+
+        db.add(RolePermission(role_name="normal:member", permission="files.upload"))
+        await db.flush()
         user_id = await _user(db, username="p2b", email="p2b@example.com")
         token = create_access_token(
             user_id=user_id, account_level="normal", role="member"

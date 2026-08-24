@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr
-from app.db.models import Article, Profile, User
+from app.db.models import Article, Profile, RolePermission, User
 from app.db.models import ArticleCategory as ArticleCategoryORM
 from app.modules.articles.errors import ArticleErr
 from app.modules.articles.schemas import (
@@ -26,7 +26,6 @@ from app.modules.articles.schemas import (
 )
 from app.modules.articles.seed import seed_articles, seed_categories
 from app.modules.articles.service import (
-    assert_super_admin,
     create_article_ex,
     create_category_ex,
     delete_category_ex,
@@ -303,7 +302,13 @@ class TestArticlePermission:
     async def test_write_endpoint_super_admin_ok(
         self, db: AsyncSession, client: AsyncClient
     ) -> None:
-        """super_admin（DB 档 account_level=admin + profile.role=super_admin）→ 创建 200。"""
+        """super_admin（DB 档 account_level=admin + profile.role=super_admin，且授予 articles.publish）→ 创建 200。"""
+        # RBAC 迁移后写端点由 RequirePermission(articles.publish) 把关：官方文章仅 super_admin。
+        # 测试库 create_all 不自动 seed 权限映射，故在此按生产 DEFAULT_GRANTS 显式补授权。
+        db.add(
+            RolePermission(role_name="admin:super_admin", permission="articles.publish")
+        )
+        await db.flush()
         cid = await _category(db, slug="news")
         uid = await _user(db, username="root", level="admin", role="super_admin")
         token = create_access_token(
@@ -380,24 +385,3 @@ class TestArticleSeed:
             .all()
         )
         assert len(news_articles) > 0
-
-
-class TestAssertSuperAdminUnit:
-    """assert_super_admin 纯函数：满足 admin+super_admin 才放行。"""
-
-    async def test_pass_ok(self, db: AsyncSession) -> None:
-        # 构造函数单测：仅演示门禁用档案条件（不依赖 DB）。
-        from app.modules.auth.deps import CurrentUser
-
-        ok = CurrentUser(id=1, account_level="admin", role="super_admin")
-        assert_super_admin(ok)  # 不应抛
-
-        bad_admin = CurrentUser(id=1, account_level="admin", role="editor")
-        with pytest.raises(BizError) as e:
-            assert_super_admin(bad_admin)
-        assert e.value.errcode == CommonErr.FORBIDDEN
-
-        bad_normal = CurrentUser(id=1, account_level="normal", role="member")
-        with pytest.raises(BizError) as e2:
-            assert_super_admin(bad_normal)
-        assert e2.value.errcode == CommonErr.FORBIDDEN

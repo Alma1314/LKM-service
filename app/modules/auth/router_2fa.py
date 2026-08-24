@@ -226,9 +226,7 @@ async def step_up_2fa(
     )
 
     user = await get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == cur.id)
-    access_token, raw_refresh = await issue_session_tokens(
-        db, user, mfa_verified=True
-    )
+    access_token, raw_refresh = await issue_session_tokens(db, user, mfa_verified=True)
     return {
         "access_token": access_token,
         "refresh_token": raw_refresh,

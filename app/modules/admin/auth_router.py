@@ -23,6 +23,7 @@ from app.modules.auth.security import verifypwd
 from app.modules.auth.service_2fa import verify_user_totp
 from app.modules.auth.service_auth import generate_refresh_token, hash_refresh_token
 from app.modules.auth.service_verify import check_code_rate_limit
+from app.modules.rbac.permissions import Permission
 
 from .deps import (
     _ADMIN_AUD,
@@ -34,6 +35,7 @@ from .deps import (
     get_real_client_ip,
     require_admin,
 )
+from .permissions import require_permission
 from .schemas import AdminLoginReq, AdminUserOut, AdminVerify2FARequest
 
 router = APIRouter(prefix="/admin", tags=["admin-auth"])
@@ -285,15 +287,22 @@ async def admin_verify_2fa(
             stored_refresh.mfa_verified = True
     await db.commit()
 
-    resp = resp_json(CommonErr.OK, data={**payload, "mfa_verified": True, "mfa_at": mfa_at})
+    resp = resp_json(
+        CommonErr.OK, data={**payload, "mfa_verified": True, "mfa_at": mfa_at}
+    )
     _set_access_cookie(resp, access_token)
     return resp
 
 
 @router.get("/auth/me")
 @respond
-async def admin_me(cur: CurrentUser = require_admin) -> dict[str, int | str]:
-    """当前后台登录态（需有效 admin access cookie），供前端 bootAdminSession 使用。"""
+async def admin_me(
+    cur: CurrentUser = require_admin,
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, int | str]:
+    """当前后台登录态（需有效 admin access cookie），供前端 bootAdminSession 使用。
+    role 判定依赖 DB profile，故走 get_session 注入同一会话后叠加 admin_dashboard 权限点。"""
+    await require_permission(db, cur, Permission.admin_dashboard)
     return {
         "id": cur.id,
         "account_level": cur.account_level,

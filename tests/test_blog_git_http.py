@@ -150,7 +150,9 @@ class TestIsReceivePack:
         assert _is_receive_pack(_push_request("/blog/git/x.git/git-receive-pack"))
 
     def should_be_false_for_get_receive_pack(self):
-        assert not _is_receive_pack(_push_get_request("/blog/git/x.git/git-receive-pack"))
+        assert not _is_receive_pack(
+            _push_get_request("/blog/git/x.git/git-receive-pack")
+        )
 
     def should_be_false_for_post_non_receive_pack(self):
         assert not _is_receive_pack(_push_request("/blog/git/x.git/info/refs"))
@@ -191,12 +193,11 @@ class TestMaybeBackfillAfterPush:
 
         与生产 new_session 同为 async 契约：返回协程，maybe_backfill_after_push 会 await。
         """
+
         async def _factory() -> AsyncSession:
             return db
 
-        monkeypatch.setattr(
-            "app.modules.blog.git_http._session_factory", _factory
-        )
+        monkeypatch.setattr("app.modules.blog.git_http._session_factory", _factory)
 
     async def _make_series(self, db, repo_name: str) -> int:
         series = BlogSeries(
@@ -206,9 +207,7 @@ class TestMaybeBackfillAfterPush:
         await db.flush()
         return series.id
 
-    async def should_backfill_and_persist(
-        self, db, monkeypatch: pytest.MonkeyPatch
-    ):
+    async def should_backfill_and_persist(self, db, monkeypatch: pytest.MonkeyPatch):
         """真实回填：注入会话提交 BlogContent 行，commit 后可见(持久化)。"""
         sid = await self._make_series(db, "repo-back")
         old_sha = "deadbeef"

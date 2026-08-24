@@ -1,7 +1,9 @@
 import json
 from collections.abc import Sequence
-from typing import cast
+from dataclasses import dataclass
+from typing import Annotated, cast
 
+from fastapi import Query
 from pydantic import BaseModel
 
 
@@ -69,3 +71,28 @@ def tag_names_sequence(names: Sequence[str]) -> list[str]:
             seen.add(n)
             result.append(n)
     return result
+
+
+@dataclass(frozen=True)
+class PaginateParams:
+    """统一分页参数（page/limit 解析 + offset），limit 上限 100。"""
+
+    page: int
+    limit: int
+    offset: int
+
+
+class PaginateDep:
+    """FastAPI 依赖：解析 page/limit，统一 clamp（default=20 / le=100）。
+
+    句柄无须是 async，但为与端点一览保留可调用。统一契约固定，故不需要 __init__
+    自定义 limit 参数。
+    """
+
+    async def __call__(
+        self,
+        page: Annotated[int, Query(ge=1)] = 1,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    ) -> PaginateParams:
+        # le=100 已在 Query 层 clamp；此处仅组装
+        return PaginateParams(page=page, limit=limit, offset=(page - 1) * limit)

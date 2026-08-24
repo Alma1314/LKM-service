@@ -255,6 +255,16 @@ class TestColumnPosts:
 class TestColumnRoutes:
     async def _setup_user(self, db: AsyncSession) -> tuple[int, str]:
         """Create a user in DB and return (user_id, bearer_token)."""
+        from app.db.models import RolePermission
+
+        # RBAC 迁移后写操作需权限点：为 normal:member 授 columns.application_create，
+        # 与生产 DEFAULT_GRANTS seed 一致，确保「本人可申请」类用例在权限校验下通过。
+        db.add(
+            RolePermission(
+                role_name="normal:member", permission="columns.application_create"
+            )
+        )
+        await db.flush()
         user_id = await _user(db, username="testuser", email="test@example.com")
         token = create_access_token(
             user_id=user_id, account_level="normal", role="member"
@@ -310,15 +320,16 @@ class TestColumnRoutes:
     async def should_reject_review_for_non_admin(
         self, client: AsyncClient, db: AsyncSession
     ) -> None:
-        user_id, token = await self._setup_user(db)
+        # review 走后台 cookie 会话（require_admin_2fa）：普通用户无 admin cookie → FORBIDDEN，
+        # 而非旧前台 RequireLevel(admin) 的 ACCOUNT_LEVEL_INSUFFICIENT。与 boards/projects 审核一致。
+        user_id, _ = await self._setup_user(db)
         await _application(db, user_id=user_id)
         resp = await client.post(
             "/api/v1/columns/applications/1/review",
-            headers={"Authorization": f"Bearer {token}"},
             json={"status": "approved"},
         )
         assert resp.status_code == 403
-        assert resp.json()["code"] == AuthErr.ACCOUNT_LEVEL_INSUFFICIENT
+        assert resp.json()["code"] == CommonErr.FORBIDDEN
 
     async def should_reject_post_for_non_owner(
         self, client: AsyncClient, db: AsyncSession

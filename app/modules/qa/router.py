@@ -1,10 +1,16 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, respond
 from app.db.session import get_read_session, get_session
 from app.modules.auth.deps import CurrentUser, RequireLevel, get_current_user
-from app.modules.common import ApiResp, ModuleStatus, PageData
+from app.modules.common import (
+    ApiResp,
+    ModuleStatus,
+    PageData,
+    PaginateDep,
+    PaginateParams,
+)
 from app.modules.qa.errors import QaErr
 from app.modules.qa.schemas import (
     AnswerCreate,
@@ -47,11 +53,10 @@ async def qa_status() -> ModuleStatus:
 @router.get("/questions", response_model=ApiResp[PageData[QuestionOut]])
 @respond
 async def qa_list(
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=50),
+    pag: PaginateParams = Depends(PaginateDep()),
     db: AsyncSession = Depends(get_read_session),
 ) -> PageData[QuestionOut]:
-    return await list_questions(db, page=page, limit=limit)
+    return await list_questions(db, page=pag.page, limit=pag.limit)
 
 
 @router.get("/questions/{question_id}", response_model=ApiResp[QuestionDetail])

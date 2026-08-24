@@ -2,6 +2,8 @@
 后台只读数据端点：/admin/users（用户列表）、/admin/stats（仪表盘统计）。
 """
 
+import contextlib
+from datetime import date, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
@@ -12,10 +14,19 @@ from app.core.err import respond
 from app.db.models import ForumPost, LibraryFile, User
 from app.db.session import get_read_session
 from app.modules.auth.deps import CurrentUser
-from app.modules.common import ApiResp, PageData, paginate_pages
+from app.modules.common import (
+    ApiResp,
+    ListData,
+    PageData,
+    PaginateDep,
+    PaginateParams,
+    paginate_pages,
+)
+from app.modules.rbac.permissions import Permission
 
 from .deps import require_admin
-from .schemas import AdminStats, AdminUserListItem
+from .permissions import require_permission
+from .schemas import AdminStats, AdminTrendItem, AdminUserListItem
 
 router = APIRouter(prefix="/admin", tags=["admin-data"])
 
@@ -23,17 +34,17 @@ router = APIRouter(prefix="/admin", tags=["admin-data"])
 @router.get("/users", response_model=ApiResp[PageData[AdminUserListItem]])
 @respond
 async def admin_list_users(
-    page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
     keyword: str | None = None,
     include_pii: bool = False,
     _cur: CurrentUser = require_admin,
+    pag: PaginateParams = Depends(PaginateDep()),
     db: AsyncSession = Depends(get_read_session),
-) -> dict[str, Any]:
+) -> PageData[AdminUserListItem]:
     """
     用户管理列表。默认隐藏 email/phone（PII），可按用户名/邮箱筛选。
     include_pii 目前仅由调用方自决；若后续要分级管控，请额外加敏感级依赖。
     """
+    await require_permission(db, _cur, Permission.admin_users_manage)
     query = select(User)
     count_q = select(func.count(User.id))
 
@@ -45,14 +56,13 @@ async def admin_list_users(
     total = (await db.execute(count_q)).scalar() or 0
     rows = (
         await db.execute(
-            query.order_by(User.id.desc()).offset((page - 1) * size).limit(size)
+            query.order_by(User.id.desc()).offset(pag.offset).limit(pag.limit)
         )
     ).scalars()
-    items: list[
-        Any
-    ] = []  # 列表元素来自各字段类型混合的 model_dump，用 Any 收窄容器泛型
-    for r in rows:
-        item = AdminUserListItem(
+    # 返回 schema 实例而非 model_dump，使响应体为 PageData 实例（Task 1 依赖
+    # isinstance 判定位以自动附带 X-Total 头）。
+    items = [
+        AdminUserListItem(
             id=int(r.id),
             username=r.username,
             account_level=str(r.account_level),
@@ -61,14 +71,15 @@ async def admin_list_users(
             email=r.email if include_pii else None,
             phone=r.phone if include_pii else None,
         )
-        items.append(item.model_dump())
+        for r in rows
+    ]
 
-    return {
-        "items": items,
-        "total": total,
-        "page": page,
-        "pages": paginate_pages(total, size),
-    }
+    return PageData(
+        items=items,
+        total=total,
+        page=pag.page,
+        pages=paginate_pages(total, pag.limit),
+    )
 
 
 async def _safe_count(db: AsyncSession, stmt: Any) -> int:
@@ -86,6 +97,7 @@ async def admin_stats(
     db: AsyncSession = Depends(get_read_session),
 ) -> AdminStats:
     """仪表盘聚合统计：注册用户数 / 帖子数 / 文件数 / 待审核文件数。"""
+    await require_permission(db, _cur, Permission.admin_dashboard)
     user_count = await _safe_count(db, select(func.count(User.id)))
     post_count = await _safe_count(db, select(func.count(ForumPost.id)))
     file_count = await _safe_count(db, select(func.count(LibraryFile.id)))
@@ -99,3 +111,54 @@ async def admin_stats(
         file_count=file_count,
         file_pending_count=file_pending,
     )
+
+
+@router.get("/stats/trend", response_model=ApiResp[ListData[AdminTrendItem]])
+@respond
+async def admin_trend(
+    days: int = Query(14, ge=1, le=90),
+    _cur: CurrentUser = require_admin,
+    db: AsyncSession = Depends(get_read_session),
+) -> ListData[AdminTrendItem]:
+    """后台趋势：最近 days 天每日新增注册用户数 + 新增帖子数（日期连续、缺日补 0）。"""
+
+    await require_permission(db, _cur, Permission.admin_dashboard)
+
+    async def _deltas(col: Any) -> dict[date, int]:
+        """按某时间列分组统计每日增量；单表异常返回空 dict（_safe_count 同款容错）。
+        func.date 在 SQLite 返回 'YYYY-MM-DD' 字符串，统一转 date 作 key。"""
+        out: dict[date, int] = {}
+        try:
+            rows = (
+                await db.execute(
+                    select(func.date(col).label("d"), func.count())
+                    .where(col >= start)
+                    .group_by("d")
+                )
+            ).all()
+        except Exception:
+            return out
+        for r in rows:
+            raw = r[0]
+            if raw is None:
+                continue
+            r0: str = raw if isinstance(raw, str) else str(raw)
+            with contextlib.suppress(ValueError):
+                out[date.fromisoformat(r0[:10])] = int(r[1] or 0)
+        return out
+
+    start = date.today() - timedelta(days=days - 1)
+    user_d = await _deltas(User.created_at)
+    post_d = await _deltas(ForumPost.created_at)
+
+    items: list[AdminTrendItem] = []
+    for i in range(days):
+        d = start + timedelta(days=i)
+        items.append(
+            AdminTrendItem(
+                date=d,
+                user_delta=int(user_d.get(d, 0)),
+                post_delta=int(post_d.get(d, 0)),
+            )
+        )
+    return ListData(items=items)

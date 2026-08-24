@@ -10,10 +10,11 @@ from app.core.cache import (
     collection_version,
     make_key,
 )
-from app.core.err import respond
+from app.core.err import BizError, CommonErr, respond
+from app.db.models import Board
 from app.db.session import get_read_session, get_session
-from app.modules.admin.deps import require_admin, require_admin_2fa
-from app.modules.auth.deps import CurrentUser, RequireLevel, get_current_user
+from app.modules.admin.deps import require_admin_2fa
+from app.modules.auth.deps import CurrentUser, get_current_user
 from app.modules.boards.errors import BoardErr  # noqa: F401  (副作用注册已由 main 统一)
 from app.modules.boards.schemas import (
     BanRequest,
@@ -35,10 +36,13 @@ from app.modules.boards.service import (
     update_board_ex,
 )
 from app.modules.common import ApiResp, ListData, ModuleStatus
+from app.modules.rbac.deps import RequirePermission
+from app.modules.rbac.permissions import Permission, composible_role
+from app.modules.rbac.service import check_owner, role_has_permission
 
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
-AdminDep = Annotated[CurrentUser, require_admin]
-# 危险操作（审核通过/驳回等破坏性写操作）：需已通过 2FA 且信任未过期（1 小时）
+# 危险操作（审核通过/驳回等破坏性写操作）：需已通过 2FA 且信任未过期（1 小时）；
+# 2FA 之上再叠加 boards_review_application 权限点（handler 内判定）。
 Admin2FADep = Annotated[CurrentUser, require_admin_2fa]
 
 
@@ -89,7 +93,7 @@ async def board_detail(
 @respond
 async def admin_create_board(
     info: BoardCreate,
-    _cur: CurrentUser = RequireLevel("admin"),
+    _cur: CurrentUser = RequirePermission(Permission.boards_manage),
     db: AsyncSession = Depends(get_session),
 ) -> BoardOut:
     board = await create_board_ex(db, info, owner_id=None)
@@ -101,7 +105,7 @@ async def admin_create_board(
 @respond
 async def submit_app(
     info: BoardApplicationCreate,
-    cur: CurrentUser = RequireLevel("normal"),
+    cur: CurrentUser = RequirePermission(Permission.boards_create_application),
     db: AsyncSession = Depends(get_session),
 ) -> BoardApplicationOut:
     return await submit_application(db, cur.id, info)
@@ -117,6 +121,11 @@ async def review_app(
     _cur: Admin2FADep,
     db: AsyncSession = Depends(get_session),
 ) -> BoardApplicationOut:
+    # Admin2FADep 已保证 admin 会话 + 2FA 信任；此处叠加 boards_review_application
+    # 权限点（super_admin 有，org_member 无）。校验失败按 FORBIDDEN 返回。
+    role = composible_role(_cur.account_level, _cur.role)
+    if not await role_has_permission(db, role, Permission.boards_review_application):
+        raise BizError(CommonErr.FORBIDDEN)
     result = await review_application(db, app_id, _cur.id, body)
     await bump_collection_version("boards")
     return result
@@ -131,7 +140,13 @@ async def owner_update_board(
     cur: CurrentUserDep,
     db: AsyncSession = Depends(get_session),
 ) -> BoardOut:
-    result = await update_board_ex(db, board_id, cur.id, patch)
+    # 对象级权限：板块属主放行，或拥有 board_owner_manage（super_admin 代管）放行。
+    await check_owner(
+        db, cur, board_id, Board, "owner_id", Permission.board_owner_manage
+    )
+    result = await update_board_ex(
+        db, board_id, cur.id, patch, is_admin=(cur.role == "super_admin")
+    )
     await bump_collection_version("boards")
     await cache_invalidate(make_key("boards:item", board_id))
     return result
@@ -145,8 +160,11 @@ async def ban(
     cur: CurrentUserDep,
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, bool]:
+    await check_owner(
+        db, cur, board_id, Board, "owner_id", Permission.board_owner_manage
+    )
     board = await get_board_ex(db, board_id)
-    await ban_user(db, board, cur.id, body)
+    await ban_user(db, board, cur.id, body, is_admin=(cur.role == "super_admin"))
     return {"ok": True}
 
 
@@ -160,6 +178,11 @@ async def unban(
     cur: CurrentUserDep,
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, bool]:
+    await check_owner(
+        db, cur, board_id, Board, "owner_id", Permission.board_owner_manage
+    )
     board = await get_board_ex(db, board_id)
-    await unban_user(db, board, cur.id, target_user_id)
+    await unban_user(
+        db, board, cur.id, target_user_id, is_admin=(cur.role == "super_admin")
+    )
     return {"ok": True}

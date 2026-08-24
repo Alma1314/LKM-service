@@ -179,3 +179,21 @@ async def test_checkin_fail_open_when_redis_unavailable(
     assert r["success"] is True
     assert r["earned"] == 5
     assert await get_balance(db, uid) == 5
+
+
+@pytest.mark.asyncio
+async def test_checkin_idempotent_streak_not_double_incremented(db: AsyncSession):
+    """同日二次调用返回 0 且 streak 保持 1（幂等返回语义，防 streak 重入重复 +1）。"""
+    uid = await _user(db)
+    r1 = await do_checkin(db, uid)
+    assert r1["earned"] == 5 and r1["checkin_streak"] == 1
+    # 第二次调用在同日已打 → 直接返回，不复读不改 streak
+    r2 = await do_checkin(db, uid)
+    assert r2["today_checked"] is True
+    assert r2["earned"] == 0
+    assert r2["checkin_streak"] == 1
+    # 第三次仍幂等，streak 始终为 1
+    r3 = await do_checkin(db, uid)
+    assert r3["today_checked"] is True
+    assert r3["checkin_streak"] == 1
+    assert await get_balance(db, uid) == 5  # 只发了一次分

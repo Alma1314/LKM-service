@@ -12,6 +12,7 @@ from app.tasks import reconcile_blog_repos
 @pytest.fixture
 def repo_dir(monkeypatch, tmp_path):
     from app.core.config import settings
+
     p = str(tmp_path / "blog_repos")
     monkeypatch.setattr(settings, "blog_repo_dir", p)
     os.makedirs(p, exist_ok=True)
@@ -72,6 +73,7 @@ async def test_delete_quarantined_after_grace(db, repo_dir, inject_session):
 
 async def test_skip_when_series_exists(db, repo_dir, inject_session):
     from app.db.models import BlogSeries
+
     _mk_repo(repo_dir, "live")
     db.add(BlogSeries(owner_id=1, title="t", repo_name="live"))
     await db.flush()

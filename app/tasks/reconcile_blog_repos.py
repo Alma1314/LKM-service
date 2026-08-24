@@ -59,9 +59,7 @@ async def reconcile_blog_repos(ctx: dict[str, object]) -> None:
         # abspath 仅字符串运算不阻塞，周任务可接受
         base = os.path.abspath(settings.blog_repo_dir)  # noqa: ASYNC240
         # 已存在的 blog_series.repo_name 集合
-        live = set(
-            (await db.execute(select(BlogSeries.repo_name))).scalars().all()
-        )
+        live = set((await db.execute(select(BlogSeries.repo_name))).scalars().all())
         quarantined = {
             q.repo_name: q
             for q in (await db.execute(select(BlogRepoQuarantine))).scalars().all()

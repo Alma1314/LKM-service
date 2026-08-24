@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr
-from app.db.models import Board, ForumPost, Profile, User
+from app.db.models import Board, ForumPost, Profile, RolePermission, User
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.forum.errors import ForumErr
 from app.modules.forum.schemas import CommentCreate, CommentInfo, PostCreate, PostInfo
@@ -159,15 +159,21 @@ class TestForumPosts:
             f"expected BizError, got post {found.id} (view={found.view_count})"
         )
 
-    async def should_reject_delete_of_others_post(self, db: AsyncSession):
+    async def should_reject_delete_of_others_post(
+        self, client: AsyncClient, db: AsyncSession
+    ):
+        # RBAC 迁移后，delete_post service 不再内联 owner 判定（上移路由层 check_owner）。
+        # 此处从 HTTP 层验证：非作者 delete 他人帖子返回 FORBIDDEN。
         author = await _user(db)
         other = await _user(db, username="mallory", email="mallory@example.com")
         post = await _post(db, author_id=author)
+        tok = create_access_token(user_id=other, account_level="normal", role="member")
+        resp = await client.delete(
+            f"/api/v1/forum/posts/{post.id}",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
 
-        with pytest.raises(BizError) as exc:
-            await delete_post(db, post.id, other)
-
-        assert exc.value.errcode == CommonErr.FORBIDDEN
+        assert resp.status_code == 403
 
     async def should_like_idempotently(self, db: AsyncSession):
         user_id = await _user(db)
@@ -229,6 +235,29 @@ class TestForumRoutes:
         email: str = "tester@example.com",
     ) -> tuple[int, str]:
         user_id = await _user(db, username=username, email=email)
+        # RBAC：normal:member 发帖需显式授予 forum.post_create（生产由 seed_rbac 落 DEFAULT_GRANTS；
+        # 测试库 create_all 不自动 seed，故在此按需补授权）。
+        existing = (
+            (
+                await db.execute(
+                    select(RolePermission.id).where(
+                        RolePermission.role_name == "normal:member",
+                        RolePermission.permission == "forum.post_create",
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if existing is None:
+            db.add(
+                RolePermission(
+                    role_name="normal:member", permission="forum.post_create"
+                )
+            )
+        # 显式 flush：确保后续 HTTP 请求（RequirePermission 判权限）能看到该授权行，
+        # 不依赖 autoflush 时序（与 test_boards_forum 的同类修复保持一致）。
+        await db.flush()
         token = create_access_token(
             user_id=user_id, account_level="normal", role="member"
         )

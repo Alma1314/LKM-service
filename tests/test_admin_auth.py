@@ -11,9 +11,10 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import User
+from app.db.models import Profile, RolePermission, User
 from app.modules.auth.models import RefreshToken
 from app.modules.auth.security import hashpwd
+from app.modules.rbac.permissions import Permission
 
 
 async def _create_user(
@@ -29,9 +30,26 @@ async def _create_user(
         account_level=account_level,
     )
     db.add(user)
+    await db.flush()
+    # 后台 RBAC：admin 用户缺省为 super_admin 角色（/me/数据/删除端点需 admin 域权限点）
+    if account_level == "admin":
+        db.add(Profile(user_id=user.id, role="super_admin", nickname=username))
     await db.commit()
     await db.refresh(user)
     return user
+
+
+async def _grant(db: AsyncSession, perm: Permission) -> None:
+    """给 admin:super_admin 授指定权限点（幂等，复刻 super_admin DEFAULT_GRANTS）。"""
+    exists = await db.scalar(
+        select(RolePermission.id).where(
+            RolePermission.role_name == "admin:super_admin",
+            RolePermission.permission == perm.value,
+        )
+    )
+    if exists is None:
+        db.add(RolePermission(role_name="admin:super_admin", permission=perm.value))
+    await db.flush()
 
 
 def _login(
@@ -147,6 +165,7 @@ class TestAdminMe:
         self, db: AsyncSession, client: AsyncClient
     ):
         await _create_user(db, username="root", account_level="admin")
+        await _grant(db, Permission.admin_dashboard)
         login = await _login(client, "root")
         assert login.status_code == 200
         assert client.cookies.get("admin_session")
@@ -229,6 +248,7 @@ class TestAdminData:
         # 用不重复用户名，避开共享内存 rate limiter 对本进程"admin 用户名登录次数"的计数
         await _create_user(db, username="data_root1", account_level="admin")
         await _create_user(db, username="member_1", account_level="normal")
+        await _grant(db, Permission.admin_users_manage)
         await _login(client, "data_root1")
 
         resp = await client.get("/api/v1/admin/users")
@@ -246,6 +266,7 @@ class TestAdminData:
         self, db: AsyncSession, client: AsyncClient
     ):
         await _create_user(db, username="data_root2", account_level="admin")
+        await _grant(db, Permission.admin_users_manage)
         await _login(client, "data_root2")
         resp = await client.get("/api/v1/admin/users", params={"include_pii": "true"})
         assert resp.status_code == 200
@@ -262,6 +283,7 @@ class TestAdminData:
     ):
         await _create_user(db, username="data_root3", account_level="admin")
         await _create_user(db, username="other", account_level="normal")
+        await _grant(db, Permission.admin_users_manage)
         await _login(client, "data_root3")
         resp = await client.get("/api/v1/admin/users", params={"keyword": "data_root"})
         body: dict[str, Any] = resp.json()
@@ -271,6 +293,7 @@ class TestAdminData:
 
     async def should_return_stats(self, db: AsyncSession, client: AsyncClient):
         await _create_user(db, username="data_root4", account_level="admin")
+        await _grant(db, Permission.admin_dashboard)
         await _login(client, "data_root4")
         resp = await client.get("/api/v1/admin/stats")
         assert resp.status_code == 200
@@ -408,6 +431,7 @@ class TestAdminContentDelete:
     ):
         """完成 admin step-up（POST /admin/auth/2fa）后，删除能走到 service（不存在的帖→404）。"""
         await _create_user(db, username="adm_del2", account_level="admin")
+        await _grant(db, Permission.admin_content_review)
         login = await _login(client, "adm_del2")
         assert login.status_code == 200
 

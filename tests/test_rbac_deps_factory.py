@@ -1,0 +1,61 @@
+"""RequirePermission 依赖工厂：授权/未授权返回 cur / 抛 FORBIDDEN。
+
+通过 ``Depends.dependency`` 取到工厂生成的 checker 闭包，绕过 FastAPI 注入链
+直接以构造的 CurrentUser + db 调用，验证其判定逻辑。
+"""
+
+import pytest
+
+from app.core.err import BizError, CommonErr
+from app.db.models import RolePermission
+from app.modules.auth.deps import CurrentUser
+from app.modules.rbac.deps import RequirePermission
+from app.modules.rbac.permissions import Permission
+from tests.conftest import DB
+
+
+def _actor(user_id: int, level: str, role: str) -> CurrentUser:
+    return CurrentUser(
+        id=user_id,
+        account_level=level,
+        role=role,
+        email=None,
+        phone=None,
+    )
+
+
+async def _check(db: DB, user: CurrentUser, perm: Permission) -> CurrentUser:
+    dep = RequirePermission(perm)
+    checker = dep.dependency  # type: ignore[union-attr]
+    return await checker(cur=user, db=db)
+
+
+async def test_granted_role_passes(db: DB) -> None:
+    db.add(
+        RolePermission(
+            role_name="normal:member", permission=Permission.forum_post_create.value
+        )
+    )
+    await db.flush()
+    got = await _check(db, _actor(1, "normal", "member"), Permission.forum_post_create)
+    assert got is not None
+    assert got.id == 1
+
+
+async def test_ungranted_role_forbidden(db: DB) -> None:
+    db.add(
+        RolePermission(
+            role_name="normal:member", permission=Permission.forum_post_create.value
+        )
+    )
+    await db.flush()
+    with pytest.raises(BizError) as exc:
+        await _check(
+            db, _actor(2, "normal", "member"), Permission.article_owner_comment_delete
+        )
+    assert exc.value.errcode == CommonErr.FORBIDDEN
+
+
+async def test_no_role_row_forbidden(db: DB) -> None:
+    with pytest.raises(BizError):
+        await _check(db, _actor(3, "local", "member"), Permission.forum_post_create)

@@ -444,9 +444,7 @@ class TestStepUp2FA:
         assert resp.status_code == 400
         assert resp.json()["code"] != 0
 
-    async def should_issue_mfa_token_on_valid_code(
-        self, client: Any, db: AsyncSession
-    ):
+    async def should_issue_mfa_token_on_valid_code(self, client: Any, db: AsyncSession):
         user = await _create_user(db, username="stepup_ok")
         secret = await _enable_totp_for_user(db, user.id)
         token = create_access_token(
@@ -469,7 +467,13 @@ class TestStepUp2FA:
 
         user = await _create_user(db, username="stepup_recovery")
         await _enable_totp_for_user(db, user.id)
-        db.add(RecoveryCode(user_id=user.id, code_hash=hashlib.sha256(b"rc-abc123").hexdigest(), used=False))
+        db.add(
+            RecoveryCode(
+                user_id=user.id,
+                code_hash=hashlib.sha256(b"rc-abc123").hexdigest(),
+                used=False,
+            )
+        )
         await db.flush()
         token = create_access_token(
             user_id=user.id, account_level="normal", role="member"
@@ -499,14 +503,16 @@ class TestDeleteNot2FAGated:
     """普通用户删除自己的内容不再要求 2FA（danger 2FA 仅保留给管理员代删/删passkey）。"""
 
     async def should_not_gate_user_delete_with_mfa(self, client: Any, db: AsyncSession):
-        """有有效 token 即可删除：不存在的帖子返回 404（而非被 401 code=4 拦截）。"""
+        """有有效 token 即可删除：删除不由 2FA 门禁拦截（不再返回 401 code=4）。
+
+        注意：RBAC 迁移后，论坛删除路由先在 check_owner 判定（未拥有 forum.owner_delete
+        且非属主时，对不存在的帖子也统一返回 403 以免泄露资源存在性），故此处断言 403
+        而非旧的 404——核心意图仍是非 2FA 门禁。
+        """
         user = await _create_user(db, username="delete_nogate")
         token = create_access_token(
             user_id=user.id, account_level="normal", role="member"
         )
-        resp = await client.delete(
-            "/api/v1/forum/posts/999999", headers=_auth(token)
-        )
-        # 能走到删除/查无此帖逻辑，而非被 2FA 门禁拦住 → 不再是 401 code=4
-        assert resp.status_code == 404
-
+        resp = await client.delete("/api/v1/forum/posts/999999", headers=_auth(token))
+        # 能走到权限判定（而非被 2FA 门禁拦住）→ 不再是 401 code=4
+        assert resp.status_code == 403

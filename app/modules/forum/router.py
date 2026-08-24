@@ -4,9 +4,16 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
+from app.db.models import ForumPost
 from app.db.session import get_read_session, get_session
 from app.modules.auth.deps import CurrentUser, get_current_user
-from app.modules.common import ApiResp, ModuleStatus, PageData
+from app.modules.common import (
+    ApiResp,
+    ModuleStatus,
+    PageData,
+    PaginateDep,
+    PaginateParams,
+)
 from app.modules.forum.schemas import (
     CommentCreate,
     CommentInfo,
@@ -29,6 +36,9 @@ from app.modules.forum.service import (
 from app.modules.forum.service import (
     like_post as like_post_service,
 )
+from app.modules.rbac.deps import RequirePermission
+from app.modules.rbac.permissions import Permission
+from app.modules.rbac.service import check_owner
 
 router = APIRouter(prefix="/forum", tags=["forum"])
 
@@ -46,19 +56,21 @@ async def forum_status() -> ModuleStatus:
 @router.get("/posts", response_model=ApiResp[PageData[PostInfo]])
 @respond
 async def get_posts(
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    pag: PaginateParams = Depends(PaginateDep()),
     board_id: int | None = Query(default=None, ge=1),
     db: AsyncSession = Depends(get_read_session),
 ) -> PageData[PostInfo]:
-    return await list_posts(db, page=page, limit=limit, board_id=board_id)
+    return await list_posts(db, page=pag.page, limit=pag.limit, board_id=board_id)
 
 
 @router.post("/posts", response_model=ApiResp[PostInfo])
 @respond
 async def create_forum_post(
     info: PostCreate,
-    cur: CurrentUser = Depends(get_current_user),
+    # 注意：RequirePermission(...) 已返回 Depends(checker)，不能再包一层 Depends()
+    # （否则双重包裹会令 FastAPI 把 Depends 对象当 callable 而报错）。与
+    # tests/test_rbac_deps_factory 的用法一致：工厂返回值直接作参数默认值。
+    cur: CurrentUser = RequirePermission(Permission.forum_post_create),
     db: AsyncSession = Depends(get_session),
 ) -> PostInfo:
     return await create_post_service(db, cur.id, info)
@@ -89,6 +101,10 @@ async def delete_forum_post(
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    # 对象级权限：属主放行，或拥有 forum.owner_delete（admin 代管）放行。
+    await check_owner(
+        db, cur, post_id, ForumPost, "author_id", Permission.forum_owner_delete
+    )
     await delete_post_service(db, post_id, cur.id)
     return {"ok": True}
 
@@ -97,11 +113,10 @@ async def delete_forum_post(
 @respond
 async def get_post_comments(
     post_id: int,
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    pag: PaginateParams = Depends(PaginateDep()),
     db: AsyncSession = Depends(get_read_session),
 ) -> PageData[CommentInfo]:
-    return await list_comments(db, post_id, page=page, limit=limit)
+    return await list_comments(db, post_id, page=pag.page, limit=pag.limit)
 
 
 @router.post("/posts/{post_id}/comments", response_model=ApiResp[CommentInfo])

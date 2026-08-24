@@ -9,6 +9,7 @@ from app.modules.blog import backfill
 
 class _FakeGit:
     """替身：把内存 dict 当仓库文件表，记下被读过的路径。"""
+
     def __init__(self, files: dict[str, str]):
         self.files = dict(files)
         self.reads: list[str] = []
@@ -35,9 +36,7 @@ def fake_git(monkeypatch):
 
 @pytest.fixture
 async def series(db):
-    s = BlogSeries(
-        owner_id=1, title="t", repo_name="repo-standard", description=None
-    )
+    s = BlogSeries(owner_id=1, title="t", repo_name="repo-standard", description=None)
     db.add(s)
     await db.flush()
     await db.refresh(s)
@@ -61,7 +60,11 @@ async def test_backfill_inserts_new_files(db, fake_git, series):
 async def test_backfill_skips_when_db_newer(db, fake_git, series):
     db.add(
         BlogContent(
-            series_id=series, path="a.md", content="NEWER", sha3="x", version=5,
+            series_id=series,
+            path="a.md",
+            content="NEWER",
+            sha3="x",
+            version=5,
             updated_at=_t(2026, 8, 20, 23, 0, 0),  # 比 push 时刻更新
         )
     )
@@ -84,7 +87,11 @@ async def test_backfill_skips_when_db_newer(db, fake_git, series):
 async def test_backfill_overwrites_when_push_newer(db, fake_git, series):
     db.add(
         BlogContent(
-            series_id=series, path="a.md", content="OLD", sha3="x", version=1,
+            series_id=series,
+            path="a.md",
+            content="OLD",
+            sha3="x",
+            version=1,
             updated_at=_t(2026, 8, 1, 0, 0, 0),  # 早于 push
         )
     )

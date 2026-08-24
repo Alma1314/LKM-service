@@ -25,8 +25,10 @@ from app.modules.blog.service import (
 )
 from app.modules.common import ApiResp
 from app.modules.forum.service import delete_post as delete_forum_post_svc
+from app.modules.rbac.permissions import Permission
 
 from .deps import get_real_client_ip, require_admin_2fa
+from .permissions import require_permission
 
 router = APIRouter(prefix="/admin/content", tags=["admin-content"])
 
@@ -58,6 +60,7 @@ async def admin_delete_post(
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """管理员删除用户帖子。"""
+    await require_permission(db, cur, Permission.admin_content_review)
     author_id = await delete_forum_post_svc(db, post_id, cur.id, as_admin=True)
     await _audit_admin_delete(
         db,
@@ -79,6 +82,7 @@ async def admin_delete_series(
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """管理员删除用户专栏系列。"""
+    await require_permission(db, cur, Permission.admin_content_review)
     owner_id = await delete_blog_series_svc(db, series_id, cur.id, as_admin=True)
     await _audit_admin_delete(
         db,
@@ -104,6 +108,7 @@ async def admin_delete_blog_comment(
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """管理员删除用户博客系列评论。"""
+    await require_permission(db, cur, Permission.admin_content_review)
     author_id = await delete_blog_comment_svc(
         db, series_id, comment_id, cur.id, as_admin=True
     )
@@ -118,9 +123,7 @@ async def admin_delete_blog_comment(
     return {"ok": True}
 
 
-@router.delete(
-    "/article-comment/{comment_id}", response_model=ApiResp[dict[str, Any]]
-)
+@router.delete("/article-comment/{comment_id}", response_model=ApiResp[dict[str, Any]])
 @respond
 async def admin_delete_article_comment(
     comment_id: int,
@@ -129,6 +132,7 @@ async def admin_delete_article_comment(
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """管理员删除用户文章评论。"""
+    await require_permission(db, cur, Permission.admin_content_review)
     author_id = await delete_article_comment_svc(db, comment_id, cur.id, as_admin=True)
     await _audit_admin_delete(
         db,

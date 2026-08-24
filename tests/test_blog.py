@@ -82,8 +82,6 @@ async def _series(
     )
 
 
-
-
 # ---- series CRUD ----
 
 
@@ -983,9 +981,7 @@ slug: {slug}
 class TestBlogContent:
     """DB 主存储下 blog_content 行的行为：upsert 幂等、版本递增、发布闭环。"""
 
-    async def _get_row(
-        self, db: AsyncSession, series_id: int, path: str
-    ) -> Any:
+    async def _get_row(self, db: AsyncSession, series_id: int, path: str) -> Any:
         from app.db.models import BlogContent
 
         return (
@@ -1080,4 +1076,3 @@ class TestBlogContent:
         data = pub.json()["data"]
         assert data["slug"] == "from-db"
         assert data["title"] == "从DB"
-

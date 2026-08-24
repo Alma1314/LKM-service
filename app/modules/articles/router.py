@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
+from app.db.models import ArticleComment
 from app.db.session import get_read_session, get_session
 from app.modules.articles.schemas import (
     AboutItem,
@@ -21,7 +22,6 @@ from app.modules.articles.schemas import (
     TagItem,
 )
 from app.modules.articles.service import (
-    assert_super_admin,
     create_article_comment,
     create_article_ex,
     create_category_ex,
@@ -42,7 +42,16 @@ from app.modules.articles.service import (
     update_category_ex,
 )
 from app.modules.auth.deps import CurrentUser, get_current_user
-from app.modules.common import ApiResp, ListData, PageData
+from app.modules.common import (
+    ApiResp,
+    ListData,
+    PageData,
+    PaginateDep,
+    PaginateParams,
+)
+from app.modules.rbac.deps import RequirePermission
+from app.modules.rbac.permissions import Permission
+from app.modules.rbac.service import check_owner
 
 router = APIRouter(prefix="/articles", tags=["articles"])
 
@@ -51,10 +60,9 @@ router = APIRouter(prefix="/articles", tags=["articles"])
 @respond
 async def get_articles(
     db: AsyncSession = Depends(get_read_session),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
-) -> dict[str, Any]:
-    return await list_articles(db, page=page, page_size=page_size)
+    pag: PaginateParams = Depends(PaginateDep()),
+) -> PageData[ArticleListItem]:
+    return await list_articles(db, page=pag.page, limit=pag.limit)
 
 
 @router.get("/categories", response_model=ApiResp[ListData[ArticleCategory]])
@@ -77,11 +85,10 @@ async def get_article_tags(
 @respond
 async def search_articles_endpoint(
     q: str = Query(..., min_length=1, max_length=100),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
+    pag: PaginateParams = Depends(PaginateDep()),
     db: AsyncSession = Depends(get_read_session),
-) -> dict[str, Any]:
-    return await search_articles(db, q=q, page=page, page_size=page_size)
+) -> PageData[ArticleListItem]:
+    return await search_articles(db, q=q, page=pag.page, limit=pag.limit)
 
 
 @router.get("/about", response_model=ApiResp[AboutItem])
@@ -131,7 +138,19 @@ async def remove_article_comment(
     cur: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> None:
-    await delete_article_comment(db, comment_id, cur.id)
+    # 对象级权限：评论作者（user_id==cur.id）放行，或拥有 article_owner_comment_delete
+    # 的 super_admin 代删。注意属主字段是 user_id（评论作者），非大文本的 author_id。
+    await check_owner(
+        db,
+        cur,
+        comment_id,
+        ArticleComment,
+        "user_id",
+        Permission.article_owner_comment_delete,
+    )
+    # check_owner 已做对象级授权（属主或持 article.owner_comment_delete 的 super_admin），
+    # service 层不再重复属主校验，故传 as_admin=True 跳过其内部 owner 检查。
+    await delete_article_comment(db, comment_id, cur.id, as_admin=True)
     return None
 
 
@@ -150,10 +169,10 @@ async def get_article_detail(
 @respond
 async def create_article(
     info: ArticleCreate,
-    cur: CurrentUser = Depends(get_current_user),
+    # 官方文章仅 super_admin 可写：RequirePermission 工厂已返回 Depends，勿再包一层。
+    cur: CurrentUser = RequirePermission(Permission.articles_publish),
     db: AsyncSession = Depends(get_session),
 ) -> ArticleDetail:
-    assert_super_admin(cur)
     return await create_article_ex(db, info)
 
 
@@ -162,10 +181,9 @@ async def create_article(
 async def patch_article(
     slug: str,
     patch: ArticleUpdate,
-    cur: CurrentUser = Depends(get_current_user),
+    cur: CurrentUser = RequirePermission(Permission.articles_publish),
     db: AsyncSession = Depends(get_session),
 ) -> ArticleDetail:
-    assert_super_admin(cur)
     return await update_article_ex(db, slug, patch, is_super=True)
 
 
@@ -173,10 +191,9 @@ async def patch_article(
 @respond
 async def soft_delete(
     slug: str,
-    cur: CurrentUser = Depends(get_current_user),
+    cur: CurrentUser = RequirePermission(Permission.articles_publish),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, bool]:
-    assert_super_admin(cur)
     await soft_delete_article(db, slug)
     return {"ok": True}
 
@@ -185,10 +202,9 @@ async def soft_delete(
 @respond
 async def hard_delete(
     slug: str,
-    cur: CurrentUser = Depends(get_current_user),
+    cur: CurrentUser = RequirePermission(Permission.articles_review),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, bool]:
-    assert_super_admin(cur)
     await hard_delete_article(db, slug)
     return {"ok": True}
 
@@ -198,10 +214,9 @@ async def hard_delete(
 async def review_article_endpoint(
     slug: str,
     body: ReviewArticleRequest,
-    cur: CurrentUser = Depends(get_current_user),
+    cur: CurrentUser = RequirePermission(Permission.articles_review),
     db: AsyncSession = Depends(get_session),
 ) -> ArticleDetail:
-    assert_super_admin(cur)
     return await review_article(db, slug, body.approve)
 
 
@@ -209,10 +224,9 @@ async def review_article_endpoint(
 @respond
 async def add_category(
     info: CategoryCreate,
-    cur: CurrentUser = Depends(get_current_user),
+    cur: CurrentUser = RequirePermission(Permission.articles_category_manage),
     db: AsyncSession = Depends(get_session),
 ) -> CategoryOut:
-    assert_super_admin(cur)
     return await create_category_ex(db, info)
 
 
@@ -221,10 +235,9 @@ async def add_category(
 async def update_category(
     category_id: int,
     info: CategoryCreate,
-    cur: CurrentUser = Depends(get_current_user),
+    cur: CurrentUser = RequirePermission(Permission.articles_category_manage),
     db: AsyncSession = Depends(get_session),
 ) -> CategoryOut:
-    assert_super_admin(cur)
     return await update_category_ex(db, category_id, info)
 
 
@@ -232,9 +245,8 @@ async def update_category(
 @respond
 async def delete_category(
     category_id: int,
-    cur: CurrentUser = Depends(get_current_user),
+    cur: CurrentUser = RequirePermission(Permission.articles_category_manage),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, bool]:
-    assert_super_admin(cur)
     await delete_category_ex(db, category_id)
     return {"ok": True}

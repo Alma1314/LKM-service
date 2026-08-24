@@ -116,6 +116,15 @@ class User(Base):
     exam_certificates: Mapped[list[ExamCertificate]] = relationship(
         back_populates="user"
     )
+    following: Mapped[list[UserFollow]] = relationship(
+        back_populates="follower", foreign_keys="UserFollow.follower_id", cascade="all, delete-orphan"
+    )
+    followers: Mapped[list[UserFollow]] = relationship(
+        back_populates="following", foreign_keys="UserFollow.following_id", cascade="all, delete-orphan"
+    )
+    board_follows: Mapped[list[BoardFollow]] = relationship(
+        back_populates="follower", foreign_keys="BoardFollow.follower_id", cascade="all, delete-orphan"
+    )
 
 
 class Profile(Base):
@@ -943,6 +952,9 @@ class Board(Base):
 
     owner: Mapped[User | None] = relationship(foreign_keys=[owner_id])
     posts: Mapped[list[ForumPost]] = relationship(back_populates="board")
+    followers: Mapped[list[BoardFollow]] = relationship(
+        back_populates="board", foreign_keys="BoardFollow.board_id", cascade="all, delete-orphan"
+    )
 
 
 class BoardApplication(Base):
@@ -1154,3 +1166,104 @@ class ProjectMember(Base):
 
     project: Mapped[Project] = relationship(back_populates="members")
     user: Mapped[User | None] = relationship(foreign_keys=[user_id])
+
+
+class RolePermission(Base):
+    """RBAC：复合角色→权限点 映射。角色即 ``{account_level}:{profile.role}``。"""
+
+    __tablename__ = "role_permissions"
+    __table_args__ = (UniqueConstraint("role_name", "permission"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    role_name: Mapped[str] = mapped_column(String(40), nullable=False)
+    permission: Mapped[str] = mapped_column(String(80), nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+
+
+class UserFollow(Base):
+    """用户关注关系（软删墓碑）：follower 关注 following。
+
+    唯一约束针对``(follower_id, following_id)``——软删行保留以便幂等重关注；
+    活动关注统一 ``deleted_at IS NULL``。反向查「谁关注了我」走 following_id 索引。
+    """
+
+    __tablename__: str = "user_follows"
+    __table_args__: tuple[UniqueConstraint, Index] = (
+        UniqueConstraint(
+            "follower_id", "following_id", name="uq_user_follows_pair"
+        ),
+        Index("ix_user_follows_following_created", "following_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    follower_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    following_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        UTCDateTime, nullable=True
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+
+    follower: Mapped[User] = relationship(
+        back_populates="following", foreign_keys=[follower_id]
+    )
+    following: Mapped[User] = relationship(
+        back_populates="followers", foreign_keys=[following_id]
+    )
+
+
+class BoardFollow(Base):
+    """用户关注版块关系（软删墓碑）：follower 关注 board_id。"""
+
+    __tablename__: str = "board_follows"
+    __table_args__: tuple[UniqueConstraint, Index] = (
+        UniqueConstraint("follower_id", "board_id", name="uq_board_follows_pair"),
+        Index("ix_board_follows_board", "board_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    follower_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    board_id: Mapped[int] = mapped_column(ForeignKey("boards.id"), nullable=False)
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        UTCDateTime, nullable=True
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+
+    follower: Mapped[User] = relationship(
+        back_populates="board_follows", foreign_keys=[follower_id]
+    )
+    board: Mapped[Board] = relationship(back_populates="followers")
+
+
+class ModerationRule(Base):
+    """自动审校规则（关键词/域名黑名单，正则可选）：读时降权 / 隐藏。
+
+    * ``action="derank"``：命中后按 ``weight`` 压低 sort_score，不剔除。
+    * ``action="hide"``：命中后直接在时间线合流前剔除。
+    不改内容状态、无 pending/hidden 拦截状态机——纯读时评估。
+    """
+
+    __tablename__: str = "moderation_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # 关键词 / 域名 / 正则（is_regex=True）
+    pattern: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_regex: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # derank | hide
+    action: Mapped[str] = mapped_column(String(10), nullable=False, default="derank")
+    # 降权力度 0..1（derank 用；hide 忽略直接过滤）
+    weight: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    # 命中范围：content=标题+正文；预留（后续可加 author/board 级）
+    scope: Mapped[str] = mapped_column(String(20), nullable=False, default="content")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
+    )

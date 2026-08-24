@@ -83,13 +83,15 @@ async def test_list_articles_pagination(db, client):
     await _make_article(db, "a-2", "news")
     await _make_article(db, "a-3", "science")
 
-    resp = await client.get("/api/v1/articles", params={"page": 1, "page_size": 2})
+    resp = await client.get("/api/v1/articles", params={"page": 1, "limit": 2})
 
     assert resp.status_code == 200
     body = resp.json()
     assert body["code"] == 0
     assert body["data"]["total"] == 3
     assert len(body["data"]["items"]) == 2
+    # Task 1:PageData 响应自动附带 X-Total 头
+    assert resp.headers.get("x-total") == "3"
 
 
 async def test_get_article_detail(db, client):

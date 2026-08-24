@@ -11,7 +11,8 @@ from app.core.config import settings
 
 @pytest.fixture(autouse=True)
 async def reset_redis_globals() -> AsyncIterator[None]:
-    """每个用例后重置模块级单例，隔离测试。"""
+    """每个用例前后彻底复位模块级单例（close 旧连接 + 置 None），杜绝跨测试残留。"""
+    await redis_mod.close_redis()
     redis_mod._client = None
     redis_mod._client_pool = None
     yield

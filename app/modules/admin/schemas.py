@@ -64,3 +64,11 @@ class AdminReportListItem(BaseModel):
     status: str
     created_at: datetime.datetime
     handled_at: datetime.datetime | None = None
+
+
+class AdminTrendItem(BaseModel):
+    """后台趋势点：某自然日新增的注册用户数与帖子数。"""
+
+    date: datetime.date
+    user_delta: int
+    post_delta: int

@@ -18,14 +18,17 @@ from app.modules.columns.router import router as columns_router
 from app.modules.exam.router import router as exam_router
 from app.modules.files.notify import router as files_notify_router
 from app.modules.files.router import router as files_router
+from app.modules.follow.router import board_follow_router, user_follow_router
 from app.modules.forum.router import router as forum_router
 from app.modules.health.router import router as health_router
 from app.modules.members.avatar_router import router as avatars_router
 from app.modules.members.router import router as members_router
+from app.modules.moderation.admin_router import router as moderation_admin_router
 from app.modules.points.router import router as points_router
 from app.modules.projects.router import router as projects_router
 from app.modules.qa.router import router as qa_router
 from app.modules.starhope.router import router as starhope_router
+from app.modules.timeline.router import router as timeline_router
 from app.ws.router import router as ws_router
 
 api_router = APIRouter()
@@ -43,6 +46,7 @@ api_router.include_router(auth_passkey_router)
 api_router.include_router(auth_recovery_router)
 api_router.include_router(auth_settings_router)
 api_router.include_router(boards_router)
+api_router.include_router(board_follow_router)
 api_router.include_router(columns_router)
 api_router.include_router(exam_router)
 api_router.include_router(forum_router)
@@ -55,4 +59,7 @@ api_router.include_router(points_router)
 api_router.include_router(projects_router)
 api_router.include_router(qa_router)
 api_router.include_router(starhope_router)
+api_router.include_router(user_follow_router)
+api_router.include_router(timeline_router)
+api_router.include_router(moderation_admin_router)
 api_router.include_router(ws_router)

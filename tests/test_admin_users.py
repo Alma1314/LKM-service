@@ -6,8 +6,9 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ForumPost, LibraryFile, User
+from app.db.models import ForumPost, LibraryFile, Profile, RolePermission, User
 from app.modules.auth.security import hashpwd
+from app.modules.rbac.permissions import Permission
 
 
 async def _create_user(
@@ -23,9 +24,27 @@ async def _create_user(
         account_level=account_level,
     )
     db.add(user)
+    await db.flush()
+    # 后台 RBAC：admin 用户缺省为 super_admin 角色（进入 users/stats/trend 需 admin 域权限点）
+    if account_level == "admin":
+        db.add(Profile(user_id=user.id, role="super_admin", nickname=username))
     await db.commit()
     await db.refresh(user)
     return user
+
+
+async def _grant_super_admin(db: AsyncSession, *perms: Permission) -> None:
+    """给 admin:super_admin 授指定权限点（幂等，复刻 backend super_admin DEFAULT_GRANTS 的 admin 域）。"""
+    for p in perms:
+        exists = await db.scalar(
+            select(RolePermission.id).where(
+                RolePermission.role_name == "admin:super_admin",
+                RolePermission.permission == p.value,
+            )
+        )
+        if exists is None:
+            db.add(RolePermission(role_name="admin:super_admin", permission=p.value))
+    await db.flush()
 
 
 def _login(client: AsyncClient, username: str) -> Any:
@@ -33,6 +52,17 @@ def _login(client: AsyncClient, username: str) -> Any:
         "/api/v1/admin/auth/login",
         json={"username": username, "password": "secret123456"},
     )
+
+
+async def _login_admin(
+    db: AsyncSession,
+    client: AsyncClient,
+    username: str = "root",
+    *perms: Permission,
+) -> Any:
+    """给 admin(默认 super_admin) 授指定权限点后用其登录，供期望 200 的后台用例。"""
+    await _grant_super_admin(db, *perms)
+    return await _login(client, username)
 
 
 class TestAdminUsersList:
@@ -49,7 +79,13 @@ class TestAdminUsersList:
     ) -> None:
         await _create_user(db, "root", account_level="admin")
         await _create_user(db, "alice", account_level="normal", email="a@priv.io")
-        await _login(client, "root")
+        await _login_admin(
+            db,
+            client,
+            "root",
+            Permission.admin_users_manage,
+            Permission.admin_dashboard,
+        )
 
         resp = await client.get("/api/v1/admin/users")
         assert resp.status_code == 200
@@ -67,7 +103,7 @@ class TestAdminUsersList:
     ) -> None:
         await _create_user(db, "root", account_level="admin")
         await _create_user(db, "bob", account_level="normal", email="bob@priv.io")
-        await _login(client, "root")
+        await _login_admin(db, client, "root", Permission.admin_users_manage)
 
         resp = await client.get("/api/v1/admin/users", params={"include_pii": "true"})
         assert resp.status_code == 200
@@ -80,7 +116,7 @@ class TestAdminUsersList:
         await _create_user(db, "root", account_level="admin")
         await _create_user(db, "zhangsan", account_level="normal")
         await _create_user(db, "lisi", account_level="normal")
-        await _login(client, "root")
+        await _login_admin(db, client, "root", Permission.admin_users_manage)
 
         resp = await client.get("/api/v1/admin/users", params={"keyword": "zhang"})
         items = resp.json()["data"]["items"]
@@ -133,7 +169,7 @@ class TestAdminStats:
         self, db: AsyncSession, client: AsyncClient
     ) -> None:
         await _seed_stats(db)
-        await _login(client, "root")
+        await _login_admin(db, client, "root", Permission.admin_dashboard)
 
         resp = await client.get("/api/v1/admin/stats")
         assert resp.status_code == 200
@@ -148,7 +184,43 @@ class TestAdminStats:
     ) -> None:
         """单表不可用时统计不整体抛 500（_safe_count 兜底）。"""
         await _create_user(db, "root", account_level="admin")
-        await _login(client, "root")
+        await _login_admin(db, client, "root", Permission.admin_dashboard)
         resp = await client.get("/api/v1/admin/stats")
         assert resp.status_code == 200
         assert resp.json()["code"] == 0
+
+
+class TestAdminTrend:
+    async def should_reject_non_admin(
+        self, db: AsyncSession, client: AsyncClient
+    ) -> None:
+        await _create_user(db, "member1", account_level="normal")
+        await _login(client, "member1")
+        resp = await client.get("/api/v1/admin/stats/trend")
+        assert resp.status_code in (401, 403)
+
+    async def should_return_daily_deltas(
+        self, db: AsyncSession, client: AsyncClient
+    ) -> None:
+        await _seed_stats(db)  # root+u0..u2 共4用户，1帖
+        await _login_admin(db, client, "root", Permission.admin_dashboard)
+        resp = await client.get("/api/v1/admin/stats/trend", params={"days": 7})
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        items = data["items"]
+        assert len(items) == 7
+        # 找今天所在序列项：user_delta 至少含 _seed_stats 新增的4个同天增量
+        today = items[-1]
+        assert today["user_delta"] >= 4
+        assert today["post_delta"] >= 1
+        # 序列按日期升序、日期连续无缺
+        for i in range(1, len(items)):
+            assert items[i]["date"] > items[i - 1]["date"]
+
+    async def should_validate_days_bounds(
+        self, db: AsyncSession, client: AsyncClient
+    ) -> None:
+        await _create_user(db, "root", account_level="admin")
+        await _login(client, "root")
+        resp = await client.get("/api/v1/admin/stats/trend", params={"days": 0})
+        assert resp.status_code == 422

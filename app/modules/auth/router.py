@@ -82,7 +82,7 @@ async def get_me(cur: CurrentUser = Depends(get_current_user)) -> CurrentUser:
     return cur
 
 
-@router.get("/{user_id}", response_model=ApiResp[ProfileInfo])
+@router.get("/{user_id:int}", response_model=ApiResp[ProfileInfo])
 @respond
 async def get_user(
     user_id: int,
@@ -92,7 +92,7 @@ async def get_user(
     return await get_profile(db, user_id)
 
 
-@router.put("/{user_id}/profile", response_model=ApiResp[ProfileInfo])
+@router.put("/{user_id:int}/profile", response_model=ApiResp[ProfileInfo])
 @respond
 async def edit_profile(
     user_id: int,

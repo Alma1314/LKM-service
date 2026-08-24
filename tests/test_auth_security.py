@@ -24,6 +24,7 @@ from app.modules.auth.security import (
 # JWT – access token
 # ---------------------------------------------------------------------------
 
+
 class TestAccessToken:
     def should_create_and_decode(self):
         token = create_access_token(user_id=1, account_level="normal", role="member")
@@ -50,7 +51,9 @@ class TestAccessToken:
             "iat": now - 9999,
             "exp": now - 3600,  # expired 1 hour ago
         }
-        token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+        token = jwt.encode(
+            payload, settings.jwt_secret, algorithm=settings.jwt_algorithm
+        )
         with pytest.raises(jwt.exceptions.ExpiredSignatureError):
             decode_access_token(token)
 
@@ -63,6 +66,7 @@ class TestAccessToken:
 # ---------------------------------------------------------------------------
 # JWT – temp token
 # ---------------------------------------------------------------------------
+
 
 class TestTempToken:
     def should_create_and_decode(self):
@@ -81,12 +85,14 @@ class TestTempToken:
 # TOTP
 # ---------------------------------------------------------------------------
 
+
 class TestTOTP:
     def should_generate_valid_secret(self):
         secret = generate_totp_secret()
         assert len(secret) >= 16  # base32 encoding of 20 bytes
         # should be base32 decodable
         import base64
+
         base64.b32decode(secret, casefold=True)
 
     def should_generate_uri(self):
@@ -109,7 +115,7 @@ class TestTOTP:
         msg = struct.pack(">Q", now)
         h = hmac.new(key, msg, hashlib.sha1).digest()
         offset = h[-1] & 0x0F
-        code = (struct.unpack(">I", h[offset:offset + 4])[0] & 0x7FFFFFFF) % 1_000_000
+        code = (struct.unpack(">I", h[offset : offset + 4])[0] & 0x7FFFFFFF) % 1_000_000
         code_str = f"{code:06d}"
 
         assert verify_totp(secret, code_str, window=0) is not None
@@ -131,7 +137,7 @@ class TestTOTP:
         msg = struct.pack(">Q", prev_time)
         h = hmac.new(key, msg, hashlib.sha1).digest()
         offset = h[-1] & 0x0F
-        code = (struct.unpack(">I", h[offset:offset + 4])[0] & 0x7FFFFFFF) % 1_000_000
+        code = (struct.unpack(">I", h[offset : offset + 4])[0] & 0x7FFFFFFF) % 1_000_000
         code_str = f"{code:06d}"
 
         assert verify_totp(secret, code_str, window=1) is not None
@@ -140,6 +146,7 @@ class TestTOTP:
 # ---------------------------------------------------------------------------
 # Recovery codes
 # ---------------------------------------------------------------------------
+
 
 class TestRecoveryCodes:
     def should_generate_n_codes(self):
@@ -166,6 +173,7 @@ class TestRecoveryCodes:
 # ---------------------------------------------------------------------------
 # Encrypt / Decrypt
 # ---------------------------------------------------------------------------
+
 
 class TestEncryptDecrypt:
     def should_roundtrip_secret(self):
