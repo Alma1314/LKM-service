@@ -137,7 +137,17 @@ async def _stream_to_stdin(proc: asyncio.subprocess.Process, request: Request) -
             proc.stdin.close()
 
 
-@git_router.api_route("/{repo_name}.git/{rest:path}", methods=["GET", "POST"])
+# 同一 handler 同时服务 smart HTTP 的 GET(拉取)与 POST(推送)，
+# 拆成两个路由并给独立 operation_id，避免 FastAPI 生成重复 Operation ID。
+# 内部按 request.method 区分 is_push。
+@git_router.post(
+    "/{repo_name}.git/{rest:path}",
+    operation_id="git_http_backend_post",
+)
+@git_router.get(
+    "/{repo_name}.git/{rest:path}",
+    operation_id="git_http_backend_get",
+)
 async def git_http_backend(
     repo_name: str,
     rest: str,

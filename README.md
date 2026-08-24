@@ -64,7 +64,14 @@ GET  /api/v1/health                 # 健康检查
 GET  /api/v1/boards/status          # 分科板块模块状态
 ```
 
-完整接口文档见 [OpenAPI 规范](docs/openapi/openapi.yaml)。以下为接口分组摘要：
+> 完整、实时的接口文档由后端启动时自动生成，**以运行时为准**（无需手动维护）：
+> - **ReDoc（推荐阅读）**：`http://localhost:8000/redoc`
+> - **Swagger UI（交互调试）**：`http://localhost:8000/docs`
+> - **原始 OpenAPI JSON**：`http://localhost:8000/openapi.json`
+>
+> `docs/openapi/` 下那份手写 YAML 已过时（止于 2026-08，未含后续新增的 timeline/follow/points 等域），仅作历史参考。
+
+以下为接口分组摘要：
 
 | 模块 | 前缀 | 说明 |
 |------|------|------|
