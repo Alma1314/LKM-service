@@ -18,7 +18,14 @@ from app.core.cache import (
     make_key,
 )
 from app.core.err import BizError
-from app.db.models import Board, BoardFollow, User, UserFollow, now_iso
+from app.db.models import (
+    Board,
+    BoardFollow,
+    Profile,
+    User,
+    UserFollow,
+    now_iso,
+)
 from app.modules.follow.errors import FollowErr
 
 
@@ -35,9 +42,7 @@ async def _invalidate_follow_cache(user_id: int) -> None:
     await cache_invalidate(_following_key(user_id), _board_ids_key(user_id))
 
 
-async def follow_user(
-    db: AsyncSession, follower_id: int, following_id: int
-) -> None:
+async def follow_user(db: AsyncSession, follower_id: int, following_id: int) -> None:
     """follower 关注 following（幂等：重复关注静默成功）。"""
     if follower_id == following_id:
         raise BizError(FollowErr.CANNOT_FOLLOW_SELF, "不能关注自己")
@@ -59,9 +64,7 @@ async def follow_user(
     await _invalidate_follow_cache(follower_id)
 
 
-async def unfollow_user(
-    db: AsyncSession, follower_id: int, following_id: int
-) -> None:
+async def unfollow_user(db: AsyncSession, follower_id: int, following_id: int) -> None:
     """follower 取消关注 following（幂等：末关注时静默成功）。"""
     if follower_id == following_id:
         raise BizError(FollowErr.CANNOT_FOLLOW_SELF, "不能操作自己的关注")
@@ -77,9 +80,7 @@ async def unfollow_user(
         await _invalidate_follow_cache(follower_id)
 
 
-async def follow_board(
-    db: AsyncSession, follower_id: int, board_id: int
-) -> None:
+async def follow_board(db: AsyncSession, follower_id: int, board_id: int) -> None:
     """follower 关注版块（幂等）。"""
     target = await db.get(Board, board_id)
     if target is None:
@@ -99,9 +100,7 @@ async def follow_board(
     await _invalidate_follow_cache(follower_id)
 
 
-async def unfollow_board(
-    db: AsyncSession, follower_id: int, board_id: int
-) -> None:
+async def unfollow_board(db: AsyncSession, follower_id: int, board_id: int) -> None:
     """follower 取消关注版块（幂等）。"""
     row = await db.scalar(
         select(BoardFollow).where(
@@ -155,3 +154,56 @@ async def get_followed_board_ids(db: AsyncSession, user_id: int) -> list[int]:
         return list(rows)
 
     return await cached_read(_board_ids_key(user_id), TTL_ITEM_S, load)
+
+
+async def is_following_user(
+    db: AsyncSession, follower_id: int, following_id: int
+) -> bool:
+    """follower 当前是否关注 following（软删过滤）。"""
+    row = await db.scalar(
+        select(UserFollow.id).where(
+            UserFollow.follower_id == follower_id,
+            UserFollow.following_id == following_id,
+            UserFollow.deleted_at.is_(None),
+        )
+    )
+    return row is not None
+
+
+async def list_following_users(
+    db: AsyncSession, user_id: int
+) -> list[tuple[int, str, str | None]]:
+    """我关注的用户列表：(user_id, display_name, avatar)。
+
+    display_name 取 ``nickname or username``（沿用 points 榜惯例），avatar 取
+    Profile.avatar。走 id 集合 + 一次 join，避免逐条查询。
+    """
+    ids = await get_following_ids(db, user_id)
+    if not ids:
+        return []
+    rows = (
+        await db.execute(
+            select(User.id, User.username, Profile.nickname, Profile.avatar).outerjoin(
+                Profile, Profile.user_id == User.id
+            )
+        )
+    ).all()
+    by_id: dict[int, tuple[str, str | None]] = {}
+    for uid, username, nickname, avatar in rows:
+        by_id[uid] = (nickname or username or "", avatar)
+    return [
+        (uid, by_id.get(uid, (str(uid), None))[0], by_id.get(uid, (str(uid), None))[1])
+        for uid in ids
+    ]
+
+
+async def list_followed_boards(db: AsyncSession, user_id: int) -> list[tuple[int, str]]:
+    """我关注的版块列表：(board_id, title)。"""
+    ids = await get_followed_board_ids(db, user_id)
+    if not ids:
+        return []
+    rows = (
+        await db.execute(select(Board.id, Board.title).where(Board.id.in_(ids)))
+    ).all()
+    title_by_id = {bid: title for bid, title in rows}
+    return [(bid, title_by_id.get(bid, "")) for bid in ids]

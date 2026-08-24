@@ -33,3 +33,29 @@ class RuleInfo(BaseModel):
     weight: float
     scope: str
     enabled: bool
+
+
+class RuleTestRequest(BaseModel):
+    """规则测试：输入一段文本，试跑当前启用的规则。"""
+
+    text: str = Field(min_length=1, max_length=5000)
+
+
+class RuleTestHit(BaseModel):
+    """命中的单条规则明细（不含 id——测试走启用规则集，规则可静态配置）。"""
+
+    pattern: str
+    is_regex: bool
+    action: str
+    weight: float
+    scope: str
+
+
+class RuleTestResult(BaseModel):
+    """规则测试结果：是否命中、累计 penalty、是否应隐藏、命中明细。"""
+
+    matched: bool
+    penalty: float
+    should_hide: bool
+    hits: list[RuleTestHit]
+    total_rules: int

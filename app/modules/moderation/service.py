@@ -6,15 +6,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.cache import bump_collection_version
 from app.core.err import BizError
 from app.db.models import ModerationRule
+from app.modules.moderation import engine as mod_engine
 from app.modules.moderation.errors import ModerationErr
-from app.modules.moderation.schemas import RuleCreate, RuleInfo, RuleUpdate
+from app.modules.moderation.schemas import (
+    RuleCreate,
+    RuleInfo,
+    RuleTestHit,
+    RuleTestResult,
+    RuleUpdate,
+)
 
 _ACTIONS = {"derank", "hide"}
 _SCOPES = {"content"}
 
 
 async def list_rules(db: AsyncSession) -> list[RuleInfo]:
-    rows = (await db.execute(select(ModerationRule).order_by(ModerationRule.id))).scalars().all()
+    rows = (
+        (await db.execute(select(ModerationRule).order_by(ModerationRule.id)))
+        .scalars()
+        .all()
+    )
     return [RuleInfo.model_validate(r) for r in rows]
 
 
@@ -39,9 +50,7 @@ async def create_rule(db: AsyncSession, info: RuleCreate) -> RuleInfo:
     return RuleInfo.model_validate(rule)
 
 
-async def update_rule(
-    db: AsyncSession, rule_id: int, info: RuleUpdate
-) -> RuleInfo:
+async def update_rule(db: AsyncSession, rule_id: int, info: RuleUpdate) -> RuleInfo:
     rule = await db.get(ModerationRule, rule_id)
     if rule is None:
         raise BizError(ModerationErr.RULE_NOT_FOUND, "审校规则不存在")
@@ -73,3 +82,26 @@ async def delete_rule(db: AsyncSession, rule_id: int) -> None:
     await db.delete(rule)
     await db.flush()
     await bump_collection_version("moderation_rules")
+
+
+async def test_rules(db: AsyncSession, text: str) -> RuleTestResult:
+    """试跑当前启用的规则：返回是否命中、penalty、是否隐藏、命中明细。"""
+    active = await mod_engine.load_active_rules(db)
+    result, matched = mod_engine.evaluate_with_matches(text, active)
+    hits = [
+        RuleTestHit(
+            pattern=r.pattern,
+            is_regex=r.is_regex,
+            action=r.action,
+            weight=r.weight,
+            scope=r.scope,
+        )
+        for r in matched
+    ]
+    return RuleTestResult(
+        matched=bool(hits),
+        penalty=result.penalty,
+        should_hide=result.should_hide,
+        hits=hits,
+        total_rules=len(active),
+    )

@@ -295,12 +295,19 @@ async def _fill_titles(db: AsyncSession, items: list[dict[str, Any]]) -> None:
 
 
 async def leaderboard(
-    db: AsyncSession, limit: int = 50, period: str = "total"
-) -> list[LeaderboardEntry]:
-    """积分榜。period ∈ {total, daily, weekly}；缓存（键含 period + collection_version）。
+    db: AsyncSession,
+    offset: int = 0,
+    limit: int = 50,
+    period: str = "total",
+) -> tuple[list[LeaderboardEntry], int]:
+    """积分榜（分页）。period ∈ {total, daily, weekly}；缓存（键含 period）。
 
     total 按 UserBalance 余额降序（仅 balance>0）；daily/weekly 按 points_ledger
     近窗口 delta>0 归并求和降序。每项附 title。
+
+    **分页为全量排序后偏移切片**：缓存整幅有序榜（key 仅 period），再按
+    ``[offset, offset+limit)`` 切片，保证排名连续、total = 榜总人数。
+    改动后返回 ``(items, total)`` 而非裸 list。
     """
 
     async def load() -> list[dict[str, Any]]:
@@ -318,7 +325,6 @@ async def leaderboard(
                         Profile.nickname.asc().nullsfirst(),
                         User.id.asc(),
                     )
-                    .limit(limit)
                 )
             ).all()
             result: list[dict[str, Any]] = []
@@ -352,7 +358,6 @@ async def leaderboard(
                         Profile.nickname.asc().nullsfirst(),
                         User.id.asc(),
                     )
-                    .limit(limit)
                 )
             ).all()
             result = [
@@ -368,10 +373,13 @@ async def leaderboard(
         raise BizError(PointsErr.INVALID_PERIOD)
 
     ver = await collection_version("points")
-    payload = await cached_read(
-        make_key("points:leaderboard", ver, period, limit), 60, load
-    )
-    return [LeaderboardEntry.model_validate(item) for item in payload]
+    payload = await cached_read(make_key("points:leaderboard", ver, period), 60, load)
+    total = len(payload)
+    items = [
+        LeaderboardEntry.model_validate(item)
+        for item in payload[offset : offset + limit]
+    ]
+    return items, total
 
 
 # 成就 type → UserBehaviorStat.stats 计数键（与 engine.STAT_TO_ACHIEVEMENT_TYPE 对齐）

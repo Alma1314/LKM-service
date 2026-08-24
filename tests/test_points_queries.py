@@ -103,7 +103,8 @@ async def test_leaderboard_total_sort_and_title(db: AsyncSession) -> None:
     (await db.get(UserBalance, low_id)).balance = 10
     await db.flush()
 
-    rows = await leaderboard(db)
+    rows, total = await leaderboard(db)
+    assert total == len(rows)
     assert isinstance(rows[0], LeaderboardEntry)
     assert all(entry.title for entry in rows)  # 每项都带 title，默认 active
     assert all(entry.balance >= 0 for entry in rows)
@@ -121,12 +122,12 @@ async def test_leaderboard_daily_weekly_aggregate(db: AsyncSession) -> None:
     await _mk_ledger(db, b_id, [10])
     await db.commit()
 
-    daily = await leaderboard(db, period="daily")
+    daily, _total = await leaderboard(db, period="daily")
     assert [r.user_id for r in daily] == [a_id, b_id]
     assert daily[0].balance == 30
     assert daily[1].balance == 10
 
-    weekly = await leaderboard(db, period="weekly")
+    weekly, _total = await leaderboard(db, period="weekly")
     assert [r.user_id for r in weekly] == [a_id, b_id]
     assert weekly[0].balance == 30
 
@@ -159,10 +160,10 @@ async def test_leaderboard_daily_filters_stale_ledger(db: AsyncSession) -> None:
     )
     await db.commit()
 
-    daily = await leaderboard(db, period="daily")
+    daily, _t = await leaderboard(db, period="daily")
     # 老用户仅余额高但日榜无近期流水 → 不出现
     assert all(r.user_id != old_id for r in daily)
-    weekly = await leaderboard(db, period="weekly")
+    weekly, _t = await leaderboard(db, period="weekly")
     assert all(r.user_id != old_id for r in weekly)
 
 
@@ -183,7 +184,7 @@ async def test_leaderboard_title_hardcore(db: AsyncSession) -> None:
     db.add(ua)
     await db.commit()
 
-    rows = await leaderboard(db)
+    rows, _t = await leaderboard(db)
     entry = next(r for r in rows if r.user_id == uid)
     assert entry.title == "hardcore"
 
@@ -227,7 +228,7 @@ async def test_leaderboard_title_batch_priority(db: AsyncSession) -> None:
     )
     await db.commit()
 
-    rows = await leaderboard(db)
+    rows, _t = await leaderboard(db)
     title_by_id = {r.user_id: r.title for r in rows}
     assert title_by_id[a_id] == "hardcore"
     assert title_by_id[b_id] == "fileExpert"

@@ -13,7 +13,13 @@ from app.modules.admin.deps import require_admin, require_admin_2fa
 from app.modules.auth.deps import CurrentUser
 from app.modules.common import ApiResp, ListData
 from app.modules.moderation import service as mod_service
-from app.modules.moderation.schemas import RuleCreate, RuleInfo, RuleUpdate
+from app.modules.moderation.schemas import (
+    RuleCreate,
+    RuleInfo,
+    RuleTestRequest,
+    RuleTestResult,
+    RuleUpdate,
+)
 
 router = APIRouter(prefix="/admin/moderation", tags=["admin-moderation"])
 
@@ -57,3 +63,13 @@ async def admin_delete_moderation_rule(
 ) -> dict[str, bool]:
     await mod_service.delete_rule(db, rule_id)
     return {"ok": True}
+
+
+@router.post("/rules/test", response_model=ApiResp[RuleTestResult])
+@respond
+async def admin_test_moderation_rules(
+    req: RuleTestRequest,
+    _cur: CurrentUser = require_admin_2fa,
+    db: AsyncSession = Depends(get_session),
+) -> RuleTestResult:
+    return await mod_service.test_rules(db, req.text)

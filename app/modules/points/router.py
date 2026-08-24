@@ -1,3 +1,5 @@
+from math import ceil
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -79,14 +81,19 @@ async def checkin(
     return await do_checkin(db, cur.id)
 
 
-@router.get("/leaderboard", response_model=ApiResp[list[LeaderboardEntry]])
+@router.get("/leaderboard", response_model=ApiResp[PageData[LeaderboardEntry]])
 @respond
 async def points_leaderboard(
-    limit: int = Query(50, ge=1, le=100),
+    pag: PaginateParams = Depends(PaginateDep()),
     period: str = Query("total"),
     db: AsyncSession = Depends(get_read_session),
-) -> list[LeaderboardEntry]:
-    return await leaderboard(db, limit=limit, period=period)
+) -> PageData[LeaderboardEntry]:
+    items, total = await leaderboard(
+        db, offset=pag.offset, limit=pag.limit, period=period
+    )
+    return PageData(
+        items=items, total=total, page=pag.page, pages=ceil(total / pag.limit)
+    )
 
 
 @router.get("/achievements", response_model=ApiResp[list[AchievementOut]])
