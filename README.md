@@ -22,33 +22,40 @@
 ├── main.py                    # 兼容入口：uvicorn main:app
 ├── app/
 │   ├── main.py                # create_app(), lifespan, 异常处理器, 启动安全检查
-│   ├── api/router.py          # 挂载 health/auth/boards/columns 等模块路由
+│   ├── api/router.py          # 统一挂载全部模块 REST 路由
+│   ├── ws/                    # WebSocket(broker/manager/router), Redis 订阅推送
 │   ├── core/
 │   │   ├── config.py          # Settings，读取 LKM_ 前缀环境变量
 │   │   ├── err.py             # ErrCode / BizError / ERRTABLE / respond
-│   │   └── rate_limit.py      # 内存滑动窗口限流器
+│   │   ├── apm.py             # Sentry 可观测(DSN 空则跳过)
+│   │   ├── redis.py / redis_limiter.py / throttle.py  # Redis 客户端与共享限流
+│   │   └── worker*.py         # arq 队列定义与 send/default/notify/points 各入口
 │   ├── db/
 │   │   ├── models.py          # users/profiles/columns 等主模型
 │   │   ├── init_db.py         # 开发环境自动建表
 │   │   └── session.py         # SQLAlchemy engine/session 依赖
 │   └── modules/
 │       ├── common.py          # ApiResp, ListData, ModuleStatus
-│       ├── auth/
-│       │   ├── router.py          # 注册、登录、token、profile、me
-│       │   ├── router_2fa.py      # TOTP / recovery code
-│       │   ├── router_oauth.py    # GitHub OAuth
-│       │   ├── router_passkey.py  # Passkey / WebAuthn
-│       │   ├── router_recovery.py # 账号恢复
-│       │   ├── router_settings.py # 邮箱/手机号绑定
-│       │   ├── models.py          # refresh token、验证码、OAuth、TOTP、Passkey 等认证表
-│       │   ├── schemas.py         # auth 请求/响应模型
-│       │   ├── security.py        # 密码哈希、JWT、临时 token 等安全工具
-│       │   └── service_*.py       # auth 业务逻辑
-│       ├── boards/
-│       ├── blog/                # 博客系列、Git 文件读取、星标、评论
+│       ├── auth/              # 注册/登录/token/me、2FA、OAuth、Passkey、恢复、绑定
+│       ├── admin/             # 后台(auth/content/data/reports + moderation 见下)
+│       ├── articles/          # 官方文章/新闻只读端点
+│       ├── blog/              # 博客系列、Git 文件读取、星标、评论、Git HTTP
+│       ├── boards/            # 分科板块(已实现:板块/负责人/禁言/准入)
 │       ├── columns/           # 专栏申请、专栏、专栏文章
-│       └── health/
-├── alembic/                   # Alembic 环境配置，当前需补充 versions 迁移文件
+│       ├── exam/              # 考试认证(板块解锁)
+│       ├── files/             # 文件库(上传/审核/下载/对象事件 notify)
+│       ├── follow/            # 关注(用户/板块)
+│       ├── forum/             # 社区帖子/评论/点赞 + GraphQL schema
+│       ├── health/            # 健康检查
+│       ├── moderation/        # 后台审核(内容/板块)
+│       ├── points/            # 积分/成就/排行榜(事件规则引擎)
+│       ├── projects/          # 项目广场
+│       ├── qa/                # 问答
+│       ├── rbac/              # 权限点/RBAC 统一
+│       ├── starhope/          # StarHope AI 学习助手
+│       ├── storage/           # Local/S3 对象存储抽象
+│       └── timeline/          # 时间线
+├── alembic/                   # Alembic 环境配置与迁移文件(LKM_USE_ALEMBIC=true 时启用)
 ├── tests/
 ├── pyproject.toml
 └── uv.lock
@@ -87,7 +94,19 @@ GET  /api/v1/boards/status          # 分科板块模块状态
 | Files | `/files` | 文件库上传（pending 待审核）、列表筛选排序、详情浏览计数、下载计数 |
 | Blog | `/blog` | 博客系列 CRUD、Git 文件读取、星标、评论 |
 | Blog Git | `/blog/git` | Git HTTP 后端（仓库读写，Basic Auth 认证） |
-| Boards | `/boards` | 分科板块（规划中） |
+| Boards | `/boards` | 分科板块（已实现：板块组织、负责人流程、禁言与发言准入） |
+| Follow | `/users`、`/boards` | 关注用户 / 板块 |
+| Timeline | `/timeline` | 关注流 / 时间线（分页 + `X-Total`） |
+| Files Notify | `/notify` | 文件对象事件回调（对象存储 Webhook） |
+| Articles | `/articles` | 官方文章 / 新闻只读端点 |
+| Exam | `/exam` | 考试认证（解锁板块） |
+| Projects | `/projects` | 项目广场 CRUD / 审核 |
+| QA | `/qa` | 问答提问 / 回答 / 浏览 |
+| Points | `/points` | 积分 / 成就 / 排行榜（事件规则引擎） |
+| StarHope | `/starhope` | StarHope AI 学习助手 |
+| Admin | `/admin` | 后台（登录、用户/内容/举报/文档管理） |
+| Moderation | `/admin/moderation` | 后台审核（内容 / 板块） |
+| WS | `/ws` | WebSocket（Redis 订阅推送、上传登记等） |
 
 ## 身份认证
 
@@ -136,7 +155,7 @@ Base.metadata.create_all(bind=engine)
 
 因此 SQLite 本地开发可以自动建表。
 
-生产环境预期使用 Alembic 管理迁移。当前仓库已有 `alembic/env.py` 和模板文件，但没有看到 `alembic/versions` 迁移版本文件；如果要在已有数据库上升级，需要补充正式 migration。
+生产/有历史数据库的环境需显式设 `LKM_USE_ALEMBIC=true` 走 Alembic 增量迁移；本地从零开发用默认 `false`（`create_all` 自动建表）。（当前 `alembic/versions/` 尚为空，若要在已有库上升级需先补充正式 migration。）
 
 ## 运行
 
@@ -151,8 +170,10 @@ uvicorn main:app --reload
 uv run pytest -v
 ```
 
-如果安装了项目开发依赖，可以继续运行静态检查：
+如果安装了项目开发依赖，可以继续运行静态检查（当前门禁：**ty 0 诊断 + ruff 干净**；`basedpyright` 已降级为可选）：
 
 ```bash
-uv run pyright
+uv run ty check       # 硬门禁：类型检查 0 诊断
+uv run ruff check     # 代码风格 / 静态检查
+uv run ruff format    # 代码格式化
 ```
