@@ -4,7 +4,6 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
-from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -48,7 +47,6 @@ def _register_all_errors() -> None:
     import app.modules.exam.errors
     import app.modules.files.errors
     import app.modules.forum.errors
-    import app.modules.members.errors
     import app.modules.points.errors
     import app.modules.projects.errors
     import app.modules.qa.errors
@@ -65,12 +63,6 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
 
     # 启动即探测 Redis，便于日志暴露其状态（未配置/不可用时静默降级为 None）
     await redis_client.get_redis()
-
-    # 确保成员头像静态目录存在（WebP 由运维/部署脚本放入）
-    # mkdir 同步，放 to_thread 避免阻塞事件循环（ASYNC240）
-    await asyncio.to_thread(
-        lambda: Path(settings.avatars_dir).mkdir(parents=True, exist_ok=True)
-    )
 
     cleanup_task = asyncio.create_task(cleanup_expired_challenges())
 

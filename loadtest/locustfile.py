@@ -1,6 +1,6 @@
 """LKM 后端热路径负载压测。
 
-覆盖公开只读热点：articles/columns/forum/blog 列表、categories、members、health，
+覆盖公开只读热点：articles/columns/forum/blog 列表、categories、health，
 以及一组低频 auth 密码登录（受 Redis 限流，用于观测限流下行为）。
 
 运行（生产/本地起多 worker 后）：
@@ -13,8 +13,6 @@
 
 from locust import HttpUser, between, task
 
-# members 公开静态数据组，任选其一保证 200
-_MEMBER_TYPE = "generalMembers"
 # auth 登录探测：密码登录走 Redis 限流，负载下多数会被限流拒(ACCOUNT_LOCKED)，属预期
 _LOGIN_USER = "bench_user"
 _LOGIN_PASSWORD = "BenchPass!123"
@@ -44,10 +42,6 @@ class LKMReadUser(HttpUser):
     @task(4)
     def list_blog_series(self) -> None:
         self.client.get("/api/v1/blog/series")
-
-    @task(3)
-    def members_general(self) -> None:
-        self.client.get(f"/api/v1/members?type={_MEMBER_TYPE}")
 
     @task(1)
     def health(self) -> None:

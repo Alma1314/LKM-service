@@ -1,1 +1,0 @@
-"""Member list module"""

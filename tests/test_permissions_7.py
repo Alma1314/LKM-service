@@ -15,7 +15,6 @@ def test_all_error_modules_register_without_duplicate() -> None:
     import app.modules.columns.errors
     import app.modules.files.errors
     import app.modules.forum.errors
-    import app.modules.members.errors
     import app.modules.starhope.errors  # noqa: F401
 
     # 抽样验证几个模块错误码确实已注册（否则 map_err 会 KeyError 转 500）

@@ -21,8 +21,6 @@ from app.modules.files.router import router as files_router
 from app.modules.follow.router import board_follow_router, user_follow_router
 from app.modules.forum.router import router as forum_router
 from app.modules.health.router import router as health_router
-from app.modules.members.avatar_router import router as avatars_router
-from app.modules.members.router import router as members_router
 from app.modules.moderation.admin_router import router as moderation_admin_router
 from app.modules.points.router import router as points_router
 from app.modules.projects.router import router as projects_router
@@ -33,8 +31,6 @@ from app.ws.router import router as ws_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
-api_router.include_router(members_router)
-api_router.include_router(avatars_router)
 api_router.include_router(admin_router)
 api_router.include_router(admin_content_router)
 api_router.include_router(admin_data_router)
