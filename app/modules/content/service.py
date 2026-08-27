@@ -205,6 +205,7 @@ async def create_item(
         ContentType.DISCUSSION,
         ContentType.COLUMN_POST,
         ContentType.BLOG_POST,
+        ContentType.QA,
     ):
         from app.modules.boards.service import check_post_allowed
 
@@ -234,6 +235,9 @@ async def create_item(
         department=info.department,
         column_id=(
             info.column_id if info.content_type == ContentType.COLUMN_POST else None
+        ),
+        qa_question_id=(
+            info.qa_question_id if info.content_type == ContentType.QA else None
         ),
         slug=info.slug if info.content_type == ContentType.ARTICLE else None,
         title=info.title,

@@ -27,6 +27,7 @@ def upgrade() -> None:
         sa.Column("publisher", sa.String(length=100), nullable=True),
         sa.Column("department", sa.String(length=100), nullable=True),
         sa.Column("column_id", sa.Integer(), nullable=True),
+        sa.Column("qa_question_id", sa.Integer(), nullable=True),
         sa.Column("slug", sa.String(length=200), nullable=True),
         sa.Column("title", sa.String(length=200), nullable=False),
         sa.Column("excerpt", sa.String(length=500), nullable=False),
@@ -50,6 +51,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["author_id"], ["users.id"]),
         sa.ForeignKeyConstraint(["board_id"], ["boards.id"]),
         sa.ForeignKeyConstraint(["column_id"], ["columns.id"]),
+        sa.ForeignKeyConstraint(["qa_question_id"], ["qa_questions.id"]),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(

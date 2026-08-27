@@ -357,6 +357,10 @@ class ContentItem(Base):
         ForeignKey("columns.id"), nullable=True, index=True
     )
     slug: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # QA 提问关联（仅 content_type == 'qa'）：指向 qa_questions，论坛条目可跳转提问详情
+    qa_question_id: Mapped[int | None] = mapped_column(
+        ForeignKey("qa_questions.id"), nullable=True, index=True
+    )
     # 内容本体
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     excerpt: Mapped[str] = mapped_column(String(500), nullable=False, default="")
@@ -393,6 +397,9 @@ class ContentItem(Base):
     )
     board: Mapped[Board] = relationship()
     column: Mapped[Column | None] = relationship()
+    qa_question: Mapped[QAQuestion | None] = relationship(
+        foreign_keys=[qa_question_id]
+    )
     comments: Mapped[list[ContentComment]] = relationship(
         back_populates="content_item", cascade="all, delete-orphan"
     )

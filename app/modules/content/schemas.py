@@ -20,6 +20,7 @@ class ContentItemInfo(BaseModel):
     department: str | None = None
     column_id: int | None = None
     column_title: str = ""
+    qa_question_id: int | None = None
     slug: str | None = None
     title: str
     excerpt: str
@@ -69,6 +70,8 @@ class ContentItemCreate(BaseModel):
     keywords: list[str] = Field(default_factory=list)
     # 专栏连载（content_type == column_post）
     column_id: int | None = Field(default=None, ge=1)
+    # QA 提问（content_type == qa）
+    qa_question_id: int | None = Field(default=None, ge=1)
     status: str = Field(default="published", pattern="^(draft|pending|published)$")
     is_pinned: bool = False
     is_featured: bool = False

@@ -16,6 +16,7 @@ class ContentType(StrEnum):
     ARTICLE = "article"
     COLUMN_POST = "column_post"
     BLOG_POST = "blog_post"
+    QA = "qa"
 
 
 class ContentStatus(StrEnum):
