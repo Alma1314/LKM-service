@@ -50,7 +50,11 @@ async def _compute_scores(
 ) -> list[FeedItem]:
     now = datetime.datetime.now(datetime.UTC)
     for it in items:
-        recency = 1.0 if it.created_at.tzinfo is None else _recency_multiplier(it.created_at, now)
+        recency = (
+            1.0
+            if it.created_at.tzinfo is None
+            else _recency_multiplier(it.created_at, now)
+        )
         follow_bonus = 0.0
         if following_ids is not None and it.author_id in following_ids:
             follow_bonus = 5.0
@@ -88,9 +92,7 @@ async def get_timeline(
                 return FeedResponse(items=[], next_cursor=None)
 
     # 选源：follow 用 FOLLOW_SOURCES（article 无作者外键不进个性化），hot 全含
-    source_names = (
-        feed_src.FOLLOW_SOURCES if mode == "follow" else feed_src.HOT_SOURCES
-    )
+    source_names = feed_src.FOLLOW_SOURCES if mode == "follow" else feed_src.HOT_SOURCES
 
     candidates: list[FeedItem] = []
     for name in source_names:
@@ -101,9 +103,7 @@ async def get_timeline(
             a_ids = following_ids
         else:
             a_ids, b_ids = None, None
-        items = await fetch(
-            db, a_ids, b_ids, before_time, before_id, limit
-        )
+        items = await fetch(db, a_ids, b_ids, before_time, before_id, limit)
         candidates.extend(items)
 
     # 审校隐藏剔除 + 排序分计算

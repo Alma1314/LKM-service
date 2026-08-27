@@ -207,7 +207,9 @@ class TestLeaderboard:
         await reward(db, a, 50, "test", "tb", "1")
         await reward(db, b, 50, "test", "tb", "2")
         items, _total = await leaderboard(db)
-        assert items[0].user_id == b and items[0].display_name == "Apple"  # Apple < Zebra
+        assert (
+            items[0].user_id == b and items[0].display_name == "Apple"
+        )  # Apple < Zebra
         assert items[1].user_id == a and items[1].display_name == "Zebra"
 
     async def test_ledger_pagination(self, db: AsyncSession):

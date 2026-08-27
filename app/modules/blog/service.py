@@ -18,7 +18,6 @@ from app.db.models import (
     now_iso,
 )
 from app.db.repo import get_or_raise, get_profiles_by_user_ids
-from app.modules.content.service import publish_blog_item
 from app.modules.auth.schemas import ProfileInfo
 from app.modules.blog import git_svc
 from app.modules.blog.errors import BlogErr
@@ -32,6 +31,7 @@ from app.modules.blog.schemas import (
     BlogStarStatus,
 )
 from app.modules.common import PageData, paginate_offset, paginate_pages
+from app.modules.content.service import publish_blog_item
 
 # ---- private converters ----
 

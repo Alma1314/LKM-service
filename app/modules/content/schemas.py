@@ -62,9 +62,7 @@ class ContentItemCreate(BaseModel):
     cover: str | None = Field(default=None, max_length=2000)
     tags: list[str] = Field(default_factory=list)
     # 官方发布字段（content_type == article 时）
-    slug: str | None = Field(
-        default=None, max_length=200, pattern=r"^[a-z0-9-]+$"
-    )
+    slug: str | None = Field(default=None, max_length=200, pattern=r"^[a-z0-9-]+$")
     publisher: str | None = Field(default=None, max_length=100)
     department: str | None = Field(default=None, max_length=100)
     keywords: list[str] = Field(default_factory=list)

@@ -49,9 +49,7 @@ async def admin_list_reports(
     total = (await db.execute(count_q)).scalar() or 0
     rows = (
         await db.execute(
-            query.order_by(Report.id.desc())
-            .offset(pag.offset)
-            .limit(pag.limit)
+            query.order_by(Report.id.desc()).offset(pag.offset).limit(pag.limit)
         )
     ).scalars()
 

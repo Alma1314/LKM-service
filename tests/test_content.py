@@ -9,14 +9,12 @@
 - blog publish 落 content_items（blog_post）
 """
 
-from typing import Any
-
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
-from app.db.models import Board, Column, ContentItem, ContentLike, User
+from app.db.models import Column, ContentItem, User
+from app.modules.auth.security import hashpwd
 from app.modules.boards.schemas import BoardCreate
 from app.modules.boards.service import create_board_ex
 from app.modules.content.errors import ContentErr
@@ -34,7 +32,6 @@ from app.modules.content.service import (
     publish_blog_item,
     unlike_item,
 )
-from app.modules.auth.security import hashpwd
 
 
 async def _user(db: AsyncSession, username: str = "alice") -> int:
@@ -170,12 +167,8 @@ async def test_comment_floor_and_count(db: AsyncSession) -> None:
     item = await create_item(
         db, uid, ContentItemCreate(board_id=bid, title="t", content="c")
     )
-    c1 = await create_comment(
-        db, item.id, uid, ContentCommentCreate(content="一楼")
-    )
-    c2 = await create_comment(
-        db, item.id, uid, ContentCommentCreate(content="二楼")
-    )
+    c1 = await create_comment(db, item.id, uid, ContentCommentCreate(content="一楼"))
+    c2 = await create_comment(db, item.id, uid, ContentCommentCreate(content="二楼"))
     assert c1.floor_number == 1 and c2.floor_number == 2
 
     detail = await get_item(db, item.id)
@@ -189,10 +182,26 @@ async def test_publish_blog_item_idempotent(db: AsyncSession) -> None:
     uid = await _user(db)
     bid = await _make_board(db, "blog")
     cid1 = await publish_blog_item(
-        db, uid, board_id=bid, slug="post-1", title="博客一", content="hello", summary="s", cover=None, tags=[]
+        db,
+        uid,
+        board_id=bid,
+        slug="post-1",
+        title="博客一",
+        content="hello",
+        summary="s",
+        cover=None,
+        tags=[],
     )
     cid2 = await publish_blog_item(
-        db, uid, board_id=bid, slug="post-1", title="博客一v2", content="hello2", summary="s2", cover=None, tags=[]
+        db,
+        uid,
+        board_id=bid,
+        slug="post-1",
+        title="博客一v2",
+        content="hello2",
+        summary="s2",
+        cover=None,
+        tags=[],
     )
     assert cid1 == cid2  # 同 slug 幂等更新
     item = await db.get(ContentItem, cid1)

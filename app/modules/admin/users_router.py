@@ -3,7 +3,7 @@
 """
 
 import contextlib
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
@@ -147,7 +147,9 @@ async def admin_trend(
                 out[date.fromisoformat(r0[:10])] = int(r[1] or 0)
         return out
 
-    start = date.today() - timedelta(days=days - 1)
+    # 数据按 UTC 存储/分桶（func.date 解释 naive UTC 值），基准须用 UTC 的"今天"，
+    # 否则本地时区偏移（东8区凌晨）会让 start 与分桶错位一天。
+    start = datetime.now(UTC).date() - timedelta(days=days - 1)
     user_d = await _deltas(User.created_at)
     post_d = await _deltas(ForumPost.created_at)
 

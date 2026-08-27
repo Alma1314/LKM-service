@@ -112,9 +112,7 @@ class User(Base):
     content_items: Mapped[list[ContentItem]] = relationship(
         back_populates="author", foreign_keys="ContentItem.author_id"
     )
-    content_comments: Mapped[list[ContentComment]] = relationship(
-        back_populates="user"
-    )
+    content_comments: Mapped[list[ContentComment]] = relationship(back_populates="user")
     forum_posts: Mapped[list[ForumPost]] = relationship(back_populates="author")
     forum_comments: Mapped[list[ForumComment]] = relationship(back_populates="user")
     uploaded_files: Mapped[list[LibraryFile]] = relationship(back_populates="uploader")
@@ -123,13 +121,19 @@ class User(Base):
         back_populates="user"
     )
     following: Mapped[list[UserFollow]] = relationship(
-        back_populates="follower", foreign_keys="UserFollow.follower_id", cascade="all, delete-orphan"
+        back_populates="follower",
+        foreign_keys="UserFollow.follower_id",
+        cascade="all, delete-orphan",
     )
     followers: Mapped[list[UserFollow]] = relationship(
-        back_populates="following", foreign_keys="UserFollow.following_id", cascade="all, delete-orphan"
+        back_populates="following",
+        foreign_keys="UserFollow.following_id",
+        cascade="all, delete-orphan",
     )
     board_follows: Mapped[list[BoardFollow]] = relationship(
-        back_populates="follower", foreign_keys="BoardFollow.follower_id", cascade="all, delete-orphan"
+        back_populates="follower",
+        foreign_keys="BoardFollow.follower_id",
+        cascade="all, delete-orphan",
     )
 
 
@@ -336,7 +340,9 @@ class ContentItem(Base):
 
     __tablename__: str = "content_items"
     __table_args__: tuple[Any, ...] = (
-        Index("ix_content_board_type_status", "board_id", "content_type", "status", "id"),
+        Index(
+            "ix_content_board_type_status", "board_id", "content_type", "status", "id"
+        ),
         Index("ix_content_board_pinned", "board_id", "is_pinned", "id"),
         Index("ix_content_published", "published_at"),
         Index("ix_content_slug", "slug"),
@@ -371,9 +377,7 @@ class ContentItem(Base):
     lang: Mapped[str | None] = mapped_column(String(8), nullable=True)
     tags: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     # 状态：discussion 恒 published；其余支持 draft/pending/published/rejected
-    status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="published"
-    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="published")
     is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_featured: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # 互动计数（论坛完整模式）
@@ -397,9 +401,7 @@ class ContentItem(Base):
     )
     board: Mapped[Board] = relationship()
     column: Mapped[Column | None] = relationship()
-    qa_question: Mapped[QAQuestion | None] = relationship(
-        foreign_keys=[qa_question_id]
-    )
+    qa_question: Mapped[QAQuestion | None] = relationship(foreign_keys=[qa_question_id])
     comments: Mapped[list[ContentComment]] = relationship(
         back_populates="content_item", cascade="all, delete-orphan"
     )
@@ -1101,7 +1103,9 @@ class Board(Base):
     )
     posts: Mapped[list[ForumPost]] = relationship(back_populates="board")
     followers: Mapped[list[BoardFollow]] = relationship(
-        back_populates="board", foreign_keys="BoardFollow.board_id", cascade="all, delete-orphan"
+        back_populates="board",
+        foreign_keys="BoardFollow.board_id",
+        cascade="all, delete-orphan",
     )
 
 
@@ -1339,9 +1343,7 @@ class UserFollow(Base):
 
     __tablename__: str = "user_follows"
     __table_args__: tuple[UniqueConstraint, Index] = (
-        UniqueConstraint(
-            "follower_id", "following_id", name="uq_user_follows_pair"
-        ),
+        UniqueConstraint("follower_id", "following_id", name="uq_user_follows_pair"),
         Index("ix_user_follows_following_created", "following_id", "created_at"),
     )
 

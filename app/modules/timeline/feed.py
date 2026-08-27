@@ -50,9 +50,7 @@ async def _author_map(db: AsyncSession, user_ids: set[int]) -> dict[int, str]:
     if not user_ids:
         return {}
     result = await db.execute(
-        select(User)
-        .where(User.id.in_(user_ids))
-        .options(selectinload(User.profile))
+        select(User).where(User.id.in_(user_ids)).options(selectinload(User.profile))
     )
     out: dict[int, str] = {}
     for u in result.scalars().all():
@@ -74,14 +72,14 @@ def _before_conds(
         return []
     return [
         # created_at < before_time OR (created_at == before_time AND id < before_id)
-        (col_time < before_time)
-        | ((col_time == before_time) & (model_id < before_id))
+        (col_time < before_time) | ((col_time == before_time) & (model_id < before_id))
     ]
 
 
 # ---------------------------------------------------------------------------
 # Forum
 # ---------------------------------------------------------------------------
+
 
 async def _fetch_forum(
     db: AsyncSession,
@@ -95,11 +93,12 @@ async def _fetch_forum(
     # follow 模式：关注作者 或 关注版块；hot 模式不限制
     if author_ids is not None and board_ids is not None:
         conditions.append(
-            ForumPost.author_id.in_(author_ids)
-            | ForumPost.board_id.in_(board_ids)
+            ForumPost.author_id.in_(author_ids) | ForumPost.board_id.in_(board_ids)
         )
     if before_time is not None:
-        conditions.extend(_before_conds(ForumPost.created_at, ForumPost.id, before_time, before_id))
+        conditions.extend(
+            _before_conds(ForumPost.created_at, ForumPost.id, before_time, before_id)
+        )
     stmt = select(ForumPost)
     if conditions:
         stmt = stmt.where(*conditions)
@@ -134,6 +133,7 @@ def _forum_heat(r: Any) -> float:
 # Article（无作者外键：仅 hot，follow 时不参与）
 # ---------------------------------------------------------------------------
 
+
 async def _fetch_article(
     db: AsyncSession,
     author_ids: set[int] | None,
@@ -144,8 +144,15 @@ async def _fetch_article(
 ) -> list[FeedItem]:
     conditions: list[Any] = [Article.status == "published"]
     if before_time is not None:
-        conditions.extend(_before_conds(Article.created_at, Article.id, before_time, before_id))
-    stmt = select(Article).where(*conditions).order_by(Article.created_at.desc(), Article.id.desc()).limit(limit)
+        conditions.extend(
+            _before_conds(Article.created_at, Article.id, before_time, before_id)
+        )
+    stmt = (
+        select(Article)
+        .where(*conditions)
+        .order_by(Article.created_at.desc(), Article.id.desc())
+        .limit(limit)
+    )
     rows = (await db.execute(stmt)).scalars().all()
     return [
         FeedItem(
@@ -165,14 +172,13 @@ async def _fetch_article(
 
 
 def _article_heat(r: Article) -> float:
-    return math.log1p(
-        r.views + r.likes * 2 + r.comments * 3 + r.bookmarks * 4
-    )
+    return math.log1p(r.views + r.likes * 2 + r.comments * 3 + r.bookmarks * 4)
 
 
 # ---------------------------------------------------------------------------
 # Column
 # ---------------------------------------------------------------------------
+
 
 async def _fetch_column(
     db: AsyncSession,
@@ -186,8 +192,15 @@ async def _fetch_column(
     if author_ids is not None:
         conditions.append(ColumnPost.author_id.in_(author_ids))
     if before_time is not None:
-        conditions.extend(_before_conds(ColumnPost.created_at, ColumnPost.id, before_time, before_id))
-    stmt = select(ColumnPost).where(*conditions).order_by(ColumnPost.created_at.desc(), ColumnPost.id.desc()).limit(limit)
+        conditions.extend(
+            _before_conds(ColumnPost.created_at, ColumnPost.id, before_time, before_id)
+        )
+    stmt = (
+        select(ColumnPost)
+        .where(*conditions)
+        .order_by(ColumnPost.created_at.desc(), ColumnPost.id.desc())
+        .limit(limit)
+    )
     rows = (await db.execute(stmt)).scalars().all()
     names = await _author_map(db, {r.author_id for r in rows})
     return [
@@ -215,6 +228,7 @@ def _column_heat(r: ColumnPost) -> float:
 # QA
 # ---------------------------------------------------------------------------
 
+
 async def _fetch_qa(
     db: AsyncSession,
     author_ids: set[int] | None,
@@ -227,8 +241,15 @@ async def _fetch_qa(
     if author_ids is not None:
         conditions.append(QAQuestion.author_id.in_(author_ids))
     if before_time is not None:
-        conditions.extend(_before_conds(QAQuestion.created_at, QAQuestion.id, before_time, before_id))
-    stmt = select(QAQuestion).where(*conditions).order_by(QAQuestion.created_at.desc(), QAQuestion.id.desc()).limit(limit)
+        conditions.extend(
+            _before_conds(QAQuestion.created_at, QAQuestion.id, before_time, before_id)
+        )
+    stmt = (
+        select(QAQuestion)
+        .where(*conditions)
+        .order_by(QAQuestion.created_at.desc(), QAQuestion.id.desc())
+        .limit(limit)
+    )
     rows = (await db.execute(stmt)).scalars().all()
     names = await _author_map(db, {r.author_id for r in rows})
     return [
@@ -252,6 +273,7 @@ async def _fetch_qa(
 # Project
 # ---------------------------------------------------------------------------
 
+
 async def _fetch_project(
     db: AsyncSession,
     author_ids: set[int] | None,
@@ -264,8 +286,15 @@ async def _fetch_project(
     if author_ids is not None:
         conditions.append(Project.applicant_id.in_(author_ids))
     if before_time is not None:
-        conditions.extend(_before_conds(Project.created_at, Project.id, before_time, before_id))
-    stmt = select(Project).where(*conditions).order_by(Project.created_at.desc(), Project.id.desc()).limit(limit)
+        conditions.extend(
+            _before_conds(Project.created_at, Project.id, before_time, before_id)
+        )
+    stmt = (
+        select(Project)
+        .where(*conditions)
+        .order_by(Project.created_at.desc(), Project.id.desc())
+        .limit(limit)
+    )
     rows = (await db.execute(stmt)).scalars().all()
     names = await _author_map(db, {r.applicant_id for r in rows})
     return [

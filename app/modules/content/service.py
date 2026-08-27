@@ -84,14 +84,10 @@ async def _author_map(db: AsyncSession, user_ids: list[int]) -> dict[int, str]:
     return {u.id: _author_name(u) for u in users}
 
 
-async def _column_title_map(
-    db: AsyncSession, column_ids: list[int]
-) -> dict[int, str]:
+async def _column_title_map(db: AsyncSession, column_ids: list[int]) -> dict[int, str]:
     if not column_ids:
         return {}
-    result = await db.execute(
-        select(Column).where(Column.id.in_(set(column_ids)))
-    )
+    result = await db.execute(select(Column).where(Column.id.in_(set(column_ids))))
     columns = result.scalars().all()
     return {c.id: c.title for c in columns}
 
@@ -140,7 +136,9 @@ async def list_items(
     )
 
 
-async def get_item(db: AsyncSession, item_id: int, bump_view: bool = False) -> ContentItemInfo:
+async def get_item(
+    db: AsyncSession, item_id: int, bump_view: bool = False
+) -> ContentItemInfo:
     item = await get_or_raise(
         db, ContentItem, ContentErr.CONTENT_NOT_FOUND, ContentItem.id == item_id
     )

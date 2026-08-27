@@ -114,7 +114,9 @@ async def delete_content_item(
     return {"ok": True}
 
 
-@router.get("/items/{item_id}/comments", response_model=ApiResp[PageData[ContentCommentInfo]])
+@router.get(
+    "/items/{item_id}/comments", response_model=ApiResp[PageData[ContentCommentInfo]]
+)
 @respond
 async def get_content_comments(
     item_id: int,

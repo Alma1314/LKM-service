@@ -7,6 +7,7 @@
 运行时生成的 /redoc、/docs、/openapi.json 始终是最新契约，本脚本仅用于
 团队想要一份离线快照/做 diff 对比时手动刷新，不替代运行时文档。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -18,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from app.main import app
+
 DEFAULT_JSON = ROOT / "docs" / "openapi" / "auto.openapi.json"
 
 

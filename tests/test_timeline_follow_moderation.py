@@ -49,10 +49,14 @@ async def _board(db: AsyncSession, slug: str) -> int:
     return (await create_board_ex(db, BoardCreate(slug=slug, title=slug), None)).id
 
 
-async def _forum_post(db: AsyncSession, author_id: int, board_id: int, title: str) -> int:
+async def _forum_post(
+    db: AsyncSession, author_id: int, board_id: int, title: str
+) -> int:
     return (
         await create_post(
-            db, author_id, PostCreate(title=title, content=title + "内容", board_id=board_id)
+            db,
+            author_id,
+            PostCreate(title=title, content=title + "内容", board_id=board_id),
         )
     ).id
 
@@ -110,9 +114,7 @@ class TestFollow:
             await follow_service.follow_user(db, a, b)
             await follow_service.unfollow_user(db, a, b)
         # 软删行的唯一约束允许：最终一条活动 + 若干已删
-        rows = await db.execute(
-            select(UserFollow).where(UserFollow.follower_id == a)
-        )
+        rows = await db.execute(select(UserFollow).where(UserFollow.follower_id == a))
         assert list(rows.scalars())  # 有行存在
         assert await follow_service.get_following_ids(db, a) == []
 
@@ -186,9 +188,7 @@ class TestModeration:
         assert res_derank.penalty == pytest.approx(0.6)
 
     async def test_hide_removes_from_feed(self, db: AsyncSession) -> None:
-        await mod_service.create_rule(
-            db, RuleCreate(pattern="违禁词", action="hide")
-        )
+        await mod_service.create_rule(db, RuleCreate(pattern="违禁词", action="hide"))
         author = await _user(db, "alice")
         board = await _board(db, "tech")
         await _forum_post(db, author, board, "正常标题")
@@ -209,15 +209,15 @@ class TestModeration:
         await _forum_post(db, author, board, "普通标题")
         await _forum_post(db, author, board, "敏感标题")
         feed = await get_timeline(db, user_id=None, mode="hot", cursor=None, limit=20)
-        score = {it.title: it.sort_score for it in feed.items if it.item_type == "forum"}
+        score = {
+            it.title: it.sort_score for it in feed.items if it.item_type == "forum"
+        }
         assert score["敏感标题"] < score["普通标题"]
 
     async def test_admin_crud_and_version(self, db: AsyncSession) -> None:
         rule = await mod_service.create_rule(db, RuleCreate(pattern="x"))
         assert rule.id
-        updated = await mod_service.update_rule(
-            db, rule.id, RuleUpdate(pattern="y")
-        )
+        updated = await mod_service.update_rule(db, rule.id, RuleUpdate(pattern="y"))
         assert updated.pattern == "y"
         await mod_service.delete_rule(db, rule.id)
         rules = await mod_service.list_rules(db)
