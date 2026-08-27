@@ -46,6 +46,7 @@ NS_QA = Namespace(13, "qa")
 NS_PROJECTS = Namespace(14, "projects")
 NS_FOLLOW = Namespace(15, "follow")
 NS_MODERATION = Namespace(16, "moderation")
+NS_CONTENT = Namespace(17, "content")
 
 
 class CommonErr(ErrCode):

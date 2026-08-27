@@ -1,4 +1,4 @@
-"""幂等 seed：基础板块。用法 python -m app.modules.boards.seed。"""
+"""幂等 seed：基础板块（含父/子层级，供论坛板块广场嵌套展示）。用法 python -m app.modules.boards.seed。"""
 
 import asyncio
 
@@ -9,55 +9,87 @@ import app.modules.auth.models  # noqa: F401
 from app.db.models import Board
 from app.db.session import new_session
 
-_BASE_BOARDS = [
-    {
-        "slug": "math",
-        "title": "数学",
-        "description": "数学讨论与答疑",
-        "is_public": True,
+# 父分类 → 子板块。parent_id 为空者为一级大类，子板块挂到对应父板块 slug。
+_BOARDS_SPEC = {
+    "basic-science": {
+        "title": "基础学科",
+        "description": "数学、物理、化学、生物等基础学科",
+        "children": ["math", "physics", "chemistry", "biology", "cosmos-astronomy"],
     },
-    {
-        "slug": "physics",
-        "title": "物理",
-        "description": "物理讨论与答疑",
-        "is_public": True,
+    "applied-science": {
+        "title": "应用学科",
+        "description": "计算机、工程、医学等应用学科",
+        "children": ["computer", "engineering", "medicine"],
     },
-    {
-        "slug": "chemistry",
-        "title": "化学",
-        "description": "化学讨论与答疑",
-        "is_public": True,
+    "language": {
+        "title": "语言学习",
+        "description": "英语、俄语、日语等多语言学习",
+        "children": ["lang-en", "lang-ja", "lang-ru"],
     },
-    {
-        "slug": "biology",
-        "title": "生物",
-        "description": "生物讨论与答疑",
-        "is_public": True,
+    "hobby": {
+        "title": "兴趣爱好",
+        "description": "棋类、音乐、游戏等兴趣板块",
+        "children": ["hobby-chess", "hobby-music", "hobby-game"],
     },
-    {
-        "slug": "computer",
-        "title": "计算机",
-        "description": "编程与计算机科学",
-        "is_public": True,
-    },
-    {
-        "slug": "platform",
+    "platform": {
         "title": "平台讨论",
         "description": "社区规则、意见与帮助",
-        "is_public": True,
+        "children": [],
     },
-]
+    "official": {
+        "title": "官方发布",
+        "description": "官方文章、公告与新闻",
+        "children": ["official-news", "official-announcement"],
+    },
+}
+
+_CHILD_TITLES = {
+    "math": "数学",
+    "physics": "物理",
+    "chemistry": "化学",
+    "biology": "生物",
+    "cosmos-astronomy": "宇宙天文",
+    "computer": "计算机",
+    "engineering": "工程",
+    "medicine": "医学",
+    "lang-en": "英语",
+    "lang-ja": "日语",
+    "lang-ru": "俄语",
+    "hobby-chess": "棋艺",
+    "hobby-music": "音乐",
+    "hobby-game": "游戏",
+    "official-news": "新闻",
+    "official-announcement": "公告",
+}
 
 
 async def seed_boards(db: AsyncSession) -> int:
     created = 0
-    for spec in _BASE_BOARDS:
-        exists = await db.scalar(select(Board.id).where(Board.slug == spec["slug"]))
-        if exists is not None:
-            continue
-        db.add(Board(**spec))
-        await db.flush()
-        created += 1
+    for parent_slug, spec in _BOARDS_SPEC.items():
+        parent = await db.scalar(select(Board).where(Board.slug == parent_slug))
+        if parent is None:
+            parent = Board(
+                slug=parent_slug,
+                title=spec["title"],
+                description=spec["description"],
+            )
+            db.add(parent)
+            await db.flush()
+            created += 1
+        for child_slug in spec["children"]:
+            exists = await db.scalar(select(Board).where(Board.slug == child_slug))
+            if exists is not None:
+                continue
+            db.add(
+                Board(
+                    slug=child_slug,
+                    title=_CHILD_TITLES.get(child_slug, child_slug),
+                    description="",
+                    parent_id=parent.id,
+                )
+            )
+            await db.flush()
+            created += 1
     return created
 
 

@@ -109,6 +109,12 @@ class User(Base):
         back_populates="user"
     )
     blog_series: Mapped[list[BlogSeries]] = relationship(back_populates="owner")
+    content_items: Mapped[list[ContentItem]] = relationship(
+        back_populates="author", foreign_keys="ContentItem.author_id"
+    )
+    content_comments: Mapped[list[ContentComment]] = relationship(
+        back_populates="user"
+    )
     forum_posts: Mapped[list[ForumPost]] = relationship(back_populates="author")
     forum_comments: Mapped[list[ForumComment]] = relationship(back_populates="user")
     uploaded_files: Mapped[list[LibraryFile]] = relationship(back_populates="uploader")
@@ -318,6 +324,131 @@ class ForumPostLike(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
     )
+
+
+class ContentItem(Base):
+    """统一内容表：五套旧内容表（forum_posts/articles/column_posts/blog 发布产物）收敛。
+
+    用 ``content_type`` 判别（discussion/article/column_post/blog_post），``board_id``
+    作唯一分类轴，``author_id``（user FK）与 ``publisher``/``department``（官方字符串）
+    二选一表达作者身份。``column_id`` 指向连载容器（仅 column_post 用）。
+    """
+
+    __tablename__: str = "content_items"
+    __table_args__: tuple[Any, ...] = (
+        Index("ix_content_board_type_status", "board_id", "content_type", "status", "id"),
+        Index("ix_content_board_pinned", "board_id", "is_pinned", "id"),
+        Index("ix_content_published", "published_at"),
+        Index("ix_content_slug", "slug"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    content_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    # 统一分类轴
+    board_id: Mapped[int] = mapped_column(ForeignKey("boards.id"), nullable=False)
+    # 作者：user FK 与官方字符串二选一
+    author_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    publisher: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    department: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # 专栏连载容器（仅 column_post）
+    column_id: Mapped[int | None] = mapped_column(
+        ForeignKey("columns.id"), nullable=True, index=True
+    )
+    slug: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # 内容本体
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    excerpt: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    cover: Mapped[str | None] = mapped_column(Text, nullable=True)
+    keywords: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lang: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    tags: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    # 状态：discussion 恒 published；其余支持 draft/pending/published/rejected
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="published"
+    )
+    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_featured: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # 互动计数（论坛完整模式）
+    view_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    like_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    comment_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    bookmark_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    forward_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
+    )
+    published_at: Mapped[datetime.datetime | None] = mapped_column(
+        UTCDateTime, nullable=True
+    )
+
+    author: Mapped[User | None] = relationship(
+        back_populates="content_items", foreign_keys=[author_id]
+    )
+    board: Mapped[Board] = relationship()
+    column: Mapped[Column | None] = relationship()
+    comments: Mapped[list[ContentComment]] = relationship(
+        back_populates="content_item", cascade="all, delete-orphan"
+    )
+    like_records: Mapped[list[ContentLike]] = relationship(
+        back_populates="content", cascade="all, delete-orphan"
+    )
+
+
+class ContentComment(Base):
+    """统一内容评论（对齐原 forum_comments 的完整模式：floor_number/parent_id/like_count）。"""
+
+    __tablename__: str = "content_comments"
+    __table_args__: tuple[Any, ...] = (
+        Index("ix_content_comments_item_floor", "content_id", "floor_number"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    content_id: Mapped[int] = mapped_column(
+        ForeignKey("content_items.id"), nullable=False
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    floor_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("content_comments.id"), nullable=True
+    )
+    like_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+
+    content_item: Mapped[ContentItem] = relationship(back_populates="comments")
+    user: Mapped[User] = relationship(back_populates="content_comments")
+    parent: Mapped[ContentComment | None] = relationship(
+        remote_side=[id], back_populates="replies"
+    )
+    replies: Mapped[list[ContentComment]] = relationship(
+        back_populates="parent", cascade="all, delete-orphan"
+    )
+
+
+class ContentLike(Base):
+    """统一内容点赞记录，复合主键保证同一用户对同一内容最多一条（点赞幂等）。"""
+
+    __tablename__: str = "content_likes"
+
+    content_id: Mapped[int] = mapped_column(
+        ForeignKey("content_items.id"), primary_key=True
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+
+    content: Mapped[ContentItem] = relationship(back_populates="like_records")
+    user: Mapped[User] = relationship()
 
 
 class LibraryFile(Base):
@@ -932,6 +1063,10 @@ class Board(Base):
     title: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # 子板块挂父板块（板块广场嵌套展示：父=大分类，子=细分板块）
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("boards.id"), nullable=True, index=True
+    )
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="active"
     )  # active | inactive
@@ -951,6 +1086,12 @@ class Board(Base):
     )
 
     owner: Mapped[User | None] = relationship(foreign_keys=[owner_id])
+    parent: Mapped[Board | None] = relationship(
+        remote_side=[id], back_populates="children"
+    )
+    children: Mapped[list[Board]] = relationship(
+        back_populates="parent", cascade="all, delete-orphan"
+    )
     posts: Mapped[list[ForumPost]] = relationship(back_populates="board")
     followers: Mapped[list[BoardFollow]] = relationship(
         back_populates="board", foreign_keys="BoardFollow.board_id", cascade="all, delete-orphan"

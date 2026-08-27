@@ -49,6 +49,7 @@ async def create_board_ex(
         title=info.title,
         description=info.description,
         owner_id=owner_id,
+        parent_id=info.parent_id,
         require_certified=info.require_certified,
         daily_post_limit=info.daily_post_limit,
         is_public=info.is_public,
