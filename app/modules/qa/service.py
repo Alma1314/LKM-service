@@ -12,7 +12,13 @@ from app.core.cache import (
     make_key,
 )
 from app.core.err import BizError
-from app.db.models import QAAnswer, QAQuestion, QAQuestionImage
+from app.db.models import (
+    Board,
+    ContentItem,
+    QAAnswer,
+    QAQuestion,
+    QAQuestionImage,
+)
 from app.db.repo import get_or_raise
 from app.modules.common import PageData, paginate_offset, paginate_pages
 from app.modules.points.rules import enqueue_points_event
@@ -52,9 +58,50 @@ async def create_question(
     if info.images:
         for i, url in enumerate(info.images):
             db.add(QAQuestionImage(question_id=q.id, url=url, sort=i))
+    # 论坛可见：QA 提问同步落一条 content_items（content_type='qa'，挂 qa board）
+    await _sync_question_content_item(db, author_id, q)
     await db.flush()
     await bump_collection_version("qa")
     return _question_to_schema(q)
+
+
+async def _ensure_qa_board(db: AsyncSession) -> int:
+    """确保存在 qa 板块（统一分类轴），QA 提问的论坛条目挂到它。"""
+    existing = await db.scalar(select(Board.id).where(Board.slug == "qa"))
+    if existing is not None:
+        return existing
+    board = Board(slug="qa", title="问答", description="用户提问与解答")
+    db.add(board)
+    await db.flush()
+    return board.id
+
+
+async def _sync_question_content_item(
+    db: AsyncSession, author_id: int, q: QAQuestion
+) -> None:
+    """QA 提问同步为论坛可见条目（content_items，content_type='qa'）。"""
+    board_id = await _ensure_qa_board(db)
+    item = ContentItem(
+        content_type="qa",
+        board_id=board_id,
+        author_id=author_id,
+        qa_question_id=q.id,
+        title=q.title,
+        excerpt=_plain(q.content or q.situation),
+        content=q.content,
+        tags="[]",
+        status="published",
+    )
+    db.add(item)
+    await db.flush()
+
+
+def _plain(text: str, limit: int = 150) -> str:
+    """提取纯文本摘要（去空白/HTML 残留）。"""
+    import re
+
+    t = re.sub(r"\s+", " ", text).strip()
+    return t[:limit].rstrip() + ("..." if len(t) > limit else "")
 
 
 async def list_questions(

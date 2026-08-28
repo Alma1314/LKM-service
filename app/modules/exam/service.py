@@ -361,17 +361,18 @@ async def list_certificates(db: AsyncSession, user_id: int) -> list[CertificateO
 
 
 async def leaderboard(
-    db: AsyncSession, exam_id: int, limit: int = 50
-) -> list[LeaderboardEntry]:
-    """按认证通过成绩排序的榜单（正式竞赛用）。
+    db: AsyncSession, exam_id: int, offset: int = 0, limit: int = 50
+) -> tuple[list[LeaderboardEntry], int]:
+    """按认证通过成绩排序的榜单（正式竞赛用），分页。
 
     竞赛允许重考，一名用户可能有多张通过证书。这里按用户取最高分
     （同分取最早 issued_at），保证每名用户只出现在榜单一次。
+    **分页为全量排序后偏移切片**，保证排名连续；返回 ``(items, total)``。
     """
     exam = await get_or_raise(db, Exam, ExamErr.EXAM_NOT_FOUND, Exam.id == exam_id)
     if exam.type != "competition":
         # 认证考试默认不开放公开榜单，仅返回空（按 spec：认证成绩个人可见）。
-        return []
+        return [], 0
     rows = (
         await db.execute(
             select(ExamCertificate, User.username, Profile.nickname)
@@ -391,12 +392,17 @@ async def leaderboard(
         key=lambda row: (row[0].score, -row[0].issued_at.timestamp()),
         reverse=True,
     )
-    return [
-        LeaderboardEntry(
-            user_id=cert.user_id,
-            display_name=nickname or username or "",
-            score=cert.score,
-            certified=cert.passed,
-        )
-        for cert, username, nickname in winners[:limit]
-    ]
+    total = len(winners)
+    page_rows = winners[offset : offset + limit]
+    return (
+        [
+            LeaderboardEntry(
+                user_id=cert.user_id,
+                display_name=nickname or username or "",
+                score=cert.score,
+                certified=cert.passed,
+            )
+            for cert, username, nickname in page_rows
+        ],
+        total,
+    )

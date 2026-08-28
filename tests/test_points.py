@@ -194,10 +194,11 @@ class TestLeaderboard:
         b = await _user(db, "b", "乙")
         await reward(db, a, 50, "test", "l", "1")
         await reward(db, b, 100, "test", "l", "2")
-        lb = await leaderboard(db)
-        assert lb[0].user_id == b  # 乙 100 最高
-        assert lb[0].display_name == "乙"
-        assert lb[1].user_id == a
+        items, total = await leaderboard(db)
+        assert total == 2
+        assert items[0].user_id == b  # 乙 100 最高
+        assert items[0].display_name == "乙"
+        assert items[1].user_id == a
 
     async def test_leaderboard_tiebreak_by_display_name(self, db: AsyncSession):
         """余额相等时按 display_name（昵称）字典序升序排。"""
@@ -205,9 +206,9 @@ class TestLeaderboard:
         b = await _user(db, "bbb", "Apple")
         await reward(db, a, 50, "test", "tb", "1")
         await reward(db, b, 50, "test", "tb", "2")
-        lb = await leaderboard(db)
-        assert lb[0].user_id == b and lb[0].display_name == "Apple"  # Apple < Zebra
-        assert lb[1].user_id == a and lb[1].display_name == "Zebra"
+        items, _total = await leaderboard(db)
+        assert items[0].user_id == b and items[0].display_name == "Apple"  # Apple < Zebra
+        assert items[1].user_id == a and items[1].display_name == "Zebra"
 
     async def test_ledger_pagination(self, db: AsyncSession):
         uid = await _user(db)
@@ -227,4 +228,9 @@ class TestRouter:
     async def test_leaderboard_public(self, client, db):
         resp = await client.get("/api/v1/points/leaderboard")
         assert resp.status_code == 200
-        assert resp.json()["code"] == 0
+        body = resp.json()
+        assert body["code"] == 0
+        data = body["data"]
+        # 已统一为 PageData（含 items/total/page/pages）并带 X-Total 头
+        assert "items" in data and "total" in data
+        assert resp.headers.get("X-Total") == str(data["total"])

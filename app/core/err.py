@@ -36,7 +36,6 @@ NS_COLUMNS = Namespace(2, "columns")
 NS_BLOG = Namespace(3, "blog")
 NS_FORUM = Namespace(4, "forum")
 NS_FILES = Namespace(5, "files")
-NS_MEMBERS = Namespace(6, "members")
 NS_STARHOPE = Namespace(7, "starhope")
 NS_ARTICLES = Namespace(8, "articles")
 NS_STORAGE = Namespace(9, "storage")
@@ -47,6 +46,7 @@ NS_QA = Namespace(13, "qa")
 NS_PROJECTS = Namespace(14, "projects")
 NS_FOLLOW = Namespace(15, "follow")
 NS_MODERATION = Namespace(16, "moderation")
+NS_CONTENT = Namespace(17, "content")
 
 
 class CommonErr(ErrCode):

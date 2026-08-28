@@ -1,3 +1,4 @@
+from math import ceil
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
@@ -143,12 +144,15 @@ async def my_certificates(
 
 
 @router.get(
-    "/{exam_id}/leaderboard", response_model=ApiResp[ListData[LeaderboardEntry]]
+    "/{exam_id}/leaderboard", response_model=ApiResp[PageData[LeaderboardEntry]]
 )
 @respond
 async def exam_leaderboard(
     exam_id: int,
-    limit: int = Query(50, ge=1, le=100),
+    pag: PaginateParams = Depends(PaginateDep()),
     db: AsyncSession = Depends(get_read_session),
-) -> dict[str, Any]:
-    return {"items": await leaderboard(db, exam_id, limit=limit)}
+) -> PageData[LeaderboardEntry]:
+    items, total = await leaderboard(db, exam_id, offset=pag.offset, limit=pag.limit)
+    return PageData(
+        items=items, total=total, page=pag.page, pages=ceil(total / pag.limit)
+    )

@@ -20,6 +20,10 @@ class Permission(StrEnum):
     forum_post_like = "forum.post_like"
     forum_comment_create = "forum.comment_create"
     forum_view_hidden = "forum.view_hidden"
+    # content 域（统一内容模型）
+    content_create = "content.create"
+    content_comment_create = "content.comment_create"
+    content_like = "content.like"
     # boards 域
     boards_create_application = "boards.create_application"
     boards_review_application = "boards.review_application"
@@ -53,6 +57,7 @@ class Permission(StrEnum):
     board_owner_manage = "board.owner_manage"
     forum_owner_delete = "forum.owner_delete"
     forum_owner_comment_delete = "forum.owner_comment_delete"
+    content_owner_delete = "content.owner_delete"
     file_owner_delete = "file.owner_delete"
     file_owner_update = "file.owner_update"
     project_owner_update = "project.owner_update"
@@ -83,6 +88,9 @@ DEFAULT_GRANTS: dict[str, tuple[Grant, ...]] = {
         Grant(Permission.forum_post_create),
         Grant(Permission.forum_post_like),
         Grant(Permission.forum_comment_create),
+        Grant(Permission.content_create),
+        Grant(Permission.content_comment_create),
+        Grant(Permission.content_like),
         Grant(Permission.boards_create_application),
         Grant(Permission.columns_application_create),
         Grant(Permission.files_upload),
@@ -95,6 +103,9 @@ DEFAULT_GRANTS: dict[str, tuple[Grant, ...]] = {
         Grant(Permission.forum_post_create),
         Grant(Permission.forum_post_like),
         Grant(Permission.forum_comment_create),
+        Grant(Permission.content_create),
+        Grant(Permission.content_comment_create),
+        Grant(Permission.content_like),
         Grant(Permission.boards_create_application),
         Grant(Permission.columns_application_create),
         Grant(Permission.columns_publish),
@@ -108,6 +119,9 @@ DEFAULT_GRANTS: dict[str, tuple[Grant, ...]] = {
         Grant(Permission.forum_post_create),
         Grant(Permission.forum_post_like),
         Grant(Permission.forum_comment_create),
+        Grant(Permission.content_create),
+        Grant(Permission.content_comment_create),
+        Grant(Permission.content_like),
         Grant(Permission.boards_create_application),
         Grant(Permission.columns_application_create),
         Grant(Permission.columns_publish),
@@ -122,6 +136,9 @@ DEFAULT_GRANTS: dict[str, tuple[Grant, ...]] = {
         Grant(Permission.forum_post_create),
         Grant(Permission.forum_post_like),
         Grant(Permission.forum_comment_create),
+        Grant(Permission.content_create),
+        Grant(Permission.content_comment_create),
+        Grant(Permission.content_like),
         Grant(Permission.boards_create_application),
         Grant(Permission.columns_application_create),
         Grant(Permission.files_upload),
@@ -137,6 +154,9 @@ DEFAULT_GRANTS: dict[str, tuple[Grant, ...]] = {
         Grant(Permission.forum_post_create),
         Grant(Permission.forum_post_like),
         Grant(Permission.forum_comment_create),
+        Grant(Permission.content_create),
+        Grant(Permission.content_comment_create),
+        Grant(Permission.content_like),
         Grant(Permission.files_upload),
         Grant(Permission.files_download),
         Grant(Permission.boards_create_application),
@@ -164,6 +184,7 @@ DEFAULT_GRANTS: dict[str, tuple[Grant, ...]] = {
         Grant(Permission.column_owner_publish),
         Grant(Permission.forum_owner_delete),
         Grant(Permission.forum_owner_comment_delete),
+        Grant(Permission.content_owner_delete),
         Grant(Permission.file_owner_delete),
         Grant(Permission.file_owner_update),
         Grant(Permission.project_owner_update),

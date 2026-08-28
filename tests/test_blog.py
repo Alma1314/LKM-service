@@ -869,11 +869,11 @@ slug: {slug}
         data = resp.json()["data"]
         assert data["slug"] == "hello-pub"
         assert data["title"] == "Hello Pub"
-        assert data["category_title"] == "engineering"
+        assert data["content_type"] == "blog_post"
         assert data["tags"] == ["python", "test"]
 
-        # 发布后可从 articles 详情读回
-        got = await client.get(f"/api/v1/articles/{data['slug']}")
+        # 发布后可从统一内容详情读回
+        got = await client.get(f"/api/v1/content/by-slug/{data['slug']}")
         assert got.status_code == 200
         gdata = got.json()["data"]
         assert gdata["title"] == "Hello Pub"
@@ -908,13 +908,13 @@ slug: {slug}
         assert r2.status_code == 200
         assert r2.json()["data"]["slug"] == slug
 
-        got = await client.get(f"/api/v1/articles/{slug}")
+        got = await client.get(f"/api/v1/content/by-slug/{slug}")
         assert got.status_code == 200
         gdata = got.json()["data"]
         assert gdata["content"] == new_content
 
         # 同一 slug 仍是唯一记录（列表里只有一条）
-        page = await client.get("/api/v1/articles")
+        page = await client.get("/api/v1/content/items")
         items = page.json()["data"]["items"]
         same_slug = [i for i in items if i["slug"] == slug]
         assert len(same_slug) == 1
@@ -946,8 +946,9 @@ slug: {slug}
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["slug"] == "from-override"
-        assert data["category_title"] == "life"
         assert data["tags"] == ["override-tag"]
+        # category override 映射为板块（life）
+        assert data["board_id"] is not None
 
     async def should_reject_publish_by_non_owner(
         self, client: AsyncClient, db: AsyncSession

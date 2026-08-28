@@ -201,3 +201,39 @@ class TestPermission:
         assert body["data"]["total"] == 1
         # 统一分页依赖自动附加 X-Total 头（与 body total 一致）
         assert resp.headers["X-Total"] == "1"
+
+
+class TestQuestionForumSync:
+    """QA 提问同步为论坛内容条目（content_items content_type='qa'）。"""
+
+    async def test_create_question_syncs_content_item(self, db: AsyncSession) -> None:
+        from app.db.models import ContentItem
+
+        asker = await _user(db, "syncasker")
+        q = await create_question(
+            db,
+            asker,
+            QuestionCreate(
+                title="同步题目",
+                situation="情况",
+                content="内容",
+                bounty_people=1,
+                bounty_per_person=0,
+            ),
+        )
+        # 论坛条目已生成，指向该提问
+        item = (
+            (
+                await db.execute(
+                    select(ContentItem).where(
+                        ContentItem.content_type == "qa",
+                        ContentItem.qa_question_id == q.id,
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        assert item is not None
+        assert item.title == "同步题目"
+        assert item.author_id == asker

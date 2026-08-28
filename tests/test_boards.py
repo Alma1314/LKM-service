@@ -137,3 +137,38 @@ class TestBoardService:
         with pytest.raises(BizError) as e:
             await check_post_allowed(db, b.id, user)
         assert e.value.errcode == BoardErr.DAILY_POST_LIMIT_REACHED
+
+
+class TestBoardHierarchy:
+    """板块父/子层级：子板块挂父板块，板块广场可嵌套展示。"""
+
+    async def test_create_child_under_parent(self, db: AsyncSession) -> None:
+        owner = await _user(db, "h")
+        parent = await create_board_ex(
+            db, BoardCreate(slug="basic-science", title="基础学科"), owner
+        )
+        child = await create_board_ex(
+            db,
+            BoardCreate(slug="math", title="数学", parent_id=parent.id),
+            owner,
+        )
+        assert child.parent_id == parent.id
+
+        board = await db.get(Board, child.id)
+        assert board.parent_id == parent.id
+        parent_rel = await db.get(Board, board.parent_id)
+        assert parent_rel is not None and parent_rel.slug == "basic-science"
+
+    async def test_board_out_exposes_parent_id(self, db: AsyncSession) -> None:
+        owner = await _user(db, "hp")
+        parent = await create_board_ex(
+            db, BoardCreate(slug="applied-science", title="应用学科"), owner
+        )
+        child = await create_board_ex(
+            db,
+            BoardCreate(slug="computer", title="计算机", parent_id=parent.id),
+            owner,
+        )
+        assert child.parent_id == parent.id
+        # 父板块 parent_id 为空
+        assert parent.parent_id is None

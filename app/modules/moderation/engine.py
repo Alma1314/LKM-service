@@ -115,6 +115,31 @@ def evaluate(text: str, rules: list[Rule]) -> ModerationResult:
     return ModerationResult(penalty=penalty, should_hide=should_hide)
 
 
+def evaluate_with_matches(
+    text: str, rules: list[Rule]
+) -> tuple[ModerationResult, list[Rule]]:
+    """对内容文本评估并返回**命中的规则**（供规则测试端点展示命中明细）。
+
+    与 ``evaluate`` 同语义（hide 即隐藏、derank 累加权重封顶 1.0），额外把
+    命中的规则原样收集返回。
+    """
+    if not rules or not text:
+        return ModerationResult(penalty=0.0, should_hide=False), []
+    penalty = 0.0
+    should_hide = False
+    matched: list[Rule] = []
+    lower = text.lower()
+    for r in rules:
+        if not _match_rule(r, lower):
+            continue
+        matched.append(r)
+        if r.action == "hide":
+            should_hide = True
+        else:
+            penalty = min(1.0, penalty + max(0.0, r.weight))
+    return ModerationResult(penalty=penalty, should_hide=should_hide), matched
+
+
 def _match_rule(rule: Rule, text: str) -> bool:
     """命中判定：正则走 re.search；否则大小写不敏感子串匹配。"""
     pattern = rule.pattern or ""

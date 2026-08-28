@@ -8,22 +8,17 @@ from sqlalchemy.orm import selectinload
 
 from app.core.err import BizError, CommonErr
 from app.db.models import (
-    Article,
-    ArticleCategory,
     BlogComment,
     BlogContent,
     BlogRepoQuarantine,
     BlogSeries,
     BlogStar,
+    Board,
     Profile,
     now_iso,
 )
 from app.db.repo import get_or_raise, get_profiles_by_user_ids
-from app.modules.articles.schemas import CategoryCreate
-from app.modules.articles.service import (
-    create_article as _create_article_alias,
-)
-from app.modules.articles.service import create_category_ex as _create_category_ex
+from app.modules.content.service import publish_blog_item
 from app.modules.auth.schemas import ProfileInfo
 from app.modules.blog import git_svc
 from app.modules.blog.errors import BlogErr
@@ -563,19 +558,15 @@ async def write_series_file(
 # ---- publish ----
 
 
-async def _ensure_category(db: AsyncSession, slug: str) -> str:
-    """blog 发布时按 slug 解析文章分类；不存在则自动建并返回 slug。
-
-    分类已从自由字符串改为 category_id FK，但 blog 前端发布分类是自由标签
-    （engineering 为默认），须保证对应 ArticleCategory 存在，否则 publish 会
-    因 CATEGORY_NOT_FOUND 失败。返回原 slug 供 create_article 内部解析。
-    """
-    exists = await db.scalar(
-        select(ArticleCategory.id).where(ArticleCategory.slug == slug)
-    )
-    if exists is None:
-        await _create_category_ex(db, CategoryCreate(slug=slug, title=slug))
-    return slug
+async def _ensure_board(db: AsyncSession, slug: str) -> int:
+    """blog 发布时按 slug 解析板块（统一分类轴）；不存在则自动建并返回 board_id。"""
+    existing = await db.scalar(select(Board.id).where(Board.slug == slug))
+    if existing is not None:
+        return existing
+    board = Board(slug=slug, title=slug, description="auto-created for blog publish")
+    db.add(board)
+    await db.flush()
+    return board.id
 
 
 async def publish_series_file(
@@ -584,8 +575,11 @@ async def publish_series_file(
     user_id: int,
     filepath: str,
     override: dict[str, Any] | None = None,
-) -> Article:
-    """把 series 指定 MDX 读出来、解析 frontmatter、落库为 Article（幂等更新）。"""
+) -> int:
+    """把 series 指定 MDX 读出来、解析 frontmatter、落库为 content_items（blog_post，幂等更新）。
+
+    返回统一内容项 id；category 前端自由标签映射为 boards（get-or-create）。
+    """
     series = await get_or_raise(
         db, BlogSeries, BlogErr.SERIES_NOT_FOUND, BlogSeries.id == series_id
     )
@@ -602,39 +596,21 @@ async def publish_series_file(
     slug = str(raw_slug).removesuffix(".mdx").removesuffix(".md")
     first_line = content.split("\n", 1)[0].replace("# ", "").strip()
     title = str(override.get("title") or fm.get("title") or first_line or slug)
-    category_slug = str(override.get("category") or fm.get("category") or "engineering")
+    category_slug = str(override.get("category") or fm.get("category") or "blog")
     tags = [
         str(t) for t in cast("list[Any]", override.get("tags") or fm.get("tags") or [])
     ]
     description = override.get("description") or fm.get("description")
 
-    # 分类已改 category_id FK：blog 前端分类是自由标签，需解析为已存在分类；
-    # 不存在则按 slug 自动建（get-or-create），避免 publish 因缺分类而失败。
-    category = await _ensure_category(db, category_slug)
-
-    article = await _create_article_alias(
+    board_id = await _ensure_board(db, category_slug)
+    return await publish_blog_item(
         db,
+        user_id,
+        board_id=board_id,
         slug=slug,
         title=title,
-        category=category,
         content=content,
+        summary=description,
+        cover=None,
         tags=tags,
-        description=description,
     )
-    # flush 后创建的 Article 未预载 tags 关系，返回前重新查询带上 tags，
-    # 避免 router 在 async 懒加载时触发 MissingGreenlet。
-    # 先显式 flush：_create_article_alias 仅 flush 了 Tag 行，ArticleTag 关联行
-    # 仍 pending（测试会话 autoflush=False），不 flush 则下面 selectinload 读不到。
-    await db.flush()
-    loaded = (
-        (
-            await db.execute(
-                select(Article)
-                .where(Article.id == article.id)
-                .options(selectinload(Article.tags))
-            )
-        )
-        .scalars()
-        .first()
-    )
-    return loaded or article

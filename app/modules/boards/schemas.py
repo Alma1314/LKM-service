@@ -8,6 +8,7 @@ class BoardCreate(BaseModel):
     slug: str = Field(..., min_length=1, max_length=50, pattern=r"^[a-z0-9-]+$")
     title: str = Field(..., min_length=1, max_length=100)
     description: str = Field(default="", max_length=500)
+    parent_id: int | None = Field(default=None, ge=1)
     require_certified: bool = False
     daily_post_limit: int = Field(default=0, ge=0)
     is_public: bool = True
@@ -20,6 +21,7 @@ class BoardOut(BaseModel):
     slug: str
     title: str
     description: str = ""
+    parent_id: int | None = None
     owner_id: int | None = None
     status: str
     require_certified: bool
@@ -31,6 +33,7 @@ class BoardOut(BaseModel):
 class BoardUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=500)
+    parent_id: int | None = Field(default=None, ge=1)
     require_certified: bool | None = None
     daily_post_limit: int | None = Field(default=None, ge=0)
     is_public: bool | None = None

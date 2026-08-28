@@ -27,7 +27,6 @@ def _ensure_models() -> None:
     import app.modules.columns.models
     import app.modules.files.models
     import app.modules.forum.models
-    import app.modules.members.models  # noqa: F401  Profile 等
 
     # 确保 User.profile 等本文件内定义的 relationship target 也完成解析
     from app.db.models import Base

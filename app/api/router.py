@@ -15,14 +15,13 @@ from app.modules.blog.git_http import git_router
 from app.modules.blog.router import router as blog_router
 from app.modules.boards.router import router as boards_router
 from app.modules.columns.router import router as columns_router
+from app.modules.content.router import router as content_router
 from app.modules.exam.router import router as exam_router
 from app.modules.files.notify import router as files_notify_router
 from app.modules.files.router import router as files_router
 from app.modules.follow.router import board_follow_router, user_follow_router
 from app.modules.forum.router import router as forum_router
 from app.modules.health.router import router as health_router
-from app.modules.members.avatar_router import router as avatars_router
-from app.modules.members.router import router as members_router
 from app.modules.moderation.admin_router import router as moderation_admin_router
 from app.modules.points.router import router as points_router
 from app.modules.projects.router import router as projects_router
@@ -33,8 +32,6 @@ from app.ws.router import router as ws_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
-api_router.include_router(members_router)
-api_router.include_router(avatars_router)
 api_router.include_router(admin_router)
 api_router.include_router(admin_content_router)
 api_router.include_router(admin_data_router)
@@ -48,6 +45,7 @@ api_router.include_router(auth_settings_router)
 api_router.include_router(boards_router)
 api_router.include_router(board_follow_router)
 api_router.include_router(columns_router)
+api_router.include_router(content_router)
 api_router.include_router(exam_router)
 api_router.include_router(forum_router)
 api_router.include_router(files_router)
