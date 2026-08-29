@@ -246,8 +246,7 @@ async def check_post_allowed(db: AsyncSession, board_id: int, user_id: int) -> N
         if passed is None:
             raise BizError(BoardErr.CERTIFICATION_REQUIRED)
     if board.daily_post_limit > 0:
-        from app.db.models import ContentItem
-        from app.modules.content.models import ContentType
+        from app.db.models import ContentItem, ContentType
 
         today_start = now_iso().replace(hour=0, minute=0, second=0, microsecond=0)
         cnt = (

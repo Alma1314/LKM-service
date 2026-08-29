@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
-from app.db.models import ContentItem, LibraryFile, User
+from app.db.models import ContentItem, ContentType, LibraryFile, User
 from app.db.session import get_read_session
 from app.modules.auth.deps import CurrentUser
 from app.modules.common import (
@@ -22,7 +22,6 @@ from app.modules.common import (
     PaginateParams,
     paginate_pages,
 )
-from app.modules.content.models import ContentType
 from app.modules.rbac.permissions import Permission
 
 from .deps import require_admin

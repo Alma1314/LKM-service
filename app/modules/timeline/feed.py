@@ -27,11 +27,11 @@ from app.db.models import (
     ColumnPost,
     ColumnPostStatus,
     ContentItem,
+    ContentStatus,
     Project,
     QAQuestion,
     User,
 )
-from app.modules.content.models import ContentStatus
 from app.modules.timeline.schemas import FeedItem
 
 _PREVIEW_LEN = 150

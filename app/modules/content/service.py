@@ -13,12 +13,13 @@ from app.db.models import (
     ContentComment,
     ContentItem,
     ContentLike,
+    ContentStatus,
+    ContentType,
     User,
 )
 from app.db.repo import get_or_raise
 from app.modules.common import PageData, paginate_offset, paginate_pages
 from app.modules.content.errors import ContentErr
-from app.modules.content.models import ContentStatus, ContentType
 from app.modules.content.schemas import (
     ContentCommentCreate,
     ContentCommentInfo,

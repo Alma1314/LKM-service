@@ -6,9 +6,15 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ContentItem, LibraryFile, Profile, RolePermission, User
+from app.db.models import (
+    ContentItem,
+    ContentType,
+    LibraryFile,
+    Profile,
+    RolePermission,
+    User,
+)
 from app.modules.auth.security import hashpwd
-from app.modules.content.models import ContentType
 from app.modules.rbac.permissions import Permission
 
 
