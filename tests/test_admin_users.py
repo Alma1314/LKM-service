@@ -6,8 +6,9 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ForumPost, LibraryFile, Profile, RolePermission, User
+from app.db.models import ContentItem, LibraryFile, Profile, RolePermission, User
 from app.modules.auth.security import hashpwd
+from app.modules.content.models import ContentType
 from app.modules.rbac.permissions import Permission
 
 
@@ -134,7 +135,8 @@ async def _seed_stats(db: AsyncSession, n_users: int = 3) -> None:
     db.add(board)
     await db.flush()
     db.add(
-        ForumPost(
+        ContentItem(
+            content_type=ContentType.DISCUSSION,
             author_id=int(
                 (
                     await db.execute(select(User.id).where(User.username == "u0"))

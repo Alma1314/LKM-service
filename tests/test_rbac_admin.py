@@ -112,7 +112,8 @@ class TestAdminContentReview:
         await _seed_perm(db, "admin:org_member", "admin.dashboard")
         u = await _mk_user(db, "org_c", role="org_member")
         _set_admin_cookie(client, u, mfa_verified=True)
-        r = await client.delete("/api/v1/admin/content/post/99999")
+        # 真实路由为 /admin/content/item/{item_id}（moderation 收编 admin 后统一）
+        r = await client.delete("/api/v1/admin/content/item/99999")
         assert r.status_code == 403
 
     async def test_super_admin_with_grant_allowed(
@@ -124,7 +125,8 @@ class TestAdminContentReview:
         await _seed_perm(db, "admin:super_admin", "admin.content_review")
         u = await _mk_user(db, "sadmin_c", role="super_admin")
         _set_admin_cookie(client, u, mfa_verified=True)
-        r = await client.delete("/api/v1/admin/content/post/99999")
+        # super_admin 缺 admin.content_review → 越过 2FA 后到达 service（帖不存在→404）
+        r = await client.delete("/api/v1/admin/content/item/99999")
         assert r.status_code == 404
 
 

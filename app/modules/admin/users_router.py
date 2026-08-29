@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
-from app.db.models import ForumPost, LibraryFile, User
+from app.db.models import ContentItem, LibraryFile, User
 from app.db.session import get_read_session
 from app.modules.auth.deps import CurrentUser
 from app.modules.common import (
@@ -22,6 +22,7 @@ from app.modules.common import (
     PaginateParams,
     paginate_pages,
 )
+from app.modules.content.models import ContentType
 from app.modules.rbac.permissions import Permission
 
 from .deps import require_admin
@@ -99,7 +100,12 @@ async def admin_stats(
     """仪表盘聚合统计：注册用户数 / 帖子数 / 文件数 / 待审核文件数。"""
     await require_permission(db, _cur, Permission.admin_dashboard)
     user_count = await _safe_count(db, select(func.count(User.id)))
-    post_count = await _safe_count(db, select(func.count(ForumPost.id)))
+    post_count = await _safe_count(
+        db,
+        select(func.count(ContentItem.id)).where(
+            ContentItem.content_type == ContentType.DISCUSSION
+        ),
+    )
     file_count = await _safe_count(db, select(func.count(LibraryFile.id)))
     file_pending = await _safe_count(
         db,
@@ -124,18 +130,18 @@ async def admin_trend(
 
     await require_permission(db, _cur, Permission.admin_dashboard)
 
-    async def _deltas(col: Any) -> dict[date, int]:
+    async def _deltas(
+        col: Any, extra_where: Any | None = None
+    ) -> dict[date, int]:
         """按某时间列分组统计每日增量；单表异常返回空 dict（_safe_count 同款容错）。
+        extra_where 可选附加过滤（如 content_type == discussion）。
         func.date 在 SQLite 返回 'YYYY-MM-DD' 字符串，统一转 date 作 key。"""
         out: dict[date, int] = {}
         try:
-            rows = (
-                await db.execute(
-                    select(func.date(col).label("d"), func.count())
-                    .where(col >= start)
-                    .group_by("d")
-                )
-            ).all()
+            stmt = select(func.date(col).label("d"), func.count()).where(col >= start)
+            if extra_where is not None:
+                stmt = stmt.where(extra_where)
+            rows = (await db.execute(stmt.group_by("d"))).all()
         except Exception:
             return out
         for r in rows:
@@ -151,7 +157,11 @@ async def admin_trend(
     # 否则本地时区偏移（东8区凌晨）会让 start 与分桶错位一天。
     start = datetime.now(UTC).date() - timedelta(days=days - 1)
     user_d = await _deltas(User.created_at)
-    post_d = await _deltas(ForumPost.created_at)
+    # 帖子统计改走统一写源 content_items（content_type == discussion ⇔ 原 forum_posts）
+    post_d = await _deltas(
+        ContentItem.created_at,
+        extra_where=ContentItem.content_type == ContentType.DISCUSSION,
+    )
 
     items: list[AdminTrendItem] = []
     for i in range(days):

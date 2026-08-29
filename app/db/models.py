@@ -113,8 +113,6 @@ class User(Base):
         back_populates="author", foreign_keys="ContentItem.author_id"
     )
     content_comments: Mapped[list[ContentComment]] = relationship(back_populates="user")
-    forum_posts: Mapped[list[ForumPost]] = relationship(back_populates="author")
-    forum_comments: Mapped[list[ForumComment]] = relationship(back_populates="user")
     uploaded_files: Mapped[list[LibraryFile]] = relationship(back_populates="uploader")
     exam_attempts: Mapped[list[ExamAttempt]] = relationship(back_populates="user")
     exam_certificates: Mapped[list[ExamCertificate]] = relationship(
@@ -251,83 +249,6 @@ class ColumnPost(Base):
 
     column: Mapped[Column] = relationship(back_populates="posts")
     author: Mapped[User] = relationship(back_populates="posts")
-
-
-class ForumPost(Base):
-    __tablename__: str = "forum_posts"
-    # 列表热路径按 category 过滤 + (is_pinned, id) 排序 → 复合索引一次命中
-    __table_args__: tuple[Index, ...] = (
-        Index("ix_forum_posts_board_pinned_id", "board_id", "is_pinned", "id"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-    board_id: Mapped[int] = mapped_column(ForeignKey("boards.id"), nullable=False)
-    title: Mapped[str] = mapped_column(String(120), nullable=False)
-    excerpt: Mapped[str] = mapped_column(String(500), nullable=False, default="")
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    tags: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    is_featured: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    view_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    like_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    comment_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    bookmark_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    forward_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[datetime.datetime] = mapped_column(
-        UTCDateTime, nullable=False, default=now_iso
-    )
-    updated_at: Mapped[datetime.datetime] = mapped_column(
-        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
-    )
-
-    author: Mapped[User] = relationship(back_populates="forum_posts")
-    board: Mapped[Board] = relationship(back_populates="posts")
-    comments: Mapped[list[ForumComment]] = relationship(
-        back_populates="post", cascade="all, delete-orphan"
-    )
-
-
-class ForumComment(Base):
-    __tablename__: str = "forum_comments"
-    # 评论列表热路径按 post 过滤 + 按 floor 排序 → 复合索引
-    __table_args__: tuple[Index, ...] = (
-        Index("ix_forum_comments_post_floor", "post_id", "floor_number"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    post_id: Mapped[int] = mapped_column(ForeignKey("forum_posts.id"), nullable=False)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    floor_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    parent_id: Mapped[int | None] = mapped_column(
-        ForeignKey("forum_comments.id"), nullable=True
-    )
-    like_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[datetime.datetime] = mapped_column(
-        UTCDateTime, nullable=False, default=now_iso
-    )
-
-    post: Mapped[ForumPost] = relationship(back_populates="comments")
-    user: Mapped[User] = relationship(back_populates="forum_comments")
-    parent: Mapped[ForumComment | None] = relationship(
-        remote_side=[id], back_populates="replies"
-    )
-    replies: Mapped[list[ForumComment]] = relationship(
-        back_populates="parent", cascade="all, delete-orphan"
-    )
-
-
-class ForumPostLike(Base):
-    """论坛帖子点赞记录，复合主键保证同一用户对同一帖子最多一条（点赞幂等）。"""
-
-    __tablename__: str = "forum_post_likes"
-
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
-    post_id: Mapped[int] = mapped_column(ForeignKey("forum_posts.id"), primary_key=True)
-    created_at: Mapped[datetime.datetime] = mapped_column(
-        UTCDateTime, nullable=False, default=now_iso
-    )
 
 
 class ContentItem(Base):
@@ -1101,7 +1022,6 @@ class Board(Base):
     children: Mapped[list[Board]] = relationship(
         back_populates="parent", cascade="all, delete-orphan"
     )
-    posts: Mapped[list[ForumPost]] = relationship(back_populates="board")
     followers: Mapped[list[BoardFollow]] = relationship(
         back_populates="board",
         foreign_keys="BoardFollow.board_id",

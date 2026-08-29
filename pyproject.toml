@@ -17,6 +17,7 @@ dependencies = [
     "strawberry-graphql>=0.263.0",
     "aiosqlite>=0.22.1",
     "asyncpg>=0.31.0",
+    "psycopg2-binary>=2.9",
     "webauthn>=2,<3",
     "argon2-cffi>=23.1.0",
     "redis>=5.0.0",
