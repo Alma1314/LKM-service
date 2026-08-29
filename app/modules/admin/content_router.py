@@ -7,7 +7,7 @@
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
@@ -23,14 +23,37 @@ from app.modules.blog.service import (
 from app.modules.blog.service import (
     delete_series as delete_blog_series_svc,
 )
-from app.modules.common import ApiResp
-from app.modules.content.service import delete_item as delete_content_item_svc
+from app.modules.common import ApiResp, PageData, PaginateDep, PaginateParams
+from app.modules.content.schemas import ContentItemInfo
+from app.modules.content.service import (
+    delete_item as delete_content_item_svc,
+)
+from app.modules.content.service import list_items as list_content_items_svc
 from app.modules.rbac.permissions import Permission
 
-from .deps import get_real_client_ip, require_admin_2fa
+from .deps import get_real_client_ip, require_admin, require_admin_2fa
 from .permissions import require_permission
 
 router = APIRouter(prefix="/admin/content", tags=["admin-content"])
+
+
+@router.get("/items", response_model=ApiResp[PageData[ContentItemInfo]])
+@respond
+async def admin_list_content_items(
+    _cur: CurrentUser = require_admin,
+    pag: PaginateParams = Depends(PaginateDep()),
+    content_type: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_session),
+) -> PageData[ContentItemInfo]:
+    """管理员内容列表（只读）：统一内容项分页，可按 content_type 筛选。
+
+    原管理端帖子列表走已删除的 `/forum/posts`，这里以 content_items 单表承载
+    （discussion/article/column_post/blog_post/qa），供后台帖子/内容管理页使用。
+    """
+    await require_permission(db, _cur, Permission.admin_content_review)
+    return await list_content_items_svc(
+        db, page=pag.page, limit=pag.limit, content_type=content_type
+    )
 
 
 async def _audit_admin_delete(

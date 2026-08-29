@@ -1,6 +1,7 @@
 """项目广场服务：孵化申请、审核（通过→建项目+落成员+纳入成员升级）、公开展示。"""
 
 import json
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,9 +46,18 @@ def _app_to_schema(a: ProjectApplication) -> ProjectApplicationOut:
     )
 
 
+def _user_display(u: User) -> str:
+    if u is None:
+        return ""
+    if u.profile and u.profile.nickname:
+        return u.profile.nickname
+    return u.username
+
+
 def _project_to_schema(p: Project) -> ProjectOut:
     out = ProjectOut.model_validate(p)
     out.members = [ProjectMemberOut.model_validate(m) for m in p.members]
+    out.applicant_name = _user_display(p.applicant)
     return out
 
 
@@ -193,14 +203,22 @@ async def _apply_incubation(db: AsyncSession, applicant_id: int) -> None:
     await db.flush()
 
 
+def _project_options() -> tuple[Any, ...]:
+    """成员 + 申请人（含昵称）预加载，避免 async 会话里 lazy 访问。"""
+    return (
+        selectinload(Project.members),
+        selectinload(Project.applicant).selectinload(User.profile),
+    )
+
+
 async def list_projects(db: AsyncSession) -> list[ProjectOut]:
     rows = (
         (
             await db.execute(
                 select(Project)
-                .options(selectinload(Project.members))
+                .options(*_project_options())
                 .where(Project.status == "active")
-                .order_by(Project.id.desc())
+                .order_by(Project.is_pinned.desc(), Project.id.desc())
             )
         )
         .scalars()
@@ -215,7 +233,7 @@ async def get_project(db: AsyncSession, project_id: int) -> Project:
         Project,
         ProjectErr.PROJECT_NOT_FOUND,
         Project.id == project_id,
-        options=(selectinload(Project.members),),
+        options=_project_options(),
     )
 
 

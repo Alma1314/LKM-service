@@ -12,9 +12,12 @@ from app.modules.common import ApiResp, ModuleStatus
 from app.modules.projects.schemas import (
     ProjectApplicationCreate,
     ProjectApplicationOut,
+    ProjectOut,
     ReviewProjectApplicationRequest,
 )
 from app.modules.projects.service import (
+    get_project_ex,
+    list_projects,
     review_application,
     submit_application,
 )
@@ -41,6 +44,25 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 @router.get("/status", response_model=ModuleStatus)
 async def projects_status() -> ModuleStatus:
     return _status()
+
+
+@router.get("", response_model=ApiResp[list[ProjectOut]])
+@respond
+async def project_list(
+    db: AsyncSession = Depends(get_session),
+) -> list[ProjectOut]:
+    """项目广场列表（只读）：全部展示型项目，pinned 置顶。"""
+    return await list_projects(db)
+
+
+@router.get("/{project_id}", response_model=ApiResp[ProjectOut])
+@respond
+async def project_detail(
+    project_id: int,
+    db: AsyncSession = Depends(get_session),
+) -> ProjectOut:
+    """项目广场详情（只读）：单项目含成员与进展报告。"""
+    return await get_project_ex(db, project_id)
 
 
 @router.post("/applications", response_model=ApiResp[ProjectApplicationOut])

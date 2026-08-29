@@ -60,6 +60,19 @@ class ProjectOut(BaseModel):
     description: str
     applicant_id: int
     is_incubated: bool
+    # 项目广场展示字段
+    type: str = "showcase"
+    is_recruiting: bool = False
+    is_pinned: bool = False
+    progress: int = 0
+    background: str | None = None
+    goals: str | None = None
+    requirements: str | None = None
+    team_intro: str | None = None
+    recruiting_roles: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    reports: list[dict] = Field(default_factory=list)
+    applicant_name: str = ""
     status: str
     created_at: datetime.datetime
     updated_at: datetime.datetime

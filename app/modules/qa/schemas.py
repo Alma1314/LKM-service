@@ -8,6 +8,7 @@ class QuestionCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     situation: str = Field(..., min_length=1, max_length=5000)
     content: str = Field(..., min_length=1, max_length=20000)
+    category: str = Field(default="help", max_length=20)  # help|volunteer
     bounty_people: int = Field(..., ge=1, le=10)
     bounty_per_person: int = Field(..., ge=0)
     images: list[str] = Field(default_factory=list)  # 附件 URL/引用（后接真上传）
@@ -26,9 +27,11 @@ class QuestionOut(BaseModel):
     bounty_total: int
     bounty_distributed: int
     status: str
+    category: str = "help"
     accepted_answer_id: int | None = None
     answer_count: int = 0
     created_at: datetime.datetime
+    author_name: str = ""  # 提问者昵称（service 组装，供列表/详情直接展示）
 
 
 class AnswerCreate(BaseModel):

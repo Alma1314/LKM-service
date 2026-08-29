@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.cache import (
     bump_collection_version,
@@ -18,6 +19,7 @@ from app.db.models import (
     QAAnswer,
     QAQuestion,
     QAQuestionImage,
+    User,
 )
 from app.db.repo import get_or_raise
 from app.modules.common import PageData, paginate_offset, paginate_pages
@@ -44,6 +46,7 @@ async def create_question(
         title=info.title,
         situation=info.situation,
         content=info.content,
+        category=info.category,
         bounty_people=info.bounty_people,
         bounty_per_person=info.bounty_per_person,
         bounty_total=total,
@@ -62,7 +65,8 @@ async def create_question(
     await _sync_question_content_item(db, author_id, q)
     await db.flush()
     await bump_collection_version("qa")
-    return _question_to_schema(q)
+    names = await _author_names(db, [q.author_id])
+    return _question_to_schema(q, names.get(q.author_id, ""))
 
 
 async def _ensure_qa_board(db: AsyncSession) -> int:
@@ -104,31 +108,72 @@ def _plain(text: str, limit: int = 150) -> str:
     return t[:limit].rstrip() + ("..." if len(t) > limit else "")
 
 
+def _display_name(user: User | None) -> str:
+    """用户展示名：优先 profile 昵称，否则 username。"""
+    if user is None:
+        return ""
+    if user.profile and user.profile.nickname:
+        return user.profile.nickname
+    return user.username
+
+
+async def _author_names(db: AsyncSession, author_ids: list[int]) -> dict[int, str]:
+    """批量取作者展示名（id → 昵称/用户名）。"""
+    ids = {i for i in author_ids if i}
+    if not ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(User).where(User.id.in_(ids)).options(selectinload(User.profile))
+        )
+    ).scalars()
+    return {u.id: _display_name(u) for u in rows}
+
+
 async def list_questions(
-    db: AsyncSession, page: int = 1, limit: int = 20
+    db: AsyncSession,
+    page: int = 1,
+    limit: int = 20,
+    category: str | None = None,
 ) -> PageData[QuestionOut]:
     async def load() -> list[dict[str, Any]]:
+        base = select(QAQuestion, func.count(QAAnswer.id)).outerjoin(
+            QAAnswer, QAAnswer.question_id == QAQuestion.id
+        )
+        if category:
+            base = base.where(QAQuestion.category == category)
         rows = (
             await db.execute(
-                select(QAQuestion, func.count(QAAnswer.id))
-                .outerjoin(QAAnswer, QAAnswer.question_id == QAQuestion.id)
-                .group_by(QAQuestion.id)
+                base.group_by(QAQuestion.id)
                 .order_by(QAQuestion.id.desc())
                 .offset(paginate_offset(page, limit))
                 .limit(limit)
             )
         ).all()
+        questions = [q for q, _ in rows]
+        names = await _author_names(db, [q.author_id for q in questions])
         return [
             QuestionOut.model_validate(q)
-            .model_copy(update={"answer_count": ans_count})
+            .model_copy(
+                update={
+                    "answer_count": ans_count,
+                    "author_name": names.get(q.author_id, ""),
+                }
+            )
             .model_dump()
             for q, ans_count in rows
         ]
 
     ver = await collection_version("qa")
-    payload = await cached_read(make_key("qa:list", ver, page, limit), 60, load)
+    payload = await cached_read(make_key("qa:list", ver, page, limit, category or ""), 60, load)
     # 分页元信息（total 单独查，不缓存）
-    total = await db.scalar(select(func.count(QAQuestion.id))) or 0
+    total_where = [QAQuestion.category == category] if category else []
+    total = (
+        await db.scalar(
+            select(func.count(QAQuestion.id)).where(*total_where)
+        )
+        or 0
+    )
     return PageData(
         items=[QuestionOut.model_validate(p) for p in payload],
         total=total,
@@ -163,8 +208,12 @@ async def get_question(db: AsyncSession, question_id: int) -> QuestionDetail:
         .scalars()
         .all()
     )
+    names = await _author_names(db, [q.author_id])
     base = QuestionOut.model_validate(q).model_copy(
-        update={"answer_count": len(answers)}
+        update={
+            "answer_count": len(answers),
+            "author_name": names.get(q.author_id, ""),
+        }
     )
     return QuestionDetail(
         **base.model_dump(),
@@ -269,8 +318,12 @@ async def close_question(
     q.status = "accepted" if q.accepted_answer_id is not None else "closed"
     await db.flush()
     await bump_collection_version("qa")
-    return _question_to_schema(q)
+    names = await _author_names(db, [q.author_id])
+    return _question_to_schema(q, names.get(q.author_id, ""))
 
 
-def _question_to_schema(q: QAQuestion) -> QuestionOut:
-    return QuestionOut.model_validate(q)
+def _question_to_schema(q: QAQuestion, author_name: str = "") -> QuestionOut:
+    out = QuestionOut.model_validate(q)
+    if author_name:
+        return out.model_copy(update={"author_name": author_name})
+    return out

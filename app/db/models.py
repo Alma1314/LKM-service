@@ -833,6 +833,9 @@ class QAQuestion(Base):
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="open"
     )  # open|accepted|closed
+    category: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="help"
+    )  # help|volunteer（前端 tab 分类）
     accepted_answer_id: Mapped[int | None] = mapped_column(
         ForeignKey("qa_answers.id"), nullable=True
     )
@@ -1213,6 +1216,24 @@ class Project(Base):
     description: Mapped[str] = mapped_column(String(500), nullable=False)
     applicant_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     is_incubated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # ———————— 项目广场展示字段（后端扩充，供 GET /projects 展示） ————————
+    type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="showcase"
+    )  # recruiting(招募中) | showcase(展示)
+    is_recruiting: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    background: Mapped[str | None] = mapped_column(Text, nullable=True)
+    goals: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requirements: Mapped[str | None] = mapped_column(Text, nullable=True)
+    team_intro: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recruiting_roles: Mapped[list] = mapped_column(
+        JSON, default=list
+    )  # [str] 招募角色
+    tags: Mapped[list] = mapped_column(JSON, default=list)  # [str]
+    reports: Mapped[list] = mapped_column(
+        JSON, default=list
+    )  # [{title,content,revision,date}] 进展报告
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="active"
     )  # active | archived
