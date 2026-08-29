@@ -6,7 +6,7 @@
 * 可见时间（feed_time）：优先 ``published``/``published_at``，否则 ``created_at``——
   即"内容对外可见的时间"，作为跨源排序锚点。
 * 可见性过滤（各源 SQL WHERE）：Article 仅 published、Column 仅 PUBLISHED、
-  QA 仅 open/accepted、Project 仅 active、ForumPost 全可见。
+  QA 仅 open/accepted、Project 仅 active、Discussion 仅 status=PUBLISHED。
 * 作者名：逐源批查 ``User.profile.nickname`` 兜底 ``username``；Article 无作者外键，
   ``author_id=None``、``author_name=publisher``。
 """
@@ -27,7 +27,6 @@ from app.db.models import (
     ColumnPost,
     ColumnPostStatus,
     ContentItem,
-    ForumPost,
     Project,
     QAQuestion,
     User,
@@ -79,11 +78,11 @@ def _before_conds(
 
 
 # ---------------------------------------------------------------------------
-# Forum
+# Discussion（讨论帖，content_items 中 content_type==discussion）
 # ---------------------------------------------------------------------------
 
 
-async def _fetch_forum(
+async def _fetch_discussion(
     db: AsyncSession,
     author_ids: set[int] | None,
     board_ids: set[int] | None,
@@ -91,41 +90,46 @@ async def _fetch_forum(
     before_id: int,
     limit: int,
 ) -> list[FeedItem]:
-    conditions: list[Any] = []
+    conditions: list[Any] = [
+        ContentItem.content_type == "discussion",
+        ContentItem.status == ContentStatus.PUBLISHED,
+    ]
     # follow 模式：关注作者 或 关注版块；hot 模式不限制
     if author_ids is not None and board_ids is not None:
         conditions.append(
-            ForumPost.author_id.in_(author_ids) | ForumPost.board_id.in_(board_ids)
+            ContentItem.author_id.in_(author_ids) | ContentItem.board_id.in_(board_ids)
         )
     if before_time is not None:
         conditions.extend(
-            _before_conds(ForumPost.created_at, ForumPost.id, before_time, before_id)
+            _before_conds(ContentItem.created_at, ContentItem.id, before_time, before_id)
         )
-    stmt = select(ForumPost)
-    if conditions:
-        stmt = stmt.where(*conditions)
-    stmt = stmt.order_by(ForumPost.created_at.desc(), ForumPost.id.desc()).limit(limit)
+    stmt = (
+        select(ContentItem)
+        .where(*conditions)
+        .order_by(ContentItem.created_at.desc(), ContentItem.id.desc())
+        .limit(limit)
+    )
     rows = (await db.execute(stmt)).scalars().all()
-    names = await _author_map(db, {r.author_id for r in rows})
+    names = await _author_map(db, {r.author_id for r in rows if r.author_id})
     return [
         FeedItem(
-            item_type="forum",
+            item_type="discussion",
             id=r.id,
             author_id=r.author_id,
-            author_name=names.get(r.author_id, ""),
+            author_name=names.get(r.author_id or -1, ""),
             title=r.title,
             content_preview=_preview_of(r.excerpt or r.content),
             created_at=r.created_at,
-            sort_score=_forum_heat(r),
+            sort_score=_discussion_heat(r),
             board_id=r.board_id,
-            url=f"/forum/posts/{r.id}",
+            url=f"/content/posts/{r.id}",
         )
         for r in rows
     ]
 
 
-def _forum_heat(r: Any) -> float:
-    """论坛热度：读写阅赞评藏加权。"""
+def _discussion_heat(r: Any) -> float:
+    """讨论热度：读写阅赞评藏加权。"""
     return math.log1p(
         r.view_count + r.like_count * 2 + r.comment_count * 3 + r.bookmark_count * 4
     )
@@ -365,7 +369,7 @@ async def _fetch_blog(
 
 
 SOURCES: dict[str, Any] = {
-    "forum": _fetch_forum,
+    "discussion": _fetch_discussion,
     "article": _fetch_article,
     "column": _fetch_column,
     "qa": _fetch_qa,
@@ -373,7 +377,7 @@ SOURCES: dict[str, Any] = {
     "blog": _fetch_blog,
 }
 
-# follow 模式参与的源（按关注作者过滤；forum 额外按关注版块）
-FOLLOW_SOURCES: list[str] = ["forum", "column", "qa", "project", "blog"]
+# follow 模式参与的源（按关注作者过滤；discussion 额外按关注版块）
+FOLLOW_SOURCES: list[str] = ["discussion", "column", "qa", "project", "blog"]
 # hot 模式参与的源（全站、不按关注过滤、包含无作者外键的 Article）
-HOT_SOURCES: list[str] = ["forum", "article", "column", "qa", "project", "blog"]
+HOT_SOURCES: list[str] = ["discussion", "article", "column", "qa", "project", "blog"]

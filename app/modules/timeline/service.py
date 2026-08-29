@@ -98,8 +98,8 @@ async def get_timeline(
     for name in source_names:
         fetch = feed_src.SOURCES[name]
         if mode == "follow":
-            # forum 额外按关注版块过滤；其余按关注作者过滤
-            b_ids = board_ids if name == "forum" else None
+            # discussion 额外按关注版块过滤；其余按关注作者过滤
+            b_ids = board_ids if name == "discussion" else None
             a_ids = following_ids
         else:
             a_ids, b_ids = None, None

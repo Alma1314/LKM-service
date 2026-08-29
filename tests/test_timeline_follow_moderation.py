@@ -24,8 +24,6 @@ from app.modules.auth.security import hashpwd
 from app.modules.boards.schemas import BoardCreate
 from app.modules.boards.service import create_board_ex
 from app.modules.follow import service as follow_service
-from app.modules.forum.schemas import PostCreate
-from app.modules.forum.service import create_post
 from app.modules.moderation import service as mod_service
 from app.modules.moderation.engine import Rule, evaluate, load_active_rules
 from app.modules.moderation.schemas import RuleCreate, RuleUpdate
@@ -53,13 +51,19 @@ async def _board(db: AsyncSession, slug: str) -> int:
 async def _forum_post(
     db: AsyncSession, author_id: int, board_id: int, title: str
 ) -> int:
-    return (
-        await create_post(
-            db,
-            author_id,
-            PostCreate(title=title, content=title + "内容", board_id=board_id),
-        )
-    ).id
+    """讨论帖数据源已收敛到 content_items（content_type==discussion）。"""
+    item = ContentItem(
+        content_type="discussion",
+        board_id=board_id,
+        author_id=author_id,
+        title=title,
+        excerpt=title + "摘要",
+        content=title + "内容",
+        status="published",
+    )
+    db.add(item)
+    await db.flush()
+    return item.id
 
 
 async def _article(db: AsyncSession, slug: str, title: str) -> int:
@@ -147,7 +151,7 @@ class TestTimeline:
 
         feed = await get_timeline(db, user_id=None, mode="hot", cursor=None, limit=20)
         types = {it.item_type for it in feed.items}
-        assert "forum" in types
+        assert "discussion" in types
         assert "article" in types
 
     async def test_hot_includes_blog_post(self, db: AsyncSession) -> None:
@@ -185,7 +189,7 @@ class TestTimeline:
         await follow_service.follow_user(db, me, friend)
 
         feed = await get_timeline(db, user_id=me, mode="follow", cursor=None, limit=20)
-        titles = [it.title for it in feed.items if it.item_type == "forum"]
+        titles = [it.title for it in feed.items if it.item_type == "discussion"]
         assert "关注的人帖" in titles
         assert "陌生人的帖" not in titles
 
@@ -199,7 +203,7 @@ class TestTimeline:
         await follow_service.follow_board(db, me, b1)
 
         feed = await get_timeline(db, user_id=me, mode="follow", cursor=None, limit=20)
-        titles = [it.title for it in feed.items if it.item_type == "forum"]
+        titles = [it.title for it in feed.items if it.item_type == "discussion"]
         assert "已关注版块的帖" in titles
         assert "未关注版块的帖" not in titles
 
@@ -240,7 +244,7 @@ class TestModeration:
         rules = await load_active_rules(db)
         assert any(r.action == "hide" for r in rules)
         feed = await get_timeline(db, user_id=None, mode="hot", cursor=None, limit=20)
-        titles = [it.title for it in feed.items if it.item_type == "forum"]
+        titles = [it.title for it in feed.items if it.item_type == "discussion"]
         assert "正常标题" in titles
         assert "含违禁词标题" not in titles
 
@@ -254,7 +258,7 @@ class TestModeration:
         await _forum_post(db, author, board, "敏感标题")
         feed = await get_timeline(db, user_id=None, mode="hot", cursor=None, limit=20)
         score = {
-            it.title: it.sort_score for it in feed.items if it.item_type == "forum"
+            it.title: it.sort_score for it in feed.items if it.item_type == "discussion"
         }
         assert score["敏感标题"] < score["普通标题"]
 
