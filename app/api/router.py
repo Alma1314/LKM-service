@@ -2,12 +2,14 @@ from fastapi import APIRouter
 
 from app.modules.admin.auth_router import router as admin_router
 from app.modules.admin.content_router import router as admin_content_router
+from app.modules.admin.moderation.admin_router import router as moderation_admin_router
 from app.modules.admin.reports_router import router as admin_reports_router
 from app.modules.admin.users_router import router as admin_data_router
 from app.modules.articles.router import router as articles_router
 from app.modules.auth.router import router as auth_router
 from app.modules.auth.router_2fa import router as auth_2fa_router
 from app.modules.auth.router_oauth import router as auth_oauth_router
+from app.modules.auth.router_onboarding import router as auth_onboarding_router
 from app.modules.auth.router_passkey import router as auth_passkey_router
 from app.modules.auth.router_recovery import router as auth_recovery_router
 from app.modules.auth.router_settings import router as auth_settings_router
@@ -21,7 +23,6 @@ from app.modules.files.notify import router as files_notify_router
 from app.modules.files.router import router as files_router
 from app.modules.follow.router import board_follow_router, user_follow_router
 from app.modules.health.router import router as health_router
-from app.modules.admin.moderation.admin_router import router as moderation_admin_router
 from app.modules.points.router import router as points_router
 from app.modules.projects.router import router as projects_router
 from app.modules.qa.router import router as qa_router
@@ -38,6 +39,7 @@ api_router.include_router(admin_reports_router)
 api_router.include_router(auth_router)
 api_router.include_router(auth_2fa_router)
 api_router.include_router(auth_oauth_router)
+api_router.include_router(auth_onboarding_router)
 api_router.include_router(auth_passkey_router)
 api_router.include_router(auth_recovery_router)
 api_router.include_router(auth_settings_router)

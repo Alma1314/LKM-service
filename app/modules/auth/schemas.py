@@ -291,3 +291,20 @@ class UnbindRequest(BaseModel):
 
     code: str | None = Field(default=None, min_length=6, max_length=6)
     recovery_code: str | None = None
+
+
+# ── Onboarding 引导向导 ──────────────────────────────────────────
+
+
+class OnboardingState(BaseModel):
+    """GET /auth/onboarding —— 当前用户引导进度（未开始时返回默认 step=1）。"""
+
+    step: int = 1
+    completed: bool = False
+    data: dict[str, Any] | None = None
+
+
+class OnboardingStepRequest(BaseModel):
+    """PUT /auth/onboarding/steps/{step} —— 提交某一步的分步数据。"""
+
+    data: dict[str, Any] = Field(default_factory=dict)

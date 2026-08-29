@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.err import BizError
-from app.db.models import Profile
+from app.db.models import Profile, User
 from app.db.repo import get_or_raise
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.schemas import ProfileInfo, ProfileUpdate
@@ -22,6 +22,14 @@ async def get_profile(db: AsyncSession, user_id: int) -> ProfileInfo:
         db, Profile, AuthErr.USER_NOT_FOUND, Profile.user_id == user_id
     )
     return ProfileInfo.model_validate(profile)
+
+
+async def get_profile_by_username(db: AsyncSession, username: str) -> ProfileInfo:
+    """按唯一 username 查公开基础资料（供他人主页浏览，无需登录）。"""
+    user = await get_or_raise(
+        db, User, AuthErr.USER_NOT_FOUND, User.username == username
+    )
+    return await get_profile(db, user.id)
 
 
 async def update_profile(db: AsyncSession, user_id: int, info: ProfileUpdate) -> None:

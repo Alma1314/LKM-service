@@ -4,6 +4,7 @@ import datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     ForeignKey,
     Index,
@@ -320,5 +321,28 @@ class OAuthState(Base):
     consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     expires_at: Mapped[datetime.datetime] = mapped_column(UTCDateTime, nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+
+
+class OnboardingProgress(Base):
+    """注册后四步引导向导的分步持久化进度（每用户一行）。
+
+    ``data`` 为以步骤号为 key 的分步合并数据，如 ``{1: {...}, 2: {...}}``。
+    与前端 ``useOnboardingFlow`` 的 ``OnboardingState`` 契约对齐。
+    """
+
+    __tablename__: str = "onboarding_progress"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    step: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    completed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
     )

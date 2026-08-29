@@ -39,6 +39,7 @@ from app.modules.auth.schemas import (
 )
 from app.modules.auth.service import (
     get_profile,
+    get_profile_by_username,
     serve_avatar,
     update_avatar,
     update_profile,
@@ -80,6 +81,16 @@ async def _complete_reg_verify(
 @respond
 async def get_me(cur: CurrentUser = Depends(get_current_user)) -> CurrentUser:
     return cur
+
+
+@router.get("/user/by-username/{username}", response_model=ApiResp[ProfileInfo])
+@respond
+async def get_user_by_username(
+    username: str,
+    db: AsyncSession = Depends(get_session),
+) -> ProfileInfo:
+    """公开：按唯一 username 查基础资料，供他人主页浏览（无需登录）。"""
+    return await get_profile_by_username(db, username)
 
 
 @router.get("/{user_id:int}", response_model=ApiResp[ProfileInfo])

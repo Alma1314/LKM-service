@@ -1,0 +1,65 @@
+"""Onboarding 引导向导进度服务 —— 每用户一行的分步持久化。
+
+与前端 ``useOnboardingFlow`` 的 ``OnboardingState`` 契约对齐：
+``data`` 为以步骤号为 key 的分步合并数据（如 ``{1: {...}, 2: {...}}``）。
+"""
+
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.modules.auth.models import OnboardingProgress
+from app.modules.auth.schemas import OnboardingState
+
+
+async def get_or_create_progress(
+    db: AsyncSession, user_id: int
+) -> OnboardingProgress:
+    """返回某用户的引导进度；未开始时新建一条默认记录并返回。"""
+    row = (
+        (await db.execute(select(OnboardingProgress).where(OnboardingProgress.user_id == user_id)))
+        .scalars()
+        .first()
+    )
+    if row is None:
+        row = OnboardingProgress(user_id=user_id)
+        db.add(row)
+        await db.flush()
+    return row
+
+
+def _to_state(row: OnboardingProgress) -> OnboardingState:
+    return OnboardingState(
+        step=row.step,
+        completed=row.completed,
+        data=row.data or None,
+    )
+
+
+async def get_onboarding_state(db: AsyncSession, user_id: int) -> OnboardingState:
+    """读取引导进度：未开始返回默认 step=1，不 404。"""
+    row = await get_or_create_progress(db, user_id)
+    return _to_state(row)
+
+
+async def set_onboarding_step(
+    db: AsyncSession, user_id: int, step: int, data: dict[str, Any]
+) -> OnboardingState:
+    """提交某一步的分步数据：合并进整体 data、更新当前 step。"""
+    row = await get_or_create_progress(db, user_id)
+    merged: dict[str, Any] = dict(row.data or {})
+    merged[str(step)] = data
+    row.data = merged
+    row.step = step
+    await db.flush()
+    return _to_state(row)
+
+
+async def mark_onboarding_skipped(db: AsyncSession, user_id: int) -> OnboardingState:
+    """整体跳过引导并视为完成。"""
+    row = await get_or_create_progress(db, user_id)
+    row.completed = True
+    row.step = 4
+    await db.flush()
+    return _to_state(row)
