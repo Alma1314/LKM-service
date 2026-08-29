@@ -11,8 +11,8 @@ from httpx import AsyncClient
 
 from app.db.models import Profile, User
 from app.modules.admin.deps import COOKIE_NAME, COOKIE_PATH, create_admin_access_token
-from app.modules.moderation import service as mod_service
-from app.modules.moderation.schemas import RuleCreate
+from app.modules.admin.moderation import service as mod_service
+from app.modules.admin.moderation.schemas import RuleCreate
 from tests.conftest import DB
 
 

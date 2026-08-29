@@ -24,9 +24,9 @@ from app.modules.auth.security import hashpwd
 from app.modules.boards.schemas import BoardCreate
 from app.modules.boards.service import create_board_ex
 from app.modules.follow import service as follow_service
-from app.modules.moderation import service as mod_service
-from app.modules.moderation.engine import Rule, evaluate, load_active_rules
-from app.modules.moderation.schemas import RuleCreate, RuleUpdate
+from app.modules.admin.moderation import service as mod_service
+from app.modules.admin.moderation.engine import Rule, evaluate, load_active_rules
+from app.modules.admin.moderation.schemas import RuleCreate, RuleUpdate
 from app.modules.timeline.service import get_timeline
 
 

@@ -21,7 +21,7 @@ from app.modules.files.notify import router as files_notify_router
 from app.modules.files.router import router as files_router
 from app.modules.follow.router import board_follow_router, user_follow_router
 from app.modules.health.router import router as health_router
-from app.modules.moderation.admin_router import router as moderation_admin_router
+from app.modules.admin.moderation.admin_router import router as moderation_admin_router
 from app.modules.points.router import router as points_router
 from app.modules.projects.router import router as projects_router
 from app.modules.qa.router import router as qa_router

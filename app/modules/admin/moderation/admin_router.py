@@ -12,8 +12,8 @@ from app.db.session import get_session
 from app.modules.admin.deps import require_admin, require_admin_2fa
 from app.modules.auth.deps import CurrentUser
 from app.modules.common import ApiResp, ListData
-from app.modules.moderation import service as mod_service
-from app.modules.moderation.schemas import (
+from app.modules.admin.moderation import service as mod_service
+from app.modules.admin.moderation.schemas import (
     RuleCreate,
     RuleInfo,
     RuleTestRequest,

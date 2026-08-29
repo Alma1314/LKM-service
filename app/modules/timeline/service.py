@@ -17,7 +17,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.follow import service as follow_service
-from app.modules.moderation.engine import evaluate, load_active_rules
+from app.modules.admin.moderation.engine import evaluate, load_active_rules
 from app.modules.timeline import feed as feed_src
 from app.modules.timeline.schemas import FeedItem, FeedResponse
 
