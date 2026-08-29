@@ -7,6 +7,8 @@
 - 点赞幂等 + 取消点赞
 - 评论楼层号递增 + 计数联动
 - blog publish 落 content_items（blog_post）
+- pinned 置顶排序 / view_count 自增 / 分页 / board 过滤（由 forum 测试迁移）
+- 删帖（delete_item）后详情 CONTENT_NOT_FOUND
 """
 
 import pytest
@@ -25,6 +27,7 @@ from app.modules.content.schemas import (
 from app.modules.content.service import (
     create_comment,
     create_item,
+    delete_item,
     get_item,
     like_item,
     list_comments,
@@ -176,6 +179,92 @@ async def test_comment_floor_and_count(db: AsyncSession) -> None:
 
     page = await list_comments(db, item.id)
     assert page.total == 2
+
+
+async def test_discussion_pinned_sorts_first(db: AsyncSession) -> None:
+    """讨论帖 pinned 置顶排序（从 forum 迁移：pinned 在前）。"""
+    uid = await _user(db)
+    bid = await _make_board(db, "news")
+    await create_item(
+        db, uid, ContentItemCreate(board_id=bid, title="普通帖", content="a")
+    )
+    await create_item(
+        db, uid, ContentItemCreate(board_id=bid, title="置顶帖", content="b", is_pinned=True)
+    )
+
+    page = await list_items(db, board_id=bid)
+
+    assert page.total == 2
+    assert page.items[0].title == "置顶帖"
+    assert page.items[0].is_pinned is True
+    assert page.items[1].title == "普通帖"
+
+
+async def test_discussion_view_count_bumps(db: AsyncSession) -> None:
+    """GET 详情两次 → view_count 递增 1（从 forum 迁移：view_count 自增）。"""
+    uid = await _user(db)
+    bid = await _make_board(db, "math")
+    item = await create_item(db, uid, ContentItemCreate(board_id=bid, title="t", content="c"))
+
+    first = await get_item(db, item.id, bump_view=True)
+    second = await get_item(db, item.id, bump_view=True)
+
+    assert first.view_count == 1
+    assert second.view_count == 2
+
+
+async def test_get_nonexistent_item_raises(db: AsyncSession) -> None:
+    """详情缺失 → CONTENT_NOT_FOUND（从 forum 迁移：不存在帖子报错）。"""
+    uid = await _user(db)
+    bid = await _make_board(db, "math")
+    await create_item(db, uid, ContentItemCreate(board_id=bid, title="t", content="c"))
+
+    with pytest.raises(BizError) as e:
+        await get_item(db, 999)
+    assert e.value.errcode == ContentErr.CONTENT_NOT_FOUND
+
+
+async def test_delete_own_item(db: AsyncSession) -> None:
+    """删除自己发的内容项 → 再查应 CONTENT_NOT_FOUND（从 forum 迁移：删帖）。"""
+    uid = await _user(db)
+    bid = await _make_board(db, "math")
+    item = await create_item(db, uid, ContentItemCreate(board_id=bid, title="t", content="c"))
+
+    await delete_item(db, item.id, uid)
+
+    with pytest.raises(BizError) as e:
+        await get_item(db, item.id)
+    assert e.value.errcode == ContentErr.CONTENT_NOT_FOUND
+
+
+async def test_list_items_paginated(db: AsyncSession) -> None:
+    """列表分页参数（从 forum 迁移：分页 total/pages）。"""
+    uid = await _user(db)
+    bid = await _make_board(db, "math")
+    await create_item(db, uid, ContentItemCreate(board_id=bid, title="一", content="x"))
+    await create_item(db, uid, ContentItemCreate(board_id=bid, title="二", content="y"))
+
+    page = await list_items(db, page=1, limit=1)
+
+    assert page.total == 2
+    assert page.pages == 2
+    assert len(page.items) == 1
+    assert page.items[0].title == "二"  # 新帖在前（id desc）
+
+
+async def test_list_items_filter_by_board(db: AsyncSession) -> None:
+    """列表按板块过滤（从 forum 迁移：board 过滤）。"""
+    uid = await _user(db)
+    math_bid = await _make_board(db, "math")
+    phys_bid = await _make_board(db, "physics")
+    await create_item(db, uid, ContentItemCreate(board_id=math_bid, title="数学帖", content="x"))
+    await create_item(db, uid, ContentItemCreate(board_id=phys_bid, title="物理帖", content="y"))
+
+    page = await list_items(db, board_id=math_bid)
+
+    assert page.total == 1
+    assert page.items[0].board_id == math_bid
+    assert page.items[0].title == "数学帖"
 
 
 async def test_publish_blog_item_idempotent(db: AsyncSession) -> None:

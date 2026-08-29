@@ -422,7 +422,7 @@ class TestAdminContentDelete:
         login = await _login(client, "adm_del")
         assert login.status_code == 200
 
-        resp = await client.delete("/api/v1/admin/content/post/99999")
+        resp = await client.delete("/api/v1/admin/content/item/99999")
         assert resp.status_code == 401
         assert resp.json()["code"] == 4  # CommonErr.MFA_REQUIRED
 
@@ -446,6 +446,6 @@ class TestAdminContentDelete:
         )
         assert stepup.status_code == 200
 
-        # 已带 2FA 信任：删除不存在的帖子应到达 service 层 → 404 POST_NOT_FOUND，而非 401
-        resp = await client.delete("/api/v1/admin/content/post/99999")
+        # 已带 2FA 信任：删除不存在的内容项应到达 service 层 → 404 CONTENT_NOT_FOUND，而非 401
+        resp = await client.delete("/api/v1/admin/content/item/99999")
         assert resp.status_code == 404

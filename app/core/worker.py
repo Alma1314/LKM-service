@@ -26,7 +26,7 @@ def _ensure_models() -> None:
     import app.modules.blog.models
     import app.modules.columns.models
     import app.modules.files.models
-    import app.modules.forum.models  # noqa: F401  # 副作用导入：预注册 ORM 模型
+    import app.modules.content.models  # noqa: F401  # 副作用导入：预注册 ORM 模型
 
     # 确保 User.profile 等本文件内定义的 relationship target 也完成解析
     from app.db.models import Base

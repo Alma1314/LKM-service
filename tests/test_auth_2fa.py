@@ -505,14 +505,14 @@ class TestDeleteNot2FAGated:
     async def should_not_gate_user_delete_with_mfa(self, client: Any, db: AsyncSession):
         """有有效 token 即可删除：删除不由 2FA 门禁拦截（不再返回 401 code=4）。
 
-        注意：RBAC 迁移后，论坛删除路由先在 check_owner 判定（未拥有 forum.owner_delete
-        且非属主时，对不存在的帖子也统一返回 403 以免泄露资源存在性），故此处断言 403
-        而非旧的 404——核心意图仍是非 2FA 门禁。
+        注意：RBAC 迁移后，统一内容删除路由先在 check_owner 判定（未拥有
+        content.owner_delete 且非属主时，对不存在的内容也统一返回 403 以免泄露资源
+        存在性），故此处断言 403 而非旧的 404——核心意图仍是非 2FA 门禁。
         """
         user = await _create_user(db, username="delete_nogate")
         token = create_access_token(
             user_id=user.id, account_level="normal", role="member"
         )
-        resp = await client.delete("/api/v1/forum/posts/999999", headers=_auth(token))
+        resp = await client.delete("/api/v1/content/items/999999", headers=_auth(token))
         # 能走到权限判定（而非被 2FA 门禁拦住）→ 不再是 401 code=4
         assert resp.status_code == 403

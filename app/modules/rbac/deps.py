@@ -2,9 +2,9 @@
 
 ``RequirePermission(permission)`` 是全局权限点依赖工厂，供路由参数使用::
 
-    @router.post("/posts")
-    async def create_post(
-        cur: CurrentUser = Depends(RequirePermission(Permission.forum_post_create)),
+    @router.post("/content")
+    async def create_content(
+        cur: CurrentUser = Depends(RequirePermission(Permission.content_create)),
         ...
     ): ...
 

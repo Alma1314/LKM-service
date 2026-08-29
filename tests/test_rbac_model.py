@@ -16,10 +16,10 @@ async def test_role_permission_unique(db: DB) -> None:
 
 
 async def test_role_permission_columns(db: DB) -> None:
-    row = RolePermission(role_name="normal:member", permission="forum.post_create")
+    row = RolePermission(role_name="normal:member", permission="content.create")
     db.add(row)
     await db.flush()
     got = (await db.execute(select(RolePermission))).scalars().one()
     assert got.role_name == "normal:member"
-    assert got.permission == "forum.post_create"
+    assert got.permission == "content.create"
     assert got.id is not None

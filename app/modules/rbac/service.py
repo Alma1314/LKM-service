@@ -51,7 +51,7 @@ async def check_owner(
     """对象级权限断言：拥有该 owner 权限点（admin 代管/板块负责人）即放行；
     否则查库判 ``resource.{id_field} == cur.id``。不满足抛 FORBIDDEN。
 
-    *permission* 是对象级权限点（如 ``forum_owner_delete``）；非属主的管理员
+    *permission* 是对象级权限点（如 ``content_owner_delete``）；非属主的管理员
     通过拥有该权限点获得代管资格（如 super_admin）。
     """
     role = composible_role(cur.account_level, cur.role)

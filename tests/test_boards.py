@@ -127,12 +127,14 @@ class TestBoardService:
             db, BoardCreate(slug="lim", title="L", daily_post_limit=1), owner
         )
         user = await _user(db, "u")
-        from app.modules.forum.schemas import PostCreate
-        from app.modules.forum.service import create_post
+        from app.modules.content.schemas import ContentItemCreate
+        from app.modules.content.service import create_item
 
-        # 第一帖通过
+        # 第一帖通过（content 的 discussion 帖发帖即走 check_post_allowed）
         await check_post_allowed(db, b.id, user)
-        await create_post(db, user, PostCreate(title="一", content="x", board_id=b.id))
+        await create_item(
+            db, user, ContentItemCreate(title="一", content="x", board_id=b.id)
+        )
         # 第二帖触限
         with pytest.raises(BizError) as e:
             await check_post_allowed(db, b.id, user)

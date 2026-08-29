@@ -4,13 +4,14 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
 
 import strawberry
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
-from strawberry.fastapi import GraphQLRouter
+from strawberry.fastapi import BaseContext, GraphQLRouter
 from strawberry.tools import merge_types
 
 from app.api.router import api_router
@@ -28,8 +29,18 @@ from app.db.session import (
     get_read_session as get_graphql_session,  # GraphQL 仅 Query(纯读)，避免空提交
 )
 from app.modules.auth.service_passkey import cleanup_expired_challenges
-from app.modules.forum.graphql import GraphQLContext
 from app.ws.manager import manager
+
+@dataclass
+class GraphQLContext(BaseContext):
+    """GraphQL 请求上下文：持有当前请求的数据库会话（只读查询）。
+
+    会话由 GraphQLRouter 的 context_getter 经 FastAPI 依赖注入，与 REST 端点共用
+    同一会话依赖，便于测试 override。讨论帖查询已统一由 content 模块承载。
+    """
+
+    db: AsyncSession
+
 
 request_logger = logging.getLogger("lkm.http")
 
@@ -47,7 +58,6 @@ def _register_all_errors() -> None:
     import app.modules.columns.errors
     import app.modules.exam.errors
     import app.modules.files.errors
-    import app.modules.forum.errors
     import app.modules.points.errors
     import app.modules.projects.errors
     import app.modules.qa.errors
@@ -133,12 +143,11 @@ def create_app() -> FastAPI:
     from app.modules.blog.graphql import BlogQuery
     from app.modules.columns.graphql import ColumnsQuery
     from app.modules.content.graphql import ContentQuery
-    from app.modules.forum.graphql import Query as ForumQuery
     from app.modules.projects.graphql import ProjectsQuery
 
     merged_query = merge_types(
         "Query",
-        (ForumQuery, ContentQuery, ArticlesQuery, BlogQuery, ColumnsQuery, ProjectsQuery),
+        (ContentQuery, ArticlesQuery, BlogQuery, ColumnsQuery, ProjectsQuery),
     )
     merged_schema = strawberry.Schema(query=merged_query)
     graphql_router = GraphQLRouter(

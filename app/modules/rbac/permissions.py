@@ -15,11 +15,6 @@ class Permission(StrEnum):
     # member 域
     comment_create = "member.comment_create"
     avatar_update = "member.avatar_update"
-    # forum 域
-    forum_post_create = "forum.post_create"
-    forum_post_like = "forum.post_like"
-    forum_comment_create = "forum.comment_create"
-    forum_view_hidden = "forum.view_hidden"
     # content 域（统一内容模型）
     content_create = "content.create"
     content_comment_create = "content.comment_create"
@@ -55,8 +50,6 @@ class Permission(StrEnum):
     article_owner_comment_delete = "article.owner_comment_delete"
     column_owner_publish = "column.owner_publish"
     board_owner_manage = "board.owner_manage"
-    forum_owner_delete = "forum.owner_delete"
-    forum_owner_comment_delete = "forum.owner_comment_delete"
     content_owner_delete = "content.owner_delete"
     file_owner_delete = "file.owner_delete"
     file_owner_update = "file.owner_update"
@@ -85,9 +78,6 @@ DEFAULT_GRANTS: dict[str, tuple[Grant, ...]] = {
     "normal:member": (
         Grant(Permission.comment_create),
         Grant(Permission.avatar_update),
-        Grant(Permission.forum_post_create),
-        Grant(Permission.forum_post_like),
-        Grant(Permission.forum_comment_create),
         Grant(Permission.content_create),
         Grant(Permission.content_comment_create),
         Grant(Permission.content_like),
@@ -100,9 +90,6 @@ DEFAULT_GRANTS: dict[str, tuple[Grant, ...]] = {
     "normal:columnist": (
         Grant(Permission.comment_create),
         Grant(Permission.avatar_update),
-        Grant(Permission.forum_post_create),
-        Grant(Permission.forum_post_like),
-        Grant(Permission.forum_comment_create),
         Grant(Permission.content_create),
         Grant(Permission.content_comment_create),
         Grant(Permission.content_like),
@@ -116,9 +103,6 @@ DEFAULT_GRANTS: dict[str, tuple[Grant, ...]] = {
     "normal:author": (
         Grant(Permission.comment_create),
         Grant(Permission.avatar_update),
-        Grant(Permission.forum_post_create),
-        Grant(Permission.forum_post_like),
-        Grant(Permission.forum_comment_create),
         Grant(Permission.content_create),
         Grant(Permission.content_comment_create),
         Grant(Permission.content_like),
@@ -133,9 +117,6 @@ DEFAULT_GRANTS: dict[str, tuple[Grant, ...]] = {
     "admin:org_member": (
         Grant(Permission.comment_create),
         Grant(Permission.avatar_update),
-        Grant(Permission.forum_post_create),
-        Grant(Permission.forum_post_like),
-        Grant(Permission.forum_comment_create),
         Grant(Permission.content_create),
         Grant(Permission.content_comment_create),
         Grant(Permission.content_like),
@@ -146,14 +127,10 @@ DEFAULT_GRANTS: dict[str, tuple[Grant, ...]] = {
         Grant(Permission.projects_application_create),
         Grant(Permission.admin_dashboard),
         Grant(Permission.admin_reports_view),
-        Grant(Permission.forum_view_hidden),
     ),
     "admin:super_admin": (
         Grant(Permission.comment_create),
         Grant(Permission.avatar_update),
-        Grant(Permission.forum_post_create),
-        Grant(Permission.forum_post_like),
-        Grant(Permission.forum_comment_create),
         Grant(Permission.content_create),
         Grant(Permission.content_comment_create),
         Grant(Permission.content_like),
@@ -177,13 +154,10 @@ DEFAULT_GRANTS: dict[str, tuple[Grant, ...]] = {
         Grant(Permission.admin_reports_view),
         Grant(Permission.admin_users_manage),
         Grant(Permission.admin_content_review),
-        Grant(Permission.forum_view_hidden),
         Grant(Permission.board_owner_manage),
         Grant(Permission.article_owner_publish),
         Grant(Permission.article_owner_comment_delete),
         Grant(Permission.column_owner_publish),
-        Grant(Permission.forum_owner_delete),
-        Grant(Permission.forum_owner_comment_delete),
         Grant(Permission.content_owner_delete),
         Grant(Permission.file_owner_delete),
         Grant(Permission.file_owner_update),

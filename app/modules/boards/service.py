@@ -246,15 +246,17 @@ async def check_post_allowed(db: AsyncSession, board_id: int, user_id: int) -> N
         if passed is None:
             raise BizError(BoardErr.CERTIFICATION_REQUIRED)
     if board.daily_post_limit > 0:
-        from app.db.models import ForumPost
+        from app.db.models import ContentItem
+        from app.modules.content.models import ContentType
 
         today_start = now_iso().replace(hour=0, minute=0, second=0, microsecond=0)
         cnt = (
             await db.scalar(
-                select(func.count(ForumPost.id)).where(
-                    ForumPost.author_id == user_id,
-                    ForumPost.board_id == board_id,
-                    ForumPost.created_at >= today_start,
+                select(func.count(ContentItem.id)).where(
+                    ContentItem.author_id == user_id,
+                    ContentItem.board_id == board_id,
+                    ContentItem.content_type == ContentType.DISCUSSION,
+                    ContentItem.created_at >= today_start,
                 )
             )
             or 0

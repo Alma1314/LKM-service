@@ -25,7 +25,6 @@ from app.modules.blog.service import (
 )
 from app.modules.common import ApiResp
 from app.modules.content.service import delete_item as delete_content_item_svc
-from app.modules.forum.service import delete_post as delete_forum_post_svc
 from app.modules.rbac.permissions import Permission
 
 from .deps import get_real_client_ip, require_admin_2fa
@@ -50,28 +49,6 @@ async def _audit_admin_delete(
         detail=f"{detail} by admin={admin_id}",
         ip_address=get_real_client_ip(request),
     )
-
-
-@router.delete("/post/{post_id}", response_model=ApiResp[dict[str, Any]])
-@respond
-async def admin_delete_post(
-    post_id: int,
-    request: Request,
-    cur: CurrentUser = require_admin_2fa,
-    db: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
-    """管理员删除用户帖子。"""
-    await require_permission(db, cur, Permission.admin_content_review)
-    author_id = await delete_forum_post_svc(db, post_id, cur.id, as_admin=True)
-    await _audit_admin_delete(
-        db,
-        request,
-        cur.id,
-        author_id,
-        "admin_delete_post",
-        f"post={post_id}",
-    )
-    return {"ok": True}
 
 
 @router.delete("/item/{item_id}", response_model=ApiResp[dict[str, Any]])

@@ -2,8 +2,8 @@
 
 from app.core.err import ERRTABLE, CommonErr, ErrCode
 from app.modules.columns.errors import ColumnErr
+from app.modules.content.errors import ContentErr
 from app.modules.files.errors import FileErr
-from app.modules.forum.errors import ForumErr
 
 
 def test_all_error_modules_register_without_duplicate() -> None:
@@ -13,13 +13,13 @@ def test_all_error_modules_register_without_duplicate() -> None:
     import app.modules.auth.errors
     import app.modules.blog.errors
     import app.modules.columns.errors
+    import app.modules.content.errors
     import app.modules.files.errors
-    import app.modules.forum.errors
     import app.modules.starhope.errors  # noqa: F401
 
     # 抽样验证几个模块错误码确实已注册（否则 map_err 会 KeyError 转 500）
     samples: list[ErrCode] = [
-        ForumErr.POST_NOT_FOUND,
+        ContentErr.CONTENT_NOT_FOUND,
         FileErr.NOT_FOUND,
         ColumnErr.NOT_FOUND,
         CommonErr.INTERNAL_ERROR,

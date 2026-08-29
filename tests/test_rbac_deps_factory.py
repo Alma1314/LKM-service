@@ -33,11 +33,11 @@ async def _check(db: DB, user: CurrentUser, perm: Permission) -> CurrentUser:
 async def test_granted_role_passes(db: DB) -> None:
     db.add(
         RolePermission(
-            role_name="normal:member", permission=Permission.forum_post_create.value
+            role_name="normal:member", permission=Permission.content_create.value
         )
     )
     await db.flush()
-    got = await _check(db, _actor(1, "normal", "member"), Permission.forum_post_create)
+    got = await _check(db, _actor(1, "normal", "member"), Permission.content_create)
     assert got is not None
     assert got.id == 1
 
@@ -45,7 +45,7 @@ async def test_granted_role_passes(db: DB) -> None:
 async def test_ungranted_role_forbidden(db: DB) -> None:
     db.add(
         RolePermission(
-            role_name="normal:member", permission=Permission.forum_post_create.value
+            role_name="normal:member", permission=Permission.content_create.value
         )
     )
     await db.flush()
@@ -58,4 +58,4 @@ async def test_ungranted_role_forbidden(db: DB) -> None:
 
 async def test_no_role_row_forbidden(db: DB) -> None:
     with pytest.raises(BizError):
-        await _check(db, _actor(3, "local", "member"), Permission.forum_post_create)
+        await _check(db, _actor(3, "local", "member"), Permission.content_create)

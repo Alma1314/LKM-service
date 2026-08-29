@@ -362,7 +362,7 @@ async def _fetch_blog(
             created_at=r.created_at,
             sort_score=0.0,
             board_id=r.board_id,
-            url=f"/blog/posts/{r.slug}" if r.slug else f"/forum/boards/{r.board_id}",
+            url=f"/blog/posts/{r.slug}" if r.slug else f"/content/boards/{r.board_id}",
         )
         for r in rows
     ]
