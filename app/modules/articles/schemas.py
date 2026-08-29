@@ -40,17 +40,6 @@ class ArticleDetail(ArticleListItem):
         return []
 
 
-class TagItem(BaseModel):
-    name: str
-    article_count: int
-
-
-class AboutItem(BaseModel):
-    title: str
-    description: str
-    maintainer: str
-
-
 class CategoryCreate(BaseModel):
     slug: str = Field(..., min_length=1, max_length=50, pattern=r"^[a-z0-9-]+$")
     title: str = Field(..., min_length=1, max_length=100)

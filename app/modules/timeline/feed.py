@@ -26,11 +26,13 @@ from app.db.models import (
     Article,
     ColumnPost,
     ColumnPostStatus,
+    ContentItem,
     ForumPost,
     Project,
     QAQuestion,
     User,
 )
+from app.modules.content.models import ContentStatus
 from app.modules.timeline.schemas import FeedItem
 
 _PREVIEW_LEN = 150
@@ -314,15 +316,64 @@ async def _fetch_project(
     ]
 
 
+async def _fetch_blog(
+    db: AsyncSession,
+    author_ids: set[int] | None,
+    board_ids: set[int] | None,
+    before_time: datetime | None,
+    before_id: int,
+    limit: int,
+) -> list[FeedItem]:
+    """博客发布产物（统一内容表中 content_type==blog_post）。
+
+    blog_post 只落 content_items、无独立分表源（forum/article/column/qa 走各自旧表），
+    故单独从 content_items 补源，避免与其他源重复。
+    """
+    conditions: list[Any] = [
+        ContentItem.content_type == "blog_post",
+        ContentItem.status == ContentStatus.PUBLISHED,
+    ]
+    if author_ids is not None:
+        conditions.append(ContentItem.author_id.in_(author_ids))
+    if before_time is not None:
+        conditions.extend(
+            _before_conds(ContentItem.created_at, ContentItem.id, before_time, before_id)
+        )
+    stmt = (
+        select(ContentItem)
+        .where(*conditions)
+        .order_by(ContentItem.created_at.desc(), ContentItem.id.desc())
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    names = await _author_map(db, {r.author_id for r in rows if r.author_id})
+    return [
+        FeedItem(
+            item_type="blog",
+            id=r.id,
+            author_id=r.author_id,
+            author_name=names.get(r.author_id or -1, r.publisher or ""),
+            title=r.title,
+            content_preview=_preview_of(r.excerpt or r.content),
+            created_at=r.created_at,
+            sort_score=0.0,
+            board_id=r.board_id,
+            url=f"/blog/posts/{r.slug}" if r.slug else f"/forum/boards/{r.board_id}",
+        )
+        for r in rows
+    ]
+
+
 SOURCES: dict[str, Any] = {
     "forum": _fetch_forum,
     "article": _fetch_article,
     "column": _fetch_column,
     "qa": _fetch_qa,
     "project": _fetch_project,
+    "blog": _fetch_blog,
 }
 
 # follow 模式参与的源（按关注作者过滤；forum 额外按关注版块）
-FOLLOW_SOURCES: list[str] = ["forum", "column", "qa", "project"]
+FOLLOW_SOURCES: list[str] = ["forum", "column", "qa", "project", "blog"]
 # hot 模式参与的源（全站、不按关注过滤、包含无作者外键的 Article）
-HOT_SOURCES: list[str] = ["forum", "article", "column", "qa", "project"]
+HOT_SOURCES: list[str] = ["forum", "article", "column", "qa", "project", "blog"]

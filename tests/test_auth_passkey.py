@@ -146,7 +146,7 @@ class TestBeginPasskeyRegistration:
 
     async def should_include_exclude_credentials(self, db):
         user = await _reg_normal(db)
-        await _register_passkey(db, user.id, "cred-1")
+        await _register_passkey(db, user.id, _b64(b"cred-1"))
         result = await _service().begin_passkey_registration(db, user.id)
         excludes = result["public_key"]["excludeCredentials"]
         assert len(excludes) == 1
@@ -298,7 +298,7 @@ class TestCompletePasskeyLogin:
     async def should_succeed_passkey_login_for_normal_user(self, db):
         user = await _reg_normal(db)
         key = _generate_ec_key()
-        cred_id = "my-credential-id"
+        cred_id = _b64(b"my-credential-id")
         await _register_passkey(db, user.id, cred_id, key=key)
 
         svc = _service()
@@ -337,7 +337,7 @@ class TestCompletePasskeyLogin:
     async def should_increment_sign_count_on_login(self, db):
         user = await _reg_normal(db)
         key = _generate_ec_key()
-        cred_id = "counter-cred"
+        cred_id = _b64(b"counter-cred")
         await _register_passkey(db, user.id, cred_id, key=key)
 
         svc = _service()
@@ -387,7 +387,7 @@ class TestCompletePasskeyLogin:
 
     async def should_reject_missing_signature(self, db):
         user = await _reg_normal(db)
-        cred_id = "some-cred"
+        cred_id = _b64(b"some-cred")
         await _register_passkey(db, user.id, cred_id)
 
         svc = _service()
@@ -407,7 +407,7 @@ class TestCompletePasskeyLogin:
         user = await _reg_normal(db)
         key = _generate_ec_key()
         wrong_key = _generate_ec_key()
-        cred_id = "wrong-sig-cred"
+        cred_id = _b64(b"wrong-sig-cred")
         await _register_passkey(db, user.id, cred_id, key=key)
 
         svc = _service()
@@ -451,7 +451,7 @@ class TestCompletePasskeyLogin:
             .first()
         )
         key = _generate_ec_key()
-        cred_id = "local-cred"
+        cred_id = _b64(b"local-cred")
         await _register_passkey(db, user.id, cred_id, key=key)
 
         svc = _service()
@@ -487,7 +487,7 @@ class TestCompletePasskeyLogin:
     async def should_reject_wrong_rp_id(self, db):
         user = await _reg_normal(db)
         key = _generate_ec_key()
-        cred_id = "rp-mismatch"
+        cred_id = _b64(b"rp-mismatch")
         await _register_passkey(db, user.id, cred_id, key=key)
 
         svc = _service()

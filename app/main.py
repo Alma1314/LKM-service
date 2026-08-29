@@ -29,7 +29,6 @@ from app.db.session import (
 )
 from app.modules.auth.service_passkey import cleanup_expired_challenges
 from app.modules.forum.graphql import GraphQLContext
-from app.modules.forum.graphql import schema as forum_graphql_schema
 from app.ws.manager import manager
 
 request_logger = logging.getLogger("lkm.http")

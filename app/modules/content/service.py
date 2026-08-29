@@ -278,25 +278,6 @@ async def delete_item(
     return author_id
 
 
-async def update_item_status(
-    db: AsyncSession, item_id: int, status: str
-) -> ContentItemInfo:
-    item = await get_or_raise(
-        db, ContentItem, ContentErr.CONTENT_NOT_FOUND, ContentItem.id == item_id
-    )
-    item.status = status
-    if status == ContentStatus.PUBLISHED and not item.published_at:
-        item.published_at = _now()
-    await db.flush()
-    author_name = ""
-    if item.author_id:
-        names = await _author_map(db, [item.author_id])
-        author_name = names.get(item.author_id, "")
-    else:
-        author_name = item.publisher or ""
-    return _item_to_schema(item, author_name)
-
-
 def _now() -> _dt.datetime:
     return _dt.datetime.now(_dt.UTC)
 

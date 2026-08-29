@@ -92,11 +92,6 @@ class BlogCommentInfo(BaseModel):
 BlogCommentInfo.model_rebuild()
 
 
-class GitFileContent(BaseModel):
-    filepath: str
-    content: str
-
-
 class SeriesFileWrite(BaseModel):
     content: str
     message: str | None = None

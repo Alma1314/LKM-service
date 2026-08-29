@@ -8,7 +8,7 @@ from pydantic import BaseModel
 class FeedItem(BaseModel):
     """统一 feed 条目（跨源归一后）。"""
 
-    item_type: str  # forum | article | column | qa | project
+    item_type: str  # forum | article | column | qa | project | blog
     id: int
     author_id: int | None  # Article 无作者外键 → None
     author_name: str

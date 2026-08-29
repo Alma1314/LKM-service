@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import (
     Article,
     ArticleCategory,
+    ContentItem,
     Profile,
     User,
     UserFollow,
@@ -78,6 +79,24 @@ async def _article(db: AsyncSession, slug: str, title: str) -> int:
     return a.id
 
 
+async def _blog_item(
+    db: AsyncSession, author_id: int, board_id: int, title: str
+) -> int:
+    """博客发布产物：只落统一内容表 content_items（content_type=blog_post）。"""
+    item = ContentItem(
+        content_type="blog_post",
+        board_id=board_id,
+        author_id=author_id,
+        title=title,
+        excerpt=title + "摘要",
+        content=title + "正文",
+        status="published",
+    )
+    db.add(item)
+    await db.flush()
+    return item.id
+
+
 class TestFollow:
     async def test_follow_idempotent_and_list(self, db: AsyncSession) -> None:
         a = await _user(db, "alice")
@@ -130,6 +149,31 @@ class TestTimeline:
         types = {it.item_type for it in feed.items}
         assert "forum" in types
         assert "article" in types
+
+    async def test_hot_includes_blog_post(self, db: AsyncSession) -> None:
+        """博客发布产物（content_items/blog_post）应进入 hot 流（无分表源覆盖）。"""
+        author = await _user(db, "bob")
+        board = await _board(db, "blog")
+        await _blog_item(db, author, board, "博客发布")
+
+        feed = await get_timeline(db, user_id=None, mode="hot", cursor=None, limit=20)
+        blogs = [it for it in feed.items if it.item_type == "blog"]
+        assert any(it.title == "博客发布" for it in blogs)
+
+    async def test_follow_filters_blog_by_author(self, db: AsyncSession) -> None:
+        """blog_post 在 follow 模式按关注作者过滤。"""
+        me = await _user(db, "me")
+        friend = await _user(db, "friend")
+        stranger = await _user(db, "stranger")
+        board = await _board(db, "blog")
+        await _blog_item(db, friend, board, "关注人的博客")
+        await _blog_item(db, stranger, board, "陌生人的博客")
+        await follow_service.follow_user(db, me, friend)
+
+        feed = await get_timeline(db, user_id=me, mode="follow", cursor=None, limit=20)
+        blogs = [it.title for it in feed.items if it.item_type == "blog"]
+        assert "关注人的博客" in blogs
+        assert "陌生人的博客" not in blogs
 
     async def test_follow_filters_by_author(self, db: AsyncSession) -> None:
         me = await _user(db, "me")

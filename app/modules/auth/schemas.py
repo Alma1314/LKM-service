@@ -51,12 +51,6 @@ class ProfileUpdate(BaseModel):
     avatar: str | None = None
 
 
-class AccountLevel(StrEnum):
-    LOCAL = "local"
-    NORMAL = "normal"
-    ADMIN = "admin"
-
-
 class UserRegLocal(BaseModel):
     username: str = Field(..., min_length=1, max_length=100)
     password: Password = Field(...)

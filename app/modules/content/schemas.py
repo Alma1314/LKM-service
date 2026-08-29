@@ -92,8 +92,3 @@ class ContentCommentInfo(BaseModel):
     parent_id: int | None = None
     like_count: int
     created_at: datetime.datetime
-
-
-class ContentLikeStatus(BaseModel):
-    liked: bool
-    like_count: int
