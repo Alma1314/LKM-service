@@ -357,10 +357,18 @@ class TestProjectReadService:
 
 class TestProjectRoute:
     async def test_public_list(self, client, db):
-        resp = await client.get("/api/v1/projects")
+        # 只读列表端点已下线，改由 GraphQL projects 承担
+        resp = await client.post(
+            "/graphql",
+            json={
+                "query": "query { projects { items { id title } } }",
+                "variables": {},
+            },
+        )
         assert resp.status_code == 200
-        assert resp.json()["code"] == 0
-        assert resp.json()["data"]["items"] == []
+        body = resp.json()
+        assert "errors" not in body, body.get("errors")
+        assert body["data"]["projects"]["items"] == []
 
     async def test_submit_requires_auth(self, client, db):
         # 未登录 → 403

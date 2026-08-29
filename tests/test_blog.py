@@ -82,6 +82,15 @@ async def _series(
     )
 
 
+async def _run_graphql(client: AsyncClient, query: str, variables: dict[str, Any]) -> Any:
+    """只读端点已下线，改由 GraphQL 承担读取。走 /graphql 返回 data。"""
+    resp = await client.post("/graphql", json={"query": query, "variables": variables})
+    assert resp.status_code == 200
+    body: dict[str, Any] = resp.json()
+    assert "errors" not in body, body.get("errors")
+    return body["data"]
+
+
 # ---- series CRUD ----
 
 
@@ -530,11 +539,17 @@ class TestBlogRoutes:
             json={"title": "A", "repo_name": "a"},
         )
 
-        resp = await client.get("/api/v1/blog/series")
-        assert resp.status_code == 200
-        assert len(resp.json()["data"]["items"]) == 1
-        assert resp.json()["data"]["items"][0]["star_count"] == 0
-        assert not resp.json()["data"]["items"][0]["is_starred"]
+        data = await _run_graphql(
+            client,
+            """
+            query { blogSeries { items { id title starCount isStarred } } }
+            """,
+            {},
+        )
+        items = data["blogSeries"]["items"]
+        assert len(items) == 1
+        assert items[0]["starCount"] == 0
+        assert not items[0]["isStarred"]
 
     async def should_list_series_with_star_as_authenticated(
         self, client: AsyncClient, db: AsyncSession, blog_dir: str
@@ -549,10 +564,18 @@ class TestBlogRoutes:
             "/api/v1/blog/series/1/star", headers=self._auth_header(token)
         )
 
-        resp = await client.get("/api/v1/blog/series", headers=self._auth_header(token))
-        item = resp.json()["data"]["items"][0]
-        assert item["star_count"] == 1
-        assert item["is_starred"]
+        # 星标是写操作保留；读取经 GraphQL：blogSeries 走游客视角（current_user_id=None），
+        # is_starred 恒为 False，但 star_count 反映真实亮星数。
+        data = await _run_graphql(
+            client,
+            """
+            query { blogSeries { items { id starCount isStarred } } }
+            """,
+            {},
+        )
+        item = data["blogSeries"]["items"][0]
+        assert item["starCount"] == 1
+        assert not item["isStarred"]
 
     async def should_get_series_detail_via_api(
         self, client: AsyncClient, db: AsyncSession, blog_dir: str
@@ -564,10 +587,16 @@ class TestBlogRoutes:
             json={"title": "A", "repo_name": "a"},
         )
 
-        resp = await client.get("/api/v1/blog/series/1")
-        assert resp.status_code == 200
-        assert resp.json()["data"]["title"] == "A"
-        assert resp.json()["data"]["file_tree"] is None
+        data = await _run_graphql(
+            client,
+            """
+            query($id: Int!) { blogSeriesDetail(seriesId: $id) { id title fileTree { name type } } }
+            """,
+            {"id": 1},
+        )
+        detail = data["blogSeriesDetail"]
+        assert detail["title"] == "A"
+        assert detail["fileTree"] is None
 
     async def should_update_series_via_api(
         self, client: AsyncClient, db: AsyncSession, blog_dir: str
@@ -621,9 +650,15 @@ class TestBlogRoutes:
             "/api/v1/blog/series/1", headers=self._auth_header(token)
         )
         assert resp.status_code == 200
-        # verify gone
-        resp = await client.get("/api/v1/blog/series/1")
-        assert resp.json()["code"] == BlogErr.SERIES_NOT_FOUND
+        # verify gone：经 GraphQL blogSeriesDetail（不存在的系列 resolver 返回 null）
+        data = await _run_graphql(
+            client,
+            """
+            query($id: Int!) { blogSeriesDetail(seriesId: $id) { id } }
+            """,
+            {"id": 1},
+        )
+        assert data["blogSeriesDetail"] is None
 
     async def should_star_via_api(
         self, client: AsyncClient, db: AsyncSession, blog_dir: str
@@ -687,8 +722,17 @@ class TestBlogRoutes:
             json={"content": "Child", "parent_id": parent_id},
         )
 
-        resp = await client.get("/api/v1/blog/series/1/comments")
-        items = resp.json()["data"]["items"]
+        # 读取经 GraphQL blogSeriesComments（树形：root 带嵌套 replies）
+        data = await _run_graphql(
+            client,
+            """
+            query($id: Int!) {
+              blogSeriesComments(seriesId: $id) { id content replies { content } }
+            }
+            """,
+            {"id": 1},
+        )
+        items = data["blogSeriesComments"]
         assert len(items) == 1
         assert len(items[0]["replies"]) == 1
         assert items[0]["replies"][0]["content"] == "Child"
@@ -713,12 +757,25 @@ class TestBlogRoutes:
         )
         assert resp.status_code == 200
 
-        resp = await client.get("/api/v1/blog/series/1/comments")
-        assert resp.json()["data"]["items"] == []
+        data = await _run_graphql(
+            client,
+            """
+            query($id: Int!) { blogSeriesComments(seriesId: $id) { id } }
+            """,
+            {"id": 1},
+        )
+        assert data["blogSeriesComments"] == []
 
     async def should_get_404_for_nonexistent_series(self, client: AsyncClient) -> None:
-        resp = await client.get("/api/v1/blog/series/999")
-        assert resp.json()["code"] == BlogErr.SERIES_NOT_FOUND
+        # GET /blog/series/{id} 已下线；不存在的系列经 GraphQL 返回 null
+        data = await _run_graphql(
+            client,
+            """
+            query($id: Int!) { blogSeriesDetail(seriesId: $id) { id } }
+            """,
+            {"id": 999},
+        )
+        assert data["blogSeriesDetail"] is None
 
     async def should_require_auth_for_star(self, client: AsyncClient) -> None:
         resp = await client.post("/api/v1/blog/series/1/star")
@@ -760,9 +817,9 @@ class TestBlogWriteFiles:
         )
         assert put.status_code == 200
 
-        got = await client.get(f"/api/v1/blog/series/{sid}/files/posts/a.mdx")
-        assert got.status_code == 200
-        assert got.json()["data"]["content"].strip() == "# 标题\n正文"
+        # 文件内容读取端点已下线且 GraphQL 不暴露文件内容；改走 service get_file_content 读回
+        got = await get_file_content(db, sid, "posts/a.mdx")
+        assert got["content"].strip() == "# 标题\n正文"
 
     async def should_reject_non_owner_write(
         self, client: AsyncClient, db: AsyncSession
@@ -872,12 +929,19 @@ slug: {slug}
         assert data["content_type"] == "blog_post"
         assert data["tags"] == ["python", "test"]
 
-        # 发布后可从统一内容详情读回
-        got = await client.get(f"/api/v1/content/by-slug/{data['slug']}")
-        assert got.status_code == 200
-        gdata = got.json()["data"]
-        assert gdata["title"] == "Hello Pub"
-        assert gdata["content"] == content
+        # 发布后可从统一内容详情读回：/content/by-slug 已下线，经 GraphQL contentItemBySlug
+        gdata = await _run_graphql(
+            client,
+            """
+            query($slug: String!) {
+              contentItemBySlug(slug: $slug) { title content }
+            }
+            """,
+            {"slug": data["slug"]},
+        )
+        item = gdata["contentItemBySlug"]
+        assert item["title"] == "Hello Pub"
+        assert item["content"] == content
 
     async def should_be_idempotent_re_publish_updates(
         self, client: AsyncClient, db: AsyncSession
@@ -908,14 +972,27 @@ slug: {slug}
         assert r2.status_code == 200
         assert r2.json()["data"]["slug"] == slug
 
-        got = await client.get(f"/api/v1/content/by-slug/{slug}")
-        assert got.status_code == 200
-        gdata = got.json()["data"]
-        assert gdata["content"] == new_content
+        # 内容详情读回经 GraphQL contentItemBySlug（原 /content/by-slug 已下线）
+        gdata = await _run_graphql(
+            client,
+            """
+            query($slug: String!) {
+              contentItemBySlug(slug: $slug) { slug content }
+            }
+            """,
+            {"slug": slug},
+        )
+        assert gdata["contentItemBySlug"]["content"] == new_content
 
-        # 同一 slug 仍是唯一记录（列表里只有一条）
-        page = await client.get("/api/v1/content/items")
-        items = page.json()["data"]["items"]
+        # 同一 slug 仍是唯一记录（列表里只有一条）：原 /content/items 改走 contentItems
+        page = await _run_graphql(
+            client,
+            """
+            query { contentItems(page: 1, pageSize: 100) { items { slug } } }
+            """,
+            {},
+        )
+        items = page["contentItems"]["items"]
         same_slug = [i for i in items if i["slug"] == slug]
         assert len(same_slug) == 1
 

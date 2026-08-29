@@ -3,26 +3,18 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.cache import (
-    bump_collection_version,
-    cached_read,
-    collection_version,
-    make_key,
-)
+from app.core.cache import bump_collection_version
 from app.core.err import BizError, CommonErr, respond
-from app.db.session import get_read_session, get_session
+from app.db.session import get_session
 from app.modules.admin.deps import require_admin_2fa
 from app.modules.auth.deps import CurrentUser
-from app.modules.common import ApiResp, ListData, ModuleStatus
+from app.modules.common import ApiResp, ModuleStatus
 from app.modules.projects.schemas import (
     ProjectApplicationCreate,
     ProjectApplicationOut,
-    ProjectOut,
     ReviewProjectApplicationRequest,
 )
 from app.modules.projects.service import (
-    get_project_ex,
-    list_projects,
     review_application,
     submit_application,
 )
@@ -49,26 +41,6 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 @router.get("/status", response_model=ModuleStatus)
 async def projects_status() -> ModuleStatus:
     return _status()
-
-
-@router.get("", response_model=ApiResp[ListData[ProjectOut]])
-@respond
-async def project_list(
-    db: AsyncSession = Depends(get_read_session),
-) -> dict[str, object]:
-    async def load() -> dict[str, object]:
-        return {"items": await list_projects(db)}
-
-    ver = await collection_version("projects")
-    return await cached_read(make_key("projects:list", ver), 60, load)
-
-
-@router.get("/{project_id}", response_model=ApiResp[ProjectOut])
-@respond
-async def project_detail(
-    project_id: int, db: AsyncSession = Depends(get_read_session)
-) -> ProjectOut:
-    return await get_project_ex(db, project_id)
 
 
 @router.post("/applications", response_model=ApiResp[ProjectApplicationOut])

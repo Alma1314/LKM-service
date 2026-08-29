@@ -5,11 +5,13 @@ import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 
+import strawberry
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
 from strawberry.fastapi import GraphQLRouter
+from strawberry.tools import merge_types
 
 from app.api.router import api_router
 from app.core import logging as logger
@@ -128,8 +130,20 @@ def create_app() -> FastAPI:
         # 会话生命周期由 FastAPI 的 Depends 管理，解析器只读不关闭
         return GraphQLContext(db=db)
 
+    from app.modules.articles.graphql import ArticlesQuery
+    from app.modules.blog.graphql import BlogQuery
+    from app.modules.columns.graphql import ColumnsQuery
+    from app.modules.content.graphql import ContentQuery
+    from app.modules.forum.graphql import Query as ForumQuery
+    from app.modules.projects.graphql import ProjectsQuery
+
+    merged_query = merge_types(
+        "Query",
+        (ForumQuery, ContentQuery, ArticlesQuery, BlogQuery, ColumnsQuery, ProjectsQuery),
+    )
+    merged_schema = strawberry.Schema(query=merged_query)
     graphql_router = GraphQLRouter(
-        forum_graphql_schema,
+        merged_schema,
         path="/graphql",
         context_getter=_graphql_context,
     )

@@ -12,7 +12,6 @@ from app.modules.columns.schemas import (
     ColumnApplicationCreate,
     ColumnApplicationInfo,
     ColumnApplicationReview,
-    ColumnInfo,
     ColumnPlanData,
     ColumnPostCreate,
     ColumnPostInfo,
@@ -23,12 +22,8 @@ from app.modules.columns.service import (
     create_post,
     get_application,
     get_column,
-    get_column_by_slug,
     get_column_plan,
-    get_post,
     list_applications,
-    list_columns,
-    list_posts,
     review_application,
 )
 from app.modules.common import (
@@ -136,31 +131,6 @@ async def review_column_application(
     return await review_application(db, application_id, info, cur.id)
 
 
-@router.get("", response_model=ApiResp[PageData[ColumnInfo]])
-@respond
-async def get_columns(
-    db: AsyncSession = Depends(get_read_session),
-    pag: PaginateParams = Depends(PaginateDep()),
-) -> PageData[ColumnInfo]:
-    return await list_columns(db, page=pag.page, limit=pag.limit)
-
-
-@router.get("/by-slug/{slug}", response_model=ApiResp[ColumnInfo])
-@respond
-async def get_column_detail_by_slug(
-    slug: str, db: AsyncSession = Depends(get_read_session)
-) -> ColumnInfo:
-    return await get_column_by_slug(db, slug)
-
-
-@router.get("/{column_id}", response_model=ApiResp[ColumnInfo])
-@respond
-async def get_column_detail(
-    column_id: int, db: AsyncSession = Depends(get_read_session)
-) -> ColumnInfo:
-    return await get_column(db, column_id)
-
-
 @router.post("/{column_id}/posts", response_model=ApiResp[ColumnPostInfo])
 @respond
 async def publish_column_post(
@@ -179,19 +149,3 @@ async def publish_column_post(
     return await create_post(db, column_id, info, cur.id)
 
 
-@router.get("/{column_id}/posts", response_model=ApiResp[PageData[ColumnPostInfo]])
-@respond
-async def get_column_posts(
-    column_id: int,
-    db: AsyncSession = Depends(get_read_session),
-    pag: PaginateParams = Depends(PaginateDep()),
-) -> PageData[ColumnPostInfo]:
-    return await list_posts(db, column_id, page=pag.page, limit=pag.limit)
-
-
-@router.get("/{column_id}/posts/{post_id}", response_model=ApiResp[ColumnPostInfo])
-@respond
-async def get_column_post_detail(
-    column_id: int, post_id: int, db: AsyncSession = Depends(get_read_session)
-) -> ColumnPostInfo:
-    return await get_post(db, post_id, column_id=column_id)

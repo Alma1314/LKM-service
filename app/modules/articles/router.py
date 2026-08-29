@@ -1,25 +1,21 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import respond
 from app.db.models import ArticleComment
-from app.db.session import get_read_session, get_session
+from app.db.session import get_session
 from app.modules.articles.schemas import (
-    AboutItem,
-    ArticleCategory,
     ArticleCommentCreate,
     ArticleCommentOut,
     ArticleCreate,
     ArticleDetail,
     ArticleLikeStatus,
-    ArticleListItem,
     ArticleUpdate,
     CategoryCreate,
     CategoryOut,
     ReviewArticleRequest,
-    TagItem,
 )
 from app.modules.articles.service import (
     create_article_comment,
@@ -27,74 +23,20 @@ from app.modules.articles.service import (
     create_category_ex,
     delete_article_comment,
     delete_category_ex,
-    get_about,
-    get_article,
     hard_delete_article,
-    list_article_comments,
-    list_articles,
-    list_categories,
-    list_tags,
     review_article,
-    search_articles,
     soft_delete_article,
     toggle_article_like,
     update_article_ex,
     update_category_ex,
 )
 from app.modules.auth.deps import CurrentUser, get_current_user
-from app.modules.common import (
-    ApiResp,
-    ListData,
-    PageData,
-    PaginateDep,
-    PaginateParams,
-)
+from app.modules.common import ApiResp
 from app.modules.rbac.deps import RequirePermission
 from app.modules.rbac.permissions import Permission
 from app.modules.rbac.service import check_owner
 
 router = APIRouter(prefix="/articles", tags=["articles"])
-
-
-@router.get("", response_model=ApiResp[PageData[ArticleListItem]])
-@respond
-async def get_articles(
-    db: AsyncSession = Depends(get_read_session),
-    pag: PaginateParams = Depends(PaginateDep()),
-) -> PageData[ArticleListItem]:
-    return await list_articles(db, page=pag.page, limit=pag.limit)
-
-
-@router.get("/categories", response_model=ApiResp[ListData[ArticleCategory]])
-@respond
-async def get_article_categories(
-    db: AsyncSession = Depends(get_read_session),
-) -> dict[str, Any]:
-    return {"items": await list_categories(db)}
-
-
-@router.get("/tags", response_model=ApiResp[ListData[TagItem]])
-@respond
-async def get_article_tags(
-    db: AsyncSession = Depends(get_read_session),
-) -> dict[str, Any]:
-    return {"items": await list_tags(db)}
-
-
-@router.get("/search", response_model=ApiResp[PageData[ArticleListItem]])
-@respond
-async def search_articles_endpoint(
-    q: str = Query(..., min_length=1, max_length=100),
-    pag: PaginateParams = Depends(PaginateDep()),
-    db: AsyncSession = Depends(get_read_session),
-) -> PageData[ArticleListItem]:
-    return await search_articles(db, q=q, page=pag.page, limit=pag.limit)
-
-
-@router.get("/about", response_model=ApiResp[AboutItem])
-@respond
-async def get_about_endpoint() -> dict[str, str]:
-    return await get_about()
 
 
 @router.post("/{slug}/like", response_model=ApiResp[ArticleLikeStatus])
@@ -105,16 +47,6 @@ async def like_article(
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     return await toggle_article_like(db, slug, cur.id)
-
-
-@router.get("/{slug}/comments", response_model=ApiResp[ListData[ArticleCommentOut]])
-@respond
-async def get_article_comments(
-    slug: str,
-    db: AsyncSession = Depends(get_read_session),
-) -> dict[str, Any]:
-    # service 已返回带 profile 的 schema 列表，直接透传，避免二次 model_validate 丢失 profile
-    return {"items": await list_article_comments(db, slug)}
 
 
 @router.post("/{slug}/comments", response_model=ApiResp[ArticleCommentOut])
@@ -152,14 +84,6 @@ async def remove_article_comment(
     # service 层不再重复属主校验，故传 as_admin=True 跳过其内部 owner 检查。
     await delete_article_comment(db, comment_id, cur.id, as_admin=True)
     return None
-
-
-@router.get("/{slug}", response_model=ApiResp[ArticleDetail])
-@respond
-async def get_article_detail(
-    slug: str, db: AsyncSession = Depends(get_read_session)
-) -> ArticleDetail:
-    return await get_article(db, slug)
 
 
 # ——————— 写端点（均需 super_admin） ———————

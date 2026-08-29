@@ -1,9 +1,22 @@
 import datetime
+from typing import Any
 
+from httpx import AsyncClient
 from sqlalchemy import select
 
 from app.db.models import Article, ArticleCategory, Profile, User
 from app.modules.auth.security import create_access_token, hashpwd
+
+
+async def _run_graphql(client: AsyncClient, query: str, variables: dict[str, Any]) -> Any:
+    """只读端点已下线，改由 GraphQL 承担读取。走 /graphql 返回 data。"""
+    resp = await client.post(
+        "/graphql", json={"query": query, "variables": variables}
+    )
+    assert resp.status_code == 200
+    body: dict[str, Any] = resp.json()
+    assert "errors" not in body, body.get("errors")
+    return body["data"]
 
 # 分类 slug -> title 映射。news 沿用"科技新闻"以匹配 test_list_categories 断言；
 # 其余 slug 用其自身作为 title（仅测试定位用）。
@@ -83,89 +96,95 @@ async def test_list_articles_pagination(db, client):
     await _make_article(db, "a-2", "news")
     await _make_article(db, "a-3", "science")
 
-    resp = await client.get("/api/v1/articles", params={"page": 1, "limit": 2})
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["code"] == 0
-    assert body["data"]["total"] == 3
-    assert len(body["data"]["items"]) == 2
-    # Task 1:PageData 响应自动附带 X-Total 头
-    assert resp.headers.get("x-total") == "3"
+    data = await _run_graphql(
+        client,
+        """
+        query($page: Int!) {
+          articles(page: $page, pageSize: 2) { items { slug } total page pages }
+        }
+        """,
+        {"page": 1},
+    )
+    page_data = data["articles"]
+    assert page_data["total"] == 3
+    assert len(page_data["items"]) == 2
 
 
 async def test_get_article_detail(db, client):
     await _make_article(db, "a-1", "news")
 
-    resp = await client.get("/api/v1/articles/a-1")
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["code"] == 0
-    data = body["data"]
-    assert data["slug"] == "a-1"
-    assert data["content"] == "# 标题\n\n正文内容"
-    assert data["keywords"] == ["公告", "上线"]
-    assert data["reading_time"] >= 1
+    data = await _run_graphql(
+        client,
+        """
+        query($slug: String!) {
+          article(slug: $slug) {
+            slug content keywords readingTime
+          }
+        }
+        """,
+        {"slug": "a-1"},
+    )
+    detail = data["article"]
+    assert detail["slug"] == "a-1"
+    assert detail["content"] == "# 标题\n\n正文内容"
+    assert detail["keywords"] == ["公告", "上线"]
+    assert detail["readingTime"] >= 1
 
 
 async def test_get_article_not_found(db, client):
-    resp = await client.get("/api/v1/articles/does-not-exist")
-    assert resp.status_code == 404
+    # 不存在的 slug：GraphQL resolver 返回 null
+    resp = await client.post(
+        "/graphql",
+        json={
+            "query": "query($slug: String!) { article(slug: $slug) { slug } }",
+            "variables": {"slug": "does-not-exist"},
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["article"] is None
 
 
 async def test_list_categories(db, client):
     await _make_article(db, "a-1", "news")
     await _make_article(db, "a-2", "science")
 
-    resp = await client.get("/api/v1/articles/categories")
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["code"] == 0
-    items = body["data"]["items"]
+    data = await _run_graphql(
+        client,
+        """
+        query { articleCategories { slug name articleCount } }
+        """,
+        {},
+    )
+    items = data["articleCategories"]
     slugs = {c["slug"]: c for c in items}
     assert slugs["news"]["name"] == "科技新闻"
-    assert slugs["news"]["article_count"] == 1
-    assert slugs["science"]["article_count"] == 1
-
-
-async def test_categories_route_not_swallowed_by_slug(db, client):
-    resp = await client.get("/api/v1/articles/categories")
-    # 若被 /{slug} 吞掉，会返回 404（slug=categories 不存在）；正确应是分类列表
-    assert resp.status_code == 200
-    assert resp.json()["code"] == 0
-
-
-async def test_list_tags(db, client):
-    await _make_article(db, "a-1", "news")
-    resp = await client.get("/api/v1/articles/tags")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["code"] == 0
-    # 只读测试；无 tag 也会返回 items 列表（可能为空），端点结构正确即可
-    assert "items" in body["data"]
+    assert slugs["news"]["articleCount"] == 1
+    assert slugs["science"]["articleCount"] == 1
 
 
 async def test_search_articles_sqlite(db, client):
     await _make_article(db, "a-1", "news", title="机器学习入门")
-    resp = await client.get("/api/v1/articles/search", params={"q": "机器"})
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["code"] == 0
-    assert body["data"]["total"] >= 1
+    data = await _run_graphql(
+        client,
+        """
+        query($q: String!) {
+          searchArticles(q: $q, page: 1) { items { slug } total }
+        }
+        """,
+        {"q": "机器"},
+    )
+    assert data["searchArticles"]["total"] >= 1
 
 
 async def test_search_requires_q(db, client):
-    resp = await client.get("/api/v1/articles/search")
-    assert resp.status_code == 422
-
-
-async def test_about(db, client):
-    resp = await client.get("/api/v1/articles/about")
+    # q 为必填参数：缺失时 GraphQL 返回校验/执行错误
+    resp = await client.post(
+        "/graphql",
+        json={"query": "query { searchArticles { items { slug } } }", "variables": {}},
+    )
     assert resp.status_code == 200
-    assert resp.json()["code"] == 0
-    assert "title" in resp.json()["data"]
+    body = resp.json()
+    assert "errors" in body
 
 
 async def test_like_toggle(db, client):
@@ -197,8 +216,12 @@ async def test_comment_create_and_count(db, client):
     )
     assert r.status_code == 200
     assert r.json()["data"]["content"] == "好文！"
-    detail = (await client.get("/api/v1/articles/a-1")).json()["data"]
-    assert detail["comments"] == 1
+    detail = await _run_graphql(
+        client,
+        "query($slug: String!) { article(slug: $slug) { comments } }",
+        {"slug": "a-1"},
+    )
+    assert detail["article"]["comments"] == 1
 
 
 async def test_comment_reply(db, client):
@@ -219,8 +242,13 @@ async def test_comment_reply(db, client):
     )
     assert child.status_code == 200
     assert child.json()["data"]["parent_id"] == parent["id"]
-    listed = (await client.get("/api/v1/articles/a-1/comments")).json()["data"]["items"]
-    assert len(listed) == 2
+    # 评论总数改为经 GraphQL article.comments 读回
+    detail = await _run_graphql(
+        client,
+        "query($slug: String!) { article(slug: $slug) { comments } }",
+        {"slug": "a-1"},
+    )
+    assert detail["article"]["comments"] == 2
 
 
 async def test_comment_requires_auth(db, client):
@@ -251,5 +279,9 @@ async def test_delete_comment_owner_only(db, client):
         f"/api/v1/articles/comments/{cmt_id}", headers=_auth(token)
     )
     assert ok.status_code == 200
-    detail = (await client.get("/api/v1/articles/a-1")).json()["data"]
-    assert detail["comments"] == 0
+    detail = await _run_graphql(
+        client,
+        "query($slug: String!) { article(slug: $slug) { comments } }",
+        {"slug": "a-1"},
+    )
+    assert detail["article"]["comments"] == 0

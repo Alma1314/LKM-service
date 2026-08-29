@@ -6,13 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.cache import (
     bump_collection_version,
     cache_invalidate,
-    cached_read,
-    collection_version,
     make_key,
 )
 from app.core.err import BizError, CommonErr, respond
 from app.db.models import Board
-from app.db.session import get_read_session, get_session
+from app.db.session import get_session
 from app.modules.admin.deps import require_admin_2fa
 from app.modules.auth.deps import CurrentUser, get_current_user
 from app.modules.boards.errors import BoardErr  # noqa: F401  (副作用注册已由 main 统一)
@@ -29,13 +27,12 @@ from app.modules.boards.service import (
     ban_user,
     create_board_ex,
     get_board_ex,
-    list_boards,
     review_application,
     submit_application,
     unban_user,
     update_board_ex,
 )
-from app.modules.common import ApiResp, ListData, ModuleStatus
+from app.modules.common import ApiResp, ModuleStatus
 from app.modules.rbac.deps import RequirePermission
 from app.modules.rbac.permissions import Permission, composible_role
 from app.modules.rbac.service import check_owner, role_has_permission
@@ -65,27 +62,6 @@ router = APIRouter(prefix="/boards", tags=["boards"])
 @router.get("/status", response_model=ModuleStatus)
 async def boards_status() -> ModuleStatus:
     return _status()
-
-
-@router.get("", response_model=ApiResp[ListData[BoardOut]])
-@respond
-async def board_list(db: AsyncSession = Depends(get_read_session)) -> dict[str, object]:
-    async def load() -> dict[str, object]:
-        return {"items": await list_boards(db)}
-
-    ver = await collection_version("boards")
-    return await cached_read(make_key("boards:list", ver), 60, load)
-
-
-@router.get("/{board_id}", response_model=ApiResp[BoardOut])
-@respond
-async def board_detail(
-    board_id: int, db: AsyncSession = Depends(get_read_session)
-) -> BoardOut:
-    async def load() -> BoardOut:
-        return BoardOut.model_validate(await get_board_ex(db, board_id))
-
-    return await cached_read(make_key("boards:item", board_id), 300, load)
 
 
 # 管理端
