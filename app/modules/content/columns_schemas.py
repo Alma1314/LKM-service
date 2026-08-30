@@ -4,7 +4,7 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.modules.columns.models import (
+from app.modules.content.column_models import (
     ColumnApplicationStatus,
     ColumnPostStatus,
     ColumnStatus,

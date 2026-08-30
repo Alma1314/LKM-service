@@ -24,7 +24,7 @@ def _ensure_models() -> None:
     # 各模块 ORM 模型（新增模块模型时必须在此登记，与 app.main 的 _register_all_errors 同理）
     import app.modules.auth.models
     import app.modules.blog.models
-    import app.modules.columns.models
+    import app.modules.content.column_models  # noqa: F401  # 预 import Column StrEnum 常量
     import app.modules.files.models  # noqa: F401  # 副作用导入：预注册 ORM 模型（LibraryFile）
 
     # 确保 User.profile 等本文件内定义的 relationship target 也完成解析

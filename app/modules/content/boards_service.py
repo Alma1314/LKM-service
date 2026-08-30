@@ -17,8 +17,8 @@ from app.db.models import (
     now_iso,
 )
 from app.db.repo import get_or_raise
-from app.modules.boards.errors import BoardErr
-from app.modules.boards.schemas import (
+from app.modules.content.errors import BoardErr
+from app.modules.content.boards_schemas import (
     BanRequest,
     BoardApplicationCreate,
     BoardApplicationOut,

@@ -8,16 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.err import BizError, CommonErr
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.security import create_access_token, hashpwd
-from app.modules.columns.errors import ColumnErr
-from app.modules.columns.models import ColumnApplicationStatus
-from app.modules.columns.schemas import (
+from app.modules.content.errors import ColumnErr
+from app.modules.content.column_models import ColumnApplicationStatus
+from app.modules.content.columns_schemas import (
     ColumnApplicationCreate,
     ColumnApplicationInfo,
     ColumnApplicationReview,
     ColumnPostCreate,
     ColumnPostInfo,
 )
-from app.modules.columns.service import (
+from app.modules.content.columns_service import (
     create_application,
     create_post,
     get_application,
@@ -282,7 +282,7 @@ class TestColumnRoutes:
         }
 
         response = await client.post(
-            "/api/v1/columns/applications", json=application_data
+            "/api/v1/content/columns/applications", json=application_data
         )
 
         assert response.status_code == 403
@@ -293,7 +293,7 @@ class TestColumnRoutes:
     ) -> None:
         user_id, token = await self._setup_user(db)
         resp = await client.post(
-            "/api/v1/columns/applications",
+            "/api/v1/content/columns/applications",
             headers={"Authorization": f"Bearer {token}"},
             json={
                 "title": "数学专栏",
@@ -311,7 +311,7 @@ class TestColumnRoutes:
     ) -> None:
         _, token = await self._setup_user(db)
         resp = await client.get(
-            "/api/v1/columns/applications",
+            "/api/v1/content/columns/applications",
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 403
@@ -325,7 +325,7 @@ class TestColumnRoutes:
         user_id, _ = await self._setup_user(db)
         await _application(db, user_id=user_id)
         resp = await client.post(
-            "/api/v1/columns/applications/1/review",
+            "/api/v1/content/columns/applications/1/review",
             json={"status": "approved"},
         )
         assert resp.status_code == 403
@@ -341,7 +341,7 @@ class TestColumnRoutes:
             user_id=intruder_id, account_level="normal", role="member"
         )
         resp = await client.post(
-            f"/api/v1/columns/{column['id']}/posts",
+            f"/api/v1/content/columns/{column['id']}/posts",
             headers={"Authorization": f"Bearer {token}"},
             json={"title": "越权帖", "content": "x"},
         )

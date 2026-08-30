@@ -28,6 +28,7 @@ from app.db.session import (
 from app.db.session import (
     get_read_session as get_graphql_session,  # GraphQL 仅 Query(纯读)，避免空提交
 )
+from app.modules.auth.deps import CurrentUser, get_optional_user
 from app.modules.auth.service_passkey import cleanup_expired_challenges
 from app.ws.manager import manager
 
@@ -40,6 +41,7 @@ class GraphQLContext(BaseContext):
     """
 
     db: AsyncSession
+    user_id: int | None = None
 
 
 request_logger = logging.getLogger("lkm.http")
@@ -54,13 +56,11 @@ def _register_all_errors() -> None:
     import app.modules.articles.errors
     import app.modules.auth.errors
     import app.modules.blog.errors
-    import app.modules.boards.errors
-    import app.modules.columns.errors
+    import app.modules.content.errors  # 内容域统一错误码（Content/Board/Column/QA）
     import app.modules.exam.errors
     import app.modules.files.errors
     import app.modules.points.errors
     import app.modules.projects.errors
-    import app.modules.qa.errors
     import app.modules.starhope.errors
 
 
@@ -135,19 +135,31 @@ def create_app() -> FastAPI:
 
     async def _graphql_context(
         db: AsyncSession = Depends(get_graphql_session),
+        cur: CurrentUser | None = Depends(get_optional_user),
     ) -> GraphQLContext:
-        # 会话生命周期由 FastAPI 的 Depends 管理，解析器只读不关闭
-        return GraphQLContext(db=db)
+        # 会话生命周期由 FastAPI 的 Depends 管理，解析器只读不关闭；
+        # cur 可选（带 Bearer 则解析出 user_id，供关注流/时间线等按登录态个性化）。
+        return GraphQLContext(db=db, user_id=cur.id if cur is not None else None)
 
     from app.modules.articles.graphql import ArticlesQuery
     from app.modules.blog.graphql import BlogQuery
-    from app.modules.columns.graphql import ColumnsQuery
+    from app.modules.content.columns_graphql import ColumnsQuery
     from app.modules.content.graphql import ContentQuery
+    from app.modules.follow.graphql import FollowQuery
     from app.modules.projects.graphql import ProjectsQuery
+    from app.modules.timeline.graphql import TimelineQuery
 
     merged_query = merge_types(
         "Query",
-        (ContentQuery, ArticlesQuery, BlogQuery, ColumnsQuery, ProjectsQuery),
+        (
+            ContentQuery,
+            ArticlesQuery,
+            BlogQuery,
+            ColumnsQuery,
+            ProjectsQuery,
+            TimelineQuery,
+            FollowQuery,
+        ),
     )
     merged_schema = strawberry.Schema(query=merged_query)
     graphql_router = GraphQLRouter(

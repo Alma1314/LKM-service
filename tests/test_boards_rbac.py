@@ -61,7 +61,7 @@ async def test_member_can_apply(db: DB, client: Client) -> None:
     await _seed_perm(db, "normal:member", "boards.create_application")
     u = await _mk_user(db, "bm", level="normal", role="member")
     r = await client.post(
-        "/api/v1/boards/applications",
+        "/api/v1/content/boards/applications",
         headers=_headers(u),
         json={"title": "t", "description": "d", "reason": "r", "slug": "b1"},
     )
@@ -86,7 +86,7 @@ async def test_org_cannot_review_application(db: DB, client: Client) -> None:
     await db.flush()
     _set_admin_mfa_cookie(client, u)
     r = await client.post(
-        "/api/v1/boards/applications/1/review", json={"approve": True}
+        "/api/v1/content/boards/applications/1/review", json={"approve": True}
     )
     assert r.status_code == 403
 
@@ -108,7 +108,7 @@ async def test_super_admin_can_review_application(db: DB, client: Client) -> Non
     await db.flush()
     _set_admin_mfa_cookie(client, u)
     r = await client.post(
-        "/api/v1/boards/applications/1/review", json={"approve": True}
+        "/api/v1/content/boards/applications/1/review", json={"approve": True}
     )
     assert r.status_code == 200
     assert r.json()["data"]["status"] == "approved"
@@ -116,14 +116,14 @@ async def test_super_admin_can_review_application(db: DB, client: Client) -> Non
 
 async def test_owner_can_update_board(db: DB, client: Client) -> None:
     from app.db.models import Board
-    from app.modules.boards.schemas import BoardCreate
-    from app.modules.boards.service import create_board_ex
+    from app.modules.content.boards_schemas import BoardCreate
+    from app.modules.content.boards_service import create_board_ex
 
     owner = await _mk_user(db, "ow1")
     await create_board_ex(db, BoardCreate(slug="ob1", title="原题"), owner.id)
     board_id = await db.scalar(select(Board.id).where(Board.slug == "ob1"))
     r = await client.patch(
-        f"/api/v1/boards/{board_id}",
+        f"/api/v1/content/boards/{board_id}",
         headers=_headers(owner),
         json={"title": "新题"},
     )
@@ -133,15 +133,15 @@ async def test_owner_can_update_board(db: DB, client: Client) -> None:
 
 async def test_non_owner_update_forbidden(db: DB, client: Client) -> None:
     from app.db.models import Board
-    from app.modules.boards.schemas import BoardCreate
-    from app.modules.boards.service import create_board_ex
+    from app.modules.content.boards_schemas import BoardCreate
+    from app.modules.content.boards_service import create_board_ex
 
     owner = await _mk_user(db, "ow2")
     loser = await _mk_user(db, "loser")
     await create_board_ex(db, BoardCreate(slug="ob2", title="别动"), owner.id)
     # non-owner 普通用户（level=normal, role=member，无 board_owner_manage）→ 403
     r = await client.patch(
-        f"/api/v1/boards/{await db.scalar(select(Board.id).where(Board.slug == 'ob2'))}",
+        f"/api/v1/content/boards/{await db.scalar(select(Board.id).where(Board.slug == 'ob2'))}",
         headers=_headers(loser),
         json={"title": "篡改"},
     )

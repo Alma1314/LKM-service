@@ -1,4 +1,4 @@
-"""专栏示例数据。用法：uv run python -m app.modules.columns.seed
+"""专栏示例数据。用法：uv run python -m app.modules.content.columns_seed
 
 为 columns / column_posts 填充社区「专栏」页展示所需的示例数据（幂等）。
 复刻前端原 mock-columns 的结构，字段以中文原文落库（本期仅中文站场景）。
@@ -22,7 +22,7 @@ from app.db.models import (
     now_iso,
 )
 from app.db.session import new_session
-from app.modules.columns.models import ColumnPostStatus, ColumnStatus
+from app.modules.content.column_models import ColumnPostStatus, ColumnStatus
 
 # 种子专栏归属的演示作者用户名（避免依赖具体本地用户）
 _SEED_AUTHOR_USERNAME = "column_seed_author"

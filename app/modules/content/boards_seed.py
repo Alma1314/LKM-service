@@ -1,4 +1,4 @@
-"""幂等 seed：基础板块（含父/子层级，供论坛板块广场嵌套展示）。用法 python -m app.modules.boards.seed。"""
+"""幂等 seed：基础板块（含父/子层级，供论坛板块广场嵌套展示）。用法 python -m app.modules.content.boards_seed。"""
 
 import asyncio
 

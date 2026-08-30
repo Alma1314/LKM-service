@@ -25,8 +25,8 @@ from app.db.repo import get_or_raise
 from app.modules.common import PageData, paginate_offset, paginate_pages
 from app.modules.points.rules import enqueue_points_event
 from app.modules.points.service import reward, spend
-from app.modules.qa.errors import QaErr
-from app.modules.qa.schemas import (
+from app.modules.content.errors import QaErr
+from app.modules.content.qa_schemas import (
     AnswerCreate,
     AnswerOut,
     QuestionCreate,

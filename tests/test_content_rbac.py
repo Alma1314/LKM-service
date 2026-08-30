@@ -16,7 +16,7 @@ from sqlalchemy import select
 from app.core.err import CommonErr
 from app.db.models import Board, Exam, ExamCertificate, Profile, RolePermission, User
 from app.modules.auth.security import create_access_token
-from app.modules.boards.errors import BoardErr
+from app.modules.content.errors import BoardErr
 from tests.conftest import DB, Client
 
 

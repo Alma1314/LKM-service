@@ -41,8 +41,8 @@ def _hdr(u: User) -> dict[str, str]:
 
 
 async def _board(db: AsyncSession, slug: str) -> int:
-    from app.modules.boards.schemas import BoardCreate
-    from app.modules.boards.service import create_board_ex
+    from app.modules.content.boards_schemas import BoardCreate
+    from app.modules.content.boards_service import create_board_ex
 
     return (await create_board_ex(db, BoardCreate(slug=slug, title=slug), None)).id
 
@@ -114,7 +114,7 @@ class TestFollowHttp:
         me = await _user(db, "me", "m2@ex.com")
         bid = await _board(db, "dev")
         await follow_service.follow_board(db, me.id, bid)
-        resp = await client.get("/api/v1/boards/me/following", headers=_hdr(me))
+        resp = await client.get("/api/v1/content/boards/me/following", headers=_hdr(me))
         assert resp.status_code == 200
         items = resp.json()["data"]["items"]
         assert items[0]["board_id"] == bid and items[0]["title"] == "dev"

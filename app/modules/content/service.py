@@ -206,7 +206,7 @@ async def create_item(
         ContentType.BLOG_POST,
         ContentType.QA,
     ):
-        from app.modules.boards.service import check_post_allowed
+        from app.modules.content.boards_service import check_post_allowed
 
         await check_post_allowed(db, info.board_id, author_id)
 
@@ -367,6 +367,24 @@ async def list_comments(
         page=page,
         pages=paginate_pages(total, limit),
     )
+
+
+async def list_all_comments(
+    db: AsyncSession, item_id: int
+) -> list[ContentCommentInfo]:
+    """一次取回某内容的全部评论（floor 升序），供 GraphQL 组装评论树。"""
+    await get_or_raise(
+        db, ContentItem, ContentErr.CONTENT_NOT_FOUND, ContentItem.id == item_id
+    )
+    stmt = (
+        select(ContentComment)
+        .where(ContentComment.content_id == item_id)
+        .order_by(ContentComment.floor_number.asc())
+    )
+    result = await db.execute(stmt)
+    comments = result.scalars().all()
+    names = await _author_map(db, [c.user_id for c in comments])
+    return [_comment_to_schema(c, names.get(c.user_id, "")) for c in comments]
 
 
 async def create_comment(

@@ -21,8 +21,8 @@ from app.db.models import (
     UserFollow,
 )
 from app.modules.auth.security import hashpwd
-from app.modules.boards.schemas import BoardCreate
-from app.modules.boards.service import create_board_ex
+from app.modules.content.boards_schemas import BoardCreate
+from app.modules.content.boards_service import create_board_ex
 from app.modules.follow import service as follow_service
 from app.modules.admin.moderation import service as mod_service
 from app.modules.admin.moderation.engine import Rule, evaluate, load_active_rules

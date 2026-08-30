@@ -11,15 +11,15 @@ from app.modules.common import (
     PaginateDep,
     PaginateParams,
 )
-from app.modules.qa.errors import QaErr
-from app.modules.qa.schemas import (
+from app.modules.content.errors import QaErr
+from app.modules.content.qa_schemas import (
     AnswerCreate,
     AnswerOut,
     QuestionCreate,
     QuestionDetail,
     QuestionOut,
 )
-from app.modules.qa.service import (
+from app.modules.content.qa_service import (
     accept_answer,
     close_question,
     create_answer,
@@ -42,7 +42,7 @@ def _status() -> ModuleStatus:
     )
 
 
-router = APIRouter(prefix="/qa", tags=["qa"])
+router = APIRouter(prefix="/qa", tags=["content", "qa"])
 
 
 @router.get("/status", response_model=ModuleStatus)

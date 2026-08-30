@@ -20,7 +20,7 @@ from app.modules.follow.schemas import (
 )
 
 user_follow_router = APIRouter(prefix="/users", tags=["follow"])
-board_follow_router = APIRouter(prefix="/boards", tags=["follow"])
+board_follow_router = APIRouter(prefix="/content/boards", tags=["follow"])
 
 
 @user_follow_router.post("/{user_id}/follow", response_model=ApiResp[FollowToggle])

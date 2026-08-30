@@ -4,10 +4,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Board, Column
-from app.modules.boards.schemas import BoardCreate
-from app.modules.boards.service import create_board_ex
-from app.modules.columns.schemas import ColumnInfo
-from app.modules.columns.service import get_column
+from app.modules.content.boards_schemas import BoardCreate
+from app.modules.content.boards_service import create_board_ex
+from app.modules.content.columns_schemas import ColumnInfo
+from app.modules.content.columns_service import get_column
 
 
 async def _board(db: AsyncSession, slug: str, title: str = "") -> int:
@@ -53,7 +53,7 @@ class TestColumnBoardRelation:
         # 只 seed physics 板块；computer 板块缺失，用于验证 board 缺失时兜底为 None
         await _board(db, "physics", "物理")
 
-        from app.modules.columns.seed import seed_columns
+        from app.modules.content.columns_seed import seed_columns
 
         seeded = await seed_columns(db)
 

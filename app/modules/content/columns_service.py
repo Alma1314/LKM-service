@@ -14,13 +14,13 @@ from app.core.cache import (
 from app.core.err import BizError
 from app.db.models import Column, ColumnApplication, ColumnPost, now_iso
 from app.db.repo import get_or_raise
-from app.modules.columns.errors import ColumnErr
-from app.modules.columns.models import (
+from app.modules.content.errors import ColumnErr
+from app.modules.content.column_models import (
     COLUMN_TABLE_PLAN,
     ColumnApplicationStatus,
     ColumnPostStatus,
 )
-from app.modules.columns.schemas import (
+from app.modules.content.columns_schemas import (
     ColumnApplicationCreate,
     ColumnApplicationInfo,
     ColumnApplicationReview,

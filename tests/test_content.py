@@ -17,8 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.err import BizError
 from app.db.models import Column, ContentItem, User
 from app.modules.auth.security import hashpwd
-from app.modules.boards.schemas import BoardCreate
-from app.modules.boards.service import create_board_ex
+from app.modules.content.boards_schemas import BoardCreate
+from app.modules.content.boards_service import create_board_ex
 from app.modules.content.errors import ContentErr
 from app.modules.content.schemas import (
     ContentCommentCreate,

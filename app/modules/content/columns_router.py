@@ -8,7 +8,7 @@ from app.db.models import Column, ColumnApplication
 from app.db.session import get_read_session, get_session
 from app.modules.admin.deps import require_admin_2fa
 from app.modules.auth.deps import CurrentUser, RequireLevel, get_current_user
-from app.modules.columns.schemas import (
+from app.modules.content.columns_schemas import (
     ColumnApplicationCreate,
     ColumnApplicationInfo,
     ColumnApplicationReview,
@@ -17,7 +17,7 @@ from app.modules.columns.schemas import (
     ColumnPostInfo,
     ReviewResultData,
 )
-from app.modules.columns.service import (
+from app.modules.content.columns_service import (
     create_application,
     create_post,
     get_application,
@@ -37,7 +37,7 @@ from app.modules.rbac.deps import RequirePermission
 from app.modules.rbac.permissions import Permission, composible_role
 from app.modules.rbac.service import check_owner, role_has_permission
 
-router = APIRouter(prefix="/columns", tags=["columns"])
+router = APIRouter(prefix="/columns", tags=["content", "columns"])
 
 
 @router.get("/status", response_model=ModuleStatus)

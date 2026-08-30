@@ -27,7 +27,15 @@ from app.modules.rbac.deps import RequirePermission
 from app.modules.rbac.permissions import Permission
 from app.modules.rbac.service import check_owner
 
+# 内容域子路由：版块 / 专栏 / 问答 统一挂到 /content 前缀下（逐域子前缀）。
+from app.modules.content.boards_router import router as _boards_router
+from app.modules.content.columns_router import router as _columns_router
+from app.modules.content.qa_router import router as _qa_router
+
 router = APIRouter(prefix="/content", tags=["content"])
+router.include_router(_boards_router)
+router.include_router(_columns_router)
+router.include_router(_qa_router)
 
 
 @router.post("/items", response_model=ApiResp[ContentItemInfo])

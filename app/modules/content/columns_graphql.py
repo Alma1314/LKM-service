@@ -5,10 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from strawberry.types.info import Info
 
 from app.core.err import BizError
-from app.modules.columns.errors import ColumnErr
-from app.modules.columns.models import ColumnPostStatus, ColumnStatus
-from app.modules.columns.schemas import ColumnInfo, ColumnPostInfo
-from app.modules.columns.service import (
+from app.modules.content.errors import ColumnErr
+from app.modules.content.column_models import ColumnPostStatus, ColumnStatus
+from app.modules.content.columns_schemas import ColumnInfo, ColumnPostInfo
+from app.modules.content.columns_service import (
     get_column,
     get_column_by_slug,
     list_columns,

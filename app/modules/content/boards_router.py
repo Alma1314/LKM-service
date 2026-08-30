@@ -13,8 +13,8 @@ from app.db.models import Board
 from app.db.session import get_session
 from app.modules.admin.deps import require_admin_2fa
 from app.modules.auth.deps import CurrentUser, get_current_user
-from app.modules.boards.errors import BoardErr  # noqa: F401  (副作用注册已由 main 统一)
-from app.modules.boards.schemas import (
+from app.modules.content.errors import BoardErr  # noqa: F401  (副作用注册已由 main 统一)
+from app.modules.content.boards_schemas import (
     BanRequest,
     BoardApplicationCreate,
     BoardApplicationOut,
@@ -23,7 +23,7 @@ from app.modules.boards.schemas import (
     BoardUpdate,
     ReviewBoardApplicationRequest,
 )
-from app.modules.boards.service import (
+from app.modules.content.boards_service import (
     ban_user,
     create_board_ex,
     get_board_ex,
@@ -56,7 +56,7 @@ def _status() -> ModuleStatus:
     )
 
 
-router = APIRouter(prefix="/boards", tags=["boards"])
+router = APIRouter(prefix="/boards", tags=["content", "boards"])
 
 
 @router.get("/status", response_model=ModuleStatus)

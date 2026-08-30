@@ -22,7 +22,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeEngine
 
 from app.modules.blog.models import BlogSeriesStatus
-from app.modules.columns.models import (
+from app.modules.content.column_models import (
     ColumnApplicationStatus,
     ColumnPostStatus,
     ColumnStatus,

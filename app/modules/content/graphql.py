@@ -9,12 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from strawberry.types.info import Info
 
 from app.core.err import BizError
-from app.modules.boards.service import list_boards
+from app.modules.content.boards_service import list_boards
 from app.modules.content.errors import ContentErr
 from app.modules.content.schemas import ContentCommentInfo, ContentItemInfo
 from app.modules.content.service import (
     get_item,
     get_item_by_slug,
+    list_all_comments,
     list_comments,
     list_items,
 )
@@ -72,6 +73,7 @@ class GraphContentComment:
     parentId: int | None
     likeCount: int
     createdAt: str
+    children: list["GraphContentComment"] = strawberry.field(default_factory=list)
 
 
 @strawberry.type
@@ -239,3 +241,32 @@ class ContentQuery:
             )
             for b in board_outs
         ]
+
+    @strawberry.field
+    async def itemCommentTree(
+        self, info: Info, itemId: int
+    ) -> list[GraphContentComment]:
+        """某内容的完整评论树（根为 parent_id is None 的楼层评论）。"""
+        db = _get_db(info)
+        try:
+            comments = await list_all_comments(db, itemId)
+        except BizError as e:
+            if e.errcode != ContentErr.CONTENT_NOT_FOUND:
+                raise
+            return []
+        by_parent: dict[int | None, list[ContentCommentInfo]] = {}
+        for c in comments:
+            by_parent.setdefault(c.parent_id, []).append(c)
+        return [_map_comment_tree(c, by_parent) for c in by_parent.get(None, [])]
+
+
+def _map_comment_tree(
+    c: ContentCommentInfo,
+    by_parent: dict[int | None, list[ContentCommentInfo]],
+) -> GraphContentComment:
+    """递归组装评论节点（当前评论 + 其子树）。"""
+    node = _map_comment(c)
+    node.children = [
+        _map_comment_tree(child, by_parent) for child in by_parent.get(c.id, [])
+    ]
+    return node

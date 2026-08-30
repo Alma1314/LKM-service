@@ -9,9 +9,9 @@ from app.core.err import BizError
 from app.db.models import QAQuestion, User
 from app.modules.auth.security import create_access_token
 from app.modules.points.service import get_balance, reward
-from app.modules.qa.errors import QaErr
-from app.modules.qa.schemas import AnswerCreate, QuestionCreate
-from app.modules.qa.service import (
+from app.modules.content.errors import QaErr
+from app.modules.content.qa_schemas import AnswerCreate, QuestionCreate
+from app.modules.content.qa_service import (
     accept_answer,
     close_question,
     create_answer,
@@ -181,7 +181,7 @@ class TestPermission:
         uid = await _user(db, "localuser", level="local")
         token = create_access_token(uid, "local", "member")
         resp = await client.post(
-            "/api/v1/qa/questions",
+            "/api/v1/content/qa/questions",
             headers={"Authorization": f"Bearer {token}"},
             json={
                 "title": "t",
@@ -195,7 +195,7 @@ class TestPermission:
 
     async def test_list_public(self, client: httpx.AsyncClient, db: AsyncSession):
         await _asker_with_bounty(db)
-        resp = await client.get("/api/v1/qa/questions")
+        resp = await client.get("/api/v1/content/qa/questions")
         assert resp.status_code == 200
         body = resp.json()
         assert body["data"]["total"] == 1

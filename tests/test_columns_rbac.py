@@ -37,7 +37,7 @@ async def test_member_can_apply(db: DB, client: Client) -> None:
     await db.flush()
     u = await _mk_user(db, "cm", level="normal", role="member")
     r = await client.post(
-        "/api/v1/columns/applications",
+        "/api/v1/content/columns/applications",
         headers=_h(u),
         json={"title": "t", "description": "d", "reason": "r"},
     )
@@ -56,7 +56,7 @@ async def test_foreign_cannot_publish_to_other_column(db: DB, client: Client) ->
     db.add(col)
     await db.flush()
     r = await client.post(
-        f"/api/v1/columns/{col.id}/posts",
+        f"/api/v1/content/columns/{col.id}/posts",
         headers=_h(other),
         json={"title": "t", "content": "c", "category": "x"},
     )
@@ -72,7 +72,7 @@ async def test_owner_can_publish_to_own_column(db: DB, client: Client) -> None:
     db.add(col)
     await db.flush()
     r = await client.post(
-        f"/api/v1/columns/{col.id}/posts",
+        f"/api/v1/content/columns/{col.id}/posts",
         headers=_h(owner),
         json={"title": "t", "content": "c", "category": "x"},
     )
@@ -119,7 +119,7 @@ async def test_super_admin_can_review_application(db: DB, client: Client) -> Non
     await db.flush()
     _set_admin_mfa_cookie(client, u)
     r = await client.post(
-        "/api/v1/columns/applications/1/review",
+        "/api/v1/content/columns/applications/1/review",
         json={"status": "approved"},
     )
     assert r.status_code in (200, 201)
@@ -131,7 +131,7 @@ async def test_member_without_apply_perm_is_403(db: DB, client: Client) -> None:
     # 无权限 member 申请必须 403，否则说明权限点未生效。
     u = await _mk_user(db, "cm_noperm", level="normal", role="member")
     r = await client.post(
-        "/api/v1/columns/applications",
+        "/api/v1/content/columns/applications",
         headers=_h(u),
         json={"title": "t", "description": "d", "reason": "r"},
     )
@@ -156,7 +156,7 @@ async def test_org_member_cannot_review_application(db: DB, client: Client) -> N
     # 越过 2FA 门槛后仍在 handler 内被判 FORBIDDEN → 403
     _set_admin_mfa_cookie(client, u)
     r = await client.post(
-        "/api/v1/columns/applications/1/review",
+        "/api/v1/content/columns/applications/1/review",
         json={"status": "approved"},
     )
     assert r.status_code == 403
@@ -181,7 +181,7 @@ async def test_super_admin_can_publish_to_other_column(db: DB, client: Client) -
     )
     sa = await _mk_user(db, "fsa", level="admin", role="super_admin")
     r = await client.post(
-        f"/api/v1/columns/{col.id}/posts",
+        f"/api/v1/content/columns/{col.id}/posts",
         headers=_h(sa, role="super_admin"),
         json={"title": "t", "content": "c", "category": "x"},
     )

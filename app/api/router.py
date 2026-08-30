@@ -15,8 +15,6 @@ from app.modules.auth.router_recovery import router as auth_recovery_router
 from app.modules.auth.router_settings import router as auth_settings_router
 from app.modules.blog.git_http import git_router
 from app.modules.blog.router import router as blog_router
-from app.modules.boards.router import router as boards_router
-from app.modules.columns.router import router as columns_router
 from app.modules.content.router import router as content_router
 from app.modules.exam.router import router as exam_router
 from app.modules.files.notify import router as files_notify_router
@@ -25,7 +23,6 @@ from app.modules.follow.router import board_follow_router, user_follow_router
 from app.modules.health.router import router as health_router
 from app.modules.points.router import router as points_router
 from app.modules.projects.router import router as projects_router
-from app.modules.qa.router import router as qa_router
 from app.modules.starhope.router import router as starhope_router
 from app.modules.timeline.router import router as timeline_router
 from app.ws.router import router as ws_router
@@ -43,9 +40,7 @@ api_router.include_router(auth_onboarding_router)
 api_router.include_router(auth_passkey_router)
 api_router.include_router(auth_recovery_router)
 api_router.include_router(auth_settings_router)
-api_router.include_router(boards_router)
 api_router.include_router(board_follow_router)
-api_router.include_router(columns_router)
 api_router.include_router(content_router)
 api_router.include_router(exam_router)
 api_router.include_router(files_router)
@@ -55,7 +50,6 @@ api_router.include_router(articles_router)
 api_router.include_router(git_router)
 api_router.include_router(points_router)
 api_router.include_router(projects_router)
-api_router.include_router(qa_router)
 api_router.include_router(starhope_router)
 api_router.include_router(user_follow_router)
 api_router.include_router(timeline_router)
