@@ -49,7 +49,13 @@ _EXPIRES_EXTRA_MS = 5_000
 
 
 def _base_worker_kwargs() -> dict[str, object]:
-    """各 worker 共享的 ARQ 加固参数（超时 + 崩溃清理宽限）。"""
+    """各 worker 共享的 ARQ 加固参数（超时 + 崩溃清理宽限）。
+
+    ``**kwargs`` 展开 dict 时，ty 无法把不同 key 匹配到 Worker 的各自形参类型——
+    展开后每个未显式传的形参都被推断成 keys 的统一值类型而误报。这是 ty 对运行时
+    kwargs 展开的已知限制：即使把值类型收敛成 int，其他形参（bool/str/时区等）仍会被
+    推断成 int 而报 invalid-argument-type。故调用侧逐个加 ``# ty: ignore`` 视为受控边界。
+    """
     return {
         "job_timeout": _JOB_TIMEOUT_S,
         "expires_extra_ms": _EXPIRES_EXTRA_MS,
@@ -82,7 +88,7 @@ async def run_send_worker() -> None:
         redis_settings=_redis_settings(),
         max_tries=5,
         max_jobs=10,
-        **_base_worker_kwargs(),
+        **_base_worker_kwargs(),  # ty: ignore[invalid-argument-type]  # kwargs 展开受限控边界，见 _base_worker_kwargs 注释
     )
     await w.async_run()
 
@@ -95,7 +101,7 @@ async def run_notify_worker() -> None:
         redis_settings=_redis_settings(),
         max_tries=5,
         max_jobs=10,
-        **_base_worker_kwargs(),
+        **_base_worker_kwargs(),  # ty: ignore[invalid-argument-type]  # kwargs 展开受限控边界，见 _base_worker_kwargs 注释
     )
     await w.async_run()
 
@@ -108,7 +114,7 @@ async def run_default_worker() -> None:
         redis_settings=_redis_settings(),
         max_tries=5,
         max_jobs=10,
-        **_base_worker_kwargs(),
+        **_base_worker_kwargs(),  # ty: ignore[invalid-argument-type]  # kwargs 展开受限控边界，见 _base_worker_kwargs 注释
         cron_jobs=[
             cron(
                 cleanup.cleanup_expired_uploads, hour=set(range(24)), minute=0
@@ -132,6 +138,6 @@ async def run_points_worker() -> None:
         redis_settings=_redis_settings(),
         max_tries=5,
         max_jobs=10,
-        **_base_worker_kwargs(),
+        **_base_worker_kwargs(),  # ty: ignore[invalid-argument-type]  # kwargs 展开受限控边界，见 _base_worker_kwargs 注释
     )
     await w.async_run()

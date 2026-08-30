@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.err import BizError, CommonErr
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.security import create_access_token, hashpwd
-from app.modules.content.errors import ColumnErr
 from app.modules.content.column_models import ColumnApplicationStatus
 from app.modules.content.columns_schemas import (
     ColumnApplicationCreate,
@@ -28,6 +27,7 @@ from app.modules.content.columns_service import (
     list_posts,
     review_application,
 )
+from app.modules.content.errors import ColumnErr
 
 # db 与 client fixture 均由 tests/conftest.py 提供（内存 sqlite 会话 + httpx.AsyncClient）
 

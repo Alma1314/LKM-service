@@ -129,9 +129,7 @@ async def admin_trend(
 
     await require_permission(db, _cur, Permission.admin_dashboard)
 
-    async def _deltas(
-        col: Any, extra_where: Any | None = None
-    ) -> dict[date, int]:
+    async def _deltas(col: Any, extra_where: Any | None = None) -> dict[date, int]:
         """按某时间列分组统计每日增量；单表异常返回空 dict（_safe_count 同款容错）。
         extra_where 可选附加过滤（如 content_type == discussion）。
         func.date 在 SQLite 返回 'YYYY-MM-DD' 字符串，统一转 date 作 key。"""

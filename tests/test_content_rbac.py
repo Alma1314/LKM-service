@@ -93,7 +93,11 @@ async def test_uncertified_blocked_on_certified_board(db: DB, client: Client) ->
     await _seed_perm(db, "normal:member", "content.create")
     owner = await _mk_user(db, "owner", role="member")
     board = Board(
-        slug="cert", title="C", description="", owner_id=owner.id, require_certified=True
+        slug="cert",
+        title="C",
+        description="",
+        owner_id=owner.id,
+        require_certified=True,
     )
     db.add(board)
     await db.flush()
@@ -114,7 +118,11 @@ async def test_certified_allowed_on_certified_board(db: DB, client: Client) -> N
     await _seed_perm(db, "normal:member", "content.create")
     owner = await _mk_user(db, "owner", role="member")
     board = Board(
-        slug="cert2", title="C2", description="", owner_id=owner.id, require_certified=True
+        slug="cert2",
+        title="C2",
+        description="",
+        owner_id=owner.id,
+        require_certified=True,
     )
     db.add(board)
     await db.flush()
@@ -150,9 +158,7 @@ async def test_foreign_cannot_delete(db: DB, client: Client) -> None:
         json={"board_id": board, "title": "t", "content": "c"},
     )
     item_id = rp.json()["data"]["id"]
-    r = await client.delete(
-        f"/api/v1/content/items/{item_id}", headers=_headers(b)
-    )
+    r = await client.delete(f"/api/v1/content/items/{item_id}", headers=_headers(b))
     assert r.status_code == 403
     assert r.json()["code"] == CommonErr.FORBIDDEN
 
@@ -167,7 +173,5 @@ async def test_owner_can_delete(db: DB, client: Client) -> None:
         json={"board_id": board, "title": "t", "content": "c"},
     )
     item_id = rp.json()["data"]["id"]
-    r = await client.delete(
-        f"/api/v1/content/items/{item_id}", headers=_headers(a)
-    )
+    r = await client.delete(f"/api/v1/content/items/{item_id}", headers=_headers(a))
     assert r.status_code == 200

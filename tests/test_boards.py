@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
 from app.db.models import Board, User
-from app.modules.content.errors import BoardErr
 from app.modules.content.boards_schemas import (
     BanRequest,
     BoardApplicationCreate,
@@ -26,6 +25,7 @@ from app.modules.content.boards_service import (
     unban_user,
     update_board_ex,
 )
+from app.modules.content.errors import BoardErr
 
 
 async def _user(

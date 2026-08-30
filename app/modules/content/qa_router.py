@@ -57,9 +57,7 @@ async def qa_list(
     pag: PaginateParams = Depends(PaginateDep()),
     db: AsyncSession = Depends(get_read_session),
 ) -> PageData[QuestionOut]:
-    return await list_questions(
-        db, page=pag.page, limit=pag.limit, category=category
-    )
+    return await list_questions(db, page=pag.page, limit=pag.limit, category=category)
 
 
 @router.get("/questions/{question_id}", response_model=ApiResp[QuestionDetail])

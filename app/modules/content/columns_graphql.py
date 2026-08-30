@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from strawberry.types.info import Info
 
 from app.core.err import BizError
-from app.modules.content.errors import ColumnErr
 from app.modules.content.column_models import ColumnPostStatus, ColumnStatus
 from app.modules.content.columns_schemas import ColumnInfo, ColumnPostInfo
 from app.modules.content.columns_service import (
@@ -14,6 +13,7 @@ from app.modules.content.columns_service import (
     list_columns,
     list_posts,
 )
+from app.modules.content.errors import ColumnErr
 
 
 @strawberry.type

@@ -20,13 +20,13 @@ from app.db.models import (
     User,
     UserFollow,
 )
+from app.modules.admin.moderation import service as mod_service
+from app.modules.admin.moderation.engine import Rule, evaluate, load_active_rules
+from app.modules.admin.moderation.schemas import RuleCreate, RuleUpdate
 from app.modules.auth.security import hashpwd
 from app.modules.content.boards_schemas import BoardCreate
 from app.modules.content.boards_service import create_board_ex
 from app.modules.follow import service as follow_service
-from app.modules.admin.moderation import service as mod_service
-from app.modules.admin.moderation.engine import Rule, evaluate, load_active_rules
-from app.modules.admin.moderation.schemas import RuleCreate, RuleUpdate
 from app.modules.timeline.service import get_timeline
 
 

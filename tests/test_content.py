@@ -189,7 +189,9 @@ async def test_discussion_pinned_sorts_first(db: AsyncSession) -> None:
         db, uid, ContentItemCreate(board_id=bid, title="普通帖", content="a")
     )
     await create_item(
-        db, uid, ContentItemCreate(board_id=bid, title="置顶帖", content="b", is_pinned=True)
+        db,
+        uid,
+        ContentItemCreate(board_id=bid, title="置顶帖", content="b", is_pinned=True),
     )
 
     page = await list_items(db, board_id=bid)
@@ -204,7 +206,9 @@ async def test_discussion_view_count_bumps(db: AsyncSession) -> None:
     """GET 详情两次 → view_count 递增 1（从 forum 迁移：view_count 自增）。"""
     uid = await _user(db)
     bid = await _make_board(db, "math")
-    item = await create_item(db, uid, ContentItemCreate(board_id=bid, title="t", content="c"))
+    item = await create_item(
+        db, uid, ContentItemCreate(board_id=bid, title="t", content="c")
+    )
 
     first = await get_item(db, item.id, bump_view=True)
     second = await get_item(db, item.id, bump_view=True)
@@ -228,7 +232,9 @@ async def test_delete_own_item(db: AsyncSession) -> None:
     """删除自己发的内容项 → 再查应 CONTENT_NOT_FOUND（从 forum 迁移：删帖）。"""
     uid = await _user(db)
     bid = await _make_board(db, "math")
-    item = await create_item(db, uid, ContentItemCreate(board_id=bid, title="t", content="c"))
+    item = await create_item(
+        db, uid, ContentItemCreate(board_id=bid, title="t", content="c")
+    )
 
     await delete_item(db, item.id, uid)
 
@@ -257,8 +263,12 @@ async def test_list_items_filter_by_board(db: AsyncSession) -> None:
     uid = await _user(db)
     math_bid = await _make_board(db, "math")
     phys_bid = await _make_board(db, "physics")
-    await create_item(db, uid, ContentItemCreate(board_id=math_bid, title="数学帖", content="x"))
-    await create_item(db, uid, ContentItemCreate(board_id=phys_bid, title="物理帖", content="y"))
+    await create_item(
+        db, uid, ContentItemCreate(board_id=math_bid, title="数学帖", content="x")
+    )
+    await create_item(
+        db, uid, ContentItemCreate(board_id=phys_bid, title="物理帖", content="y")
+    )
 
     page = await list_items(db, board_id=math_bid)
 

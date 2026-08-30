@@ -98,7 +98,9 @@ def _get_db(info: Info) -> AsyncSession:
 @strawberry.type
 class ArticlesQuery:
     @strawberry.field
-    async def articles(self, info: Info, page: int = 1, pageSize: int = 20) -> GraphArticlePage:
+    async def articles(
+        self, info: Info, page: int = 1, pageSize: int = 20
+    ) -> GraphArticlePage:
         db = _get_db(info)
         page_data = await list_articles(db, page=page, limit=pageSize)
         return GraphArticlePage(
@@ -118,12 +120,23 @@ class ArticlesQuery:
                 raise
             return None
         return GraphArticleDetail(
-            slug=a.slug, title=a.title, description=a.description, cover=a.cover,
-            categoryId=a.category_id, categoryTitle=a.category_title,
-            published=_now_iso(a.published), views=a.views, likes=a.likes,
-            comments=a.comments, bookmarks=a.bookmarks, department=a.department,
-            publisher=a.publisher, content=a.content, readingTime=a.reading_time,
-            keywords=a.keywords, tags=a.tags,
+            slug=a.slug,
+            title=a.title,
+            description=a.description,
+            cover=a.cover,
+            categoryId=a.category_id,
+            categoryTitle=a.category_title,
+            published=_now_iso(a.published),
+            views=a.views,
+            likes=a.likes,
+            comments=a.comments,
+            bookmarks=a.bookmarks,
+            department=a.department,
+            publisher=a.publisher,
+            content=a.content,
+            readingTime=a.reading_time,
+            keywords=a.keywords,
+            tags=a.tags,
         )
 
     @strawberry.field
@@ -131,9 +144,7 @@ class ArticlesQuery:
         db = _get_db(info)
         cats = await list_categories(db)
         return [
-            GraphArticleCategory(
-                slug=c.slug, name=c.name, articleCount=c.article_count
-            )
+            GraphArticleCategory(slug=c.slug, name=c.name, articleCount=c.article_count)
             for c in cats
         ]
 
@@ -155,7 +166,9 @@ class ArticlesQuery:
         db = _get_db(info)
         tags = await list_tags(db)
         return [
-            GraphArticleTag(name=t.get("name", ""), articleCount=t.get("article_count", 0))
+            GraphArticleTag(
+                name=t.get("name", ""), articleCount=t.get("article_count", 0)
+            )
             for t in tags
         ]
 

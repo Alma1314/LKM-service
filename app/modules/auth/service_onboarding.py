@@ -13,12 +13,14 @@ from app.modules.auth.models import OnboardingProgress
 from app.modules.auth.schemas import OnboardingState
 
 
-async def get_or_create_progress(
-    db: AsyncSession, user_id: int
-) -> OnboardingProgress:
+async def get_or_create_progress(db: AsyncSession, user_id: int) -> OnboardingProgress:
     """返回某用户的引导进度；未开始时新建一条默认记录并返回。"""
     row = (
-        (await db.execute(select(OnboardingProgress).where(OnboardingProgress.user_id == user_id)))
+        (
+            await db.execute(
+                select(OnboardingProgress).where(OnboardingProgress.user_id == user_id)
+            )
+        )
         .scalars()
         .first()
     )

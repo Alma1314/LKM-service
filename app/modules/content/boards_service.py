@@ -17,7 +17,6 @@ from app.db.models import (
     now_iso,
 )
 from app.db.repo import get_or_raise
-from app.modules.content.errors import BoardErr
 from app.modules.content.boards_schemas import (
     BanRequest,
     BoardApplicationCreate,
@@ -27,6 +26,7 @@ from app.modules.content.boards_schemas import (
     BoardUpdate,
     ReviewBoardApplicationRequest,
 )
+from app.modules.content.errors import BoardErr
 
 
 def _board_to_schema(b: Board) -> BoardOut:

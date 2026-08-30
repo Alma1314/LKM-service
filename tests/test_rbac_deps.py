@@ -65,7 +65,12 @@ async def test_foreign_forbidden(db: DB) -> None:
     pid = await _mk_post(db, 7)
     with pytest.raises(BizError) as exc:
         await check_owner(
-            db, _actor(99), pid, ContentItem, "author_id", Permission.content_owner_delete
+            db,
+            _actor(99),
+            pid,
+            ContentItem,
+            "author_id",
+            Permission.content_owner_delete,
         )
     assert exc.value.errcode == CommonErr.FORBIDDEN
 

@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.err import BizError
 from app.db.models import QAQuestion, User
 from app.modules.auth.security import create_access_token
-from app.modules.points.service import get_balance, reward
 from app.modules.content.errors import QaErr
 from app.modules.content.qa_schemas import AnswerCreate, QuestionCreate
 from app.modules.content.qa_service import (
@@ -19,6 +18,7 @@ from app.modules.content.qa_service import (
     get_question,
     list_questions,
 )
+from app.modules.points.service import get_balance, reward
 
 
 async def _user(

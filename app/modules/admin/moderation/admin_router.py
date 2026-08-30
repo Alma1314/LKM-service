@@ -10,8 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.err import respond
 from app.db.session import get_session
 from app.modules.admin.deps import require_admin, require_admin_2fa
-from app.modules.auth.deps import CurrentUser
-from app.modules.common import ApiResp, ListData
 from app.modules.admin.moderation import service as mod_service
 from app.modules.admin.moderation.schemas import (
     RuleCreate,
@@ -20,6 +18,8 @@ from app.modules.admin.moderation.schemas import (
     RuleTestResult,
     RuleUpdate,
 )
+from app.modules.auth.deps import CurrentUser
+from app.modules.common import ApiResp, ListData
 
 router = APIRouter(prefix="/admin/moderation", tags=["admin-moderation"])
 

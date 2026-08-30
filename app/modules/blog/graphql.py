@@ -131,9 +131,13 @@ def _map_comment(c: BlogCommentInfo) -> GraphSeriesComment:
 @strawberry.type
 class BlogQuery:
     @strawberry.field
-    async def blogSeries(self, info: Info, page: int = 1, pageSize: int | None = None) -> GraphSeriesPage:
+    async def blogSeries(
+        self, info: Info, page: int = 1, pageSize: int | None = None
+    ) -> GraphSeriesPage:
         db = _get_db(info)
-        page_data = await list_series(db, current_user_id=None, page=page, limit=pageSize)
+        page_data = await list_series(
+            db, current_user_id=None, page=page, limit=pageSize
+        )
         return GraphSeriesPage(
             items=[_map_series(s) for s in page_data.items],
             total=page_data.total,
@@ -142,7 +146,9 @@ class BlogQuery:
         )
 
     @strawberry.field
-    async def blogSeriesDetail(self, info: Info, seriesId: int) -> GraphBlogSeriesDetail | None:
+    async def blogSeriesDetail(
+        self, info: Info, seriesId: int
+    ) -> GraphBlogSeriesDetail | None:
         db = _get_db(info)
         try:
             s = await get_series(db, seriesId, current_user_id=None)
@@ -155,15 +161,22 @@ class BlogQuery:
         if s.file_tree:
             tree = _map_file_tree(s.file_tree)
         return GraphBlogSeriesDetail(
-            id=base.id, ownerId=base.ownerId, title=base.title,
-            description=base.description, coverUrl=base.coverUrl,
-            repoName=base.repoName, status=base.status,
-            starCount=base.starCount, isStarred=base.isStarred,
+            id=base.id,
+            ownerId=base.ownerId,
+            title=base.title,
+            description=base.description,
+            coverUrl=base.coverUrl,
+            repoName=base.repoName,
+            status=base.status,
+            starCount=base.starCount,
+            isStarred=base.isStarred,
             fileTree=tree,
         )
 
     @strawberry.field
-    async def blogSeriesComments(self, info: Info, seriesId: int) -> list[GraphSeriesComment]:
+    async def blogSeriesComments(
+        self, info: Info, seriesId: int
+    ) -> list[GraphSeriesComment]:
         db = _get_db(info)
         try:
             comments = await list_comments(db, seriesId)

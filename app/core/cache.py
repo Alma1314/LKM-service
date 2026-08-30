@@ -134,8 +134,8 @@ async def cached_read[T](
     cached = await cache_get(key)
     if cached is not None:
         if cached == _NULL_MARKER:  # 空值标记：视为不存在，短窗口内不调 loader
-            return None  # type: ignore[return-value]
-        return cached  # type: ignore[return-value]
+            return None  # ty: ignore[invalid-return-type]  # 空值标记：业务上"不存在"，返回 None
+        return cached
 
     lock = _flight_locks.get(key)
     if lock is None:
@@ -146,8 +146,8 @@ async def cached_read[T](
         cached2 = await cache_get(key)
         if cached2 is not None:
             if cached2 == _NULL_MARKER:
-                return None  # type: ignore[return-value]
-            return cached2  # type: ignore[return-value]
+                return None  # ty: ignore[invalid-return-type]  # 空值标记：业务上"不存在"，返回 None
+            return cached2
         value = await loader()
         if value is not None:
             await cache_set(key, value, ttl_seconds)

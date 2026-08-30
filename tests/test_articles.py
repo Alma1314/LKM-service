@@ -8,15 +8,16 @@ from app.db.models import Article, ArticleCategory, Profile, User
 from app.modules.auth.security import create_access_token, hashpwd
 
 
-async def _run_graphql(client: AsyncClient, query: str, variables: dict[str, Any]) -> Any:
+async def _run_graphql(
+    client: AsyncClient, query: str, variables: dict[str, Any]
+) -> Any:
     """只读端点已下线，改由 GraphQL 承担读取。走 /graphql 返回 data。"""
-    resp = await client.post(
-        "/graphql", json={"query": query, "variables": variables}
-    )
+    resp = await client.post("/graphql", json={"query": query, "variables": variables})
     assert resp.status_code == 200
     body: dict[str, Any] = resp.json()
     assert "errors" not in body, body.get("errors")
     return body["data"]
+
 
 # 分类 slug -> title 映射。news 沿用"科技新闻"以匹配 test_list_categories 断言；
 # 其余 slug 用其自身作为 title（仅测试定位用）。

@@ -31,9 +31,7 @@ async def test_fetch_discussion_reads_content_items(db, client) -> None:
     db.add(item)
     await db.flush()
 
-    rows = await feed_src.SOURCES["discussion"](
-        db, None, None, None, 0, 20
-    )
+    rows = await feed_src.SOURCES["discussion"](db, None, None, None, 0, 20)
     assert rows, "应读出 content_items 里的 discussion"
     assert rows[0].item_type == "discussion"
     assert rows[0].url == f"/content/posts/{item.id}"

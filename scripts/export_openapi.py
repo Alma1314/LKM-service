@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.main import app
+from app.main import app  # noqa: E402  # sys.path 需先注入 ROOT 才能 import 应用
 
 DEFAULT_JSON = ROOT / "docs" / "openapi" / "auto.openapi.json"
 

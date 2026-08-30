@@ -300,7 +300,13 @@ class ContentItem(Base):
         Index("ix_content_board_pinned", "board_id", "is_pinned", "id"),
         Index("ix_content_status_pinned", "status", "is_pinned", "id"),
         # 时间线按体裁扫描：content_type+status 过滤，created_at,id 排序，命中索引免 filesort
-        Index("ix_content_type_status_created", "content_type", "status", "created_at", "id"),
+        Index(
+            "ix_content_type_status_created",
+            "content_type",
+            "status",
+            "created_at",
+            "id",
+        ),
         Index("ix_content_published", "published_at"),
         Index("ix_content_slug", "slug"),
     )
@@ -1255,9 +1261,7 @@ class Project(Base):
     goals: Mapped[str | None] = mapped_column(Text, nullable=True)
     requirements: Mapped[str | None] = mapped_column(Text, nullable=True)
     team_intro: Mapped[str | None] = mapped_column(Text, nullable=True)
-    recruiting_roles: Mapped[list] = mapped_column(
-        JSON, default=list
-    )  # [str] 招募角色
+    recruiting_roles: Mapped[list] = mapped_column(JSON, default=list)  # [str] 招募角色
     tags: Mapped[list] = mapped_column(JSON, default=list)  # [str]
     reports: Mapped[list] = mapped_column(
         JSON, default=list

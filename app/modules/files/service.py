@@ -367,9 +367,7 @@ async def review_file(
     f = (
         (
             await db.execute(
-                select(LibraryFile)
-                .where(LibraryFile.id == file_id)
-                .with_for_update()
+                select(LibraryFile).where(LibraryFile.id == file_id).with_for_update()
             )
         )
         .scalars()

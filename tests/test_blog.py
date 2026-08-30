@@ -82,7 +82,9 @@ async def _series(
     )
 
 
-async def _run_graphql(client: AsyncClient, query: str, variables: dict[str, Any]) -> Any:
+async def _run_graphql(
+    client: AsyncClient, query: str, variables: dict[str, Any]
+) -> Any:
     """只读端点已下线，改由 GraphQL 承担读取。走 /graphql 返回 data。"""
     resp = await client.post("/graphql", json={"query": query, "variables": variables})
     assert resp.status_code == 200
