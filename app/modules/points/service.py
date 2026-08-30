@@ -118,30 +118,30 @@ async def reward(
         ref_id=ref_id,
     )
     db.add(entry)
+    # 用 savepoint 承载插入：并发撞 (user, ref_type, ref_id) 唯一约束时只回滚此
+    # savepoint，而非 db.rollback() 整事务——否则会连带回滚调用方在本事务里的其它
+    # 未提交写（如 do_checkin 的 checkin_streak/last_checkin_date），导致部分丢写。
+    sp = await db.begin_nested()
     try:
         await db.flush()
+        await sp.commit()
     except IntegrityError:
-        # 同 (user, ref_type, ref_id) 的并发 insert 被唯一约束拦截 → 视为已发放（幂等）。
-        # 回滚本次插入，返回既有流水（其 delta 应与本次一致；不一致属异常，抛 DUPLICATE_REWARD）。
-        await db.rollback()
-        existing = await db.scalar(
-            select(PointsLedger.id).where(
-                PointsLedger.user_id == user_id,
-                PointsLedger.ref_type == ref_type,
-                PointsLedger.ref_id == ref_id,
-            )
-        )
-        row = None
-        if existing is not None:
-            row = (
-                (
-                    await db.execute(
-                        select(PointsLedger).where(PointsLedger.id == existing)
+        await sp.rollback()
+        # 并发 insert 被唯一约束拦截 → 视为已发放（幂等）。重取既有流水返回；
+        # 其 delta 应与本次一致，不一致属异常抛 DUPLICATE_REWARD。
+        row = (
+            (
+                await db.execute(
+                    select(PointsLedger).where(
+                        PointsLedger.user_id == user_id,
+                        PointsLedger.ref_type == ref_type,
+                        PointsLedger.ref_id == ref_id,
                     )
                 )
-                .scalars()
-                .first()
             )
+            .scalars()
+            .first()
+        )
         if row is not None and row.delta == delta:
             return LedgerEntry.model_validate(row)
         raise BizError(PointsErr.DUPLICATE_REWARD) from None

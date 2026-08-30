@@ -8,6 +8,9 @@
 感知对端断开，不要求客户端回业务消息。
 """
 
+import asyncio
+import json
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.db.session import new_session
@@ -18,6 +21,10 @@ router = APIRouter(prefix="/ws", tags=["ws"])
 
 # 校验失败的私有 close code（沿用业界常见 4xxx 保留段）
 _UNAUTHORIZED_CLOSE = 4401
+
+# 心跳间隔：超过此窗口未收到任何对端消息，则发一条 ping 探活；
+# 若对端已静默断线（NAT 过期/断网），send 会抛错从而清理僵尸连接，避免长期占内存。
+_HEARTBEAT_S = 30.0
 
 
 async def _authorize(token: str) -> int | None:
@@ -48,8 +55,18 @@ async def ws_events(websocket: WebSocket) -> None:
     await manager.ensure_subscription()
     try:
         # 只推送；循环接收以维持连接并感知对端断开（收到文本即忽略）。
+        # 心跳：Starlette 无内置服务端 receive 超时，客户端静默断线时 receive_text()
+        # 会无限挂起占住连接。这里用 wait_for 加窗，超时即发 ping 探活——对端已死时
+        # send 抛错进入外层 except 清理，僵尸连接不再长期占内存。
         while True:
-            await websocket.receive_text()
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=_HEARTBEAT_S)
+            except TimeoutError:
+                # 对端已死时 send 抛错 → break 触发 finally 清理
+                try:
+                    await websocket.send_text(json.dumps({"type": "ping"}))
+                except Exception:
+                    break
     except WebSocketDisconnect:
         pass
     finally:

@@ -24,7 +24,7 @@ def _ensure_models() -> None:
     # 各模块 ORM 模型（新增模块模型时必须在此登记，与 app.main 的 _register_all_errors 同理）
     import app.modules.auth.models
     import app.modules.blog.models
-    import app.modules.content.column_models  # noqa: F401  # 预 import Column StrEnum 常量
+    import app.modules.content.column_models  # 预 import Column StrEnum 常量
     import app.modules.files.models  # noqa: F401  # 副作用导入：预注册 ORM 模型（LibraryFile）
 
     # 确保 User.profile 等本文件内定义的 relationship target 也完成解析
@@ -40,6 +40,21 @@ SEND_QUEUE = "arq:queue:send"  # 高优发送队列
 NOTIFY_QUEUE = "arq:queue:notify"  # 对象事件通知队列
 DEFAULT_QUEUE = "arq:queue"  # 默认队列，预留重活
 POINTS_QUEUE = "arq:queue:points"  # 积分事件队列
+
+# 单个任务的上限时长：超时即由 arq 判失败并按 max_tries 重试，防止 hung 任务
+# 无限占用 worker 槽位。发送/通知/积分任务正常都远低于此。
+_JOB_TIMEOUT_S = 120
+# 超时后额外延长任务的"结束"宽限，给 cleanup/finish 留时间，避免被误收割。
+_EXPIRES_EXTRA_MS = 5_000
+
+
+def _base_worker_kwargs() -> dict[str, object]:
+    """各 worker 共享的 ARQ 加固参数（超时 + 崩溃清理宽限）。"""
+    return {
+        "job_timeout": _JOB_TIMEOUT_S,
+        "expires_extra_ms": _EXPIRES_EXTRA_MS,
+    }
+
 
 SEND_FUNCTIONS = [send.send_code, send.send_magic_link]
 NOTIFY_FUNCTIONS = [notify.notify_upload]
@@ -67,6 +82,7 @@ async def run_send_worker() -> None:
         redis_settings=_redis_settings(),
         max_tries=5,
         max_jobs=10,
+        **_base_worker_kwargs(),
     )
     await w.async_run()
 
@@ -79,6 +95,7 @@ async def run_notify_worker() -> None:
         redis_settings=_redis_settings(),
         max_tries=5,
         max_jobs=10,
+        **_base_worker_kwargs(),
     )
     await w.async_run()
 
@@ -91,6 +108,7 @@ async def run_default_worker() -> None:
         redis_settings=_redis_settings(),
         max_tries=5,
         max_jobs=10,
+        **_base_worker_kwargs(),
         cron_jobs=[
             cron(
                 cleanup.cleanup_expired_uploads, hour=set(range(24)), minute=0
@@ -114,5 +132,6 @@ async def run_points_worker() -> None:
         redis_settings=_redis_settings(),
         max_tries=5,
         max_jobs=10,
+        **_base_worker_kwargs(),
     )
     await w.async_run()

@@ -6,6 +6,7 @@
   isolated_update—— 在 savepoint 里更新，调用方事务回滚也不影响
 """
 
+import logging
 from typing import Any
 
 from sqlalchemy import Result, Select, Update, select
@@ -15,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, ErrCode
 from app.modules.auth.schemas import ProfileInfo
+
+logger = logging.getLogger("lkm.db.repo")
 
 
 async def get_or_raise[M](
@@ -53,14 +56,26 @@ async def consume_once[M](
 async def isolated_update(db: AsyncSession, stmt: Update) -> None:
     """
     失败计数器等"即使调用方事务回滚也要保留"的修改用它。
+
+    - ``IntegrityError``：可预期冲突（唯一约束撞车等），静默吞去重语义保留。
+    - ``OperationalError``：可能是死锁/序列化失败/锁超时等真异常——虽仍回滚
+      savepoint 不向调用方抛（保持原有不抛语义），但必须记 warning 暴露出来，
+      否则计数/核销漏更会静默无日志。
     """
     sp = await db.begin_nested()
     try:
         await db.execute(stmt)
         await db.flush()
         await sp.commit()
-    except (IntegrityError, OperationalError):
+    except IntegrityError:
         await sp.rollback()
+    except OperationalError:
+        await sp.rollback()
+        logger.warning(
+            "isolated_update OperationalError swallowed (rollback only this update), "
+            "this may lose a counter/consume: %s",
+            stmt,
+        )
 
 
 async def get_profiles_by_user_ids(

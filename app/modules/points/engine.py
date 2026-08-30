@@ -3,6 +3,7 @@
 import datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -40,13 +41,42 @@ def _today() -> str:
     return datetime.date.today().isoformat()
 
 
-async def _get_or_create_stats(db: AsyncSession, user_id: int) -> UserBehaviorStat:
-    """惰性取/建用户行为统计行。"""
-    stat = await db.get(UserBehaviorStat, user_id)
+async def _get_or_create_stats(
+    db: AsyncSession, user_id: int, *, for_update: bool = False
+) -> UserBehaviorStat:
+    """惰性取/建用户行为统计行。
+
+    ``for_update=True`` 用于将要读改写 ``stats`` JSON 的写路径：对既有行加行锁，
+    与 ``service.do_checkin`` 的 ``SELECT ... FOR UPDATE`` 对齐，避免并发读改写
+    JSON 列时互相覆盖丢更新。
+    """
+    if for_update:
+        stat = (
+            (
+                await db.execute(
+                    select(UserBehaviorStat)
+                    .where(UserBehaviorStat.user_id == user_id)
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .first()
+        )
+    else:
+        stat = await db.get(UserBehaviorStat, user_id)
     if stat is None:
         stat = UserBehaviorStat(user_id=user_id, stats={})
         db.add(stat)
-        await db.flush()
+        try:
+            await db.flush()
+        except IntegrityError:
+            # 并发下两写协程同时看到 None 各自 insert → 撞主键。回滚本次插入，
+            # 重取并发方已提交的行继续（对齐 do_checkin / reward 的幂等范式）。
+            await db.rollback()
+            updated = await db.get(UserBehaviorStat, user_id)
+            if updated is None:
+                raise  # 理论上不会发生；保守上抛
+            return updated
     return stat
 
 
@@ -54,8 +84,9 @@ async def _bump_count(db: AsyncSession, user_id: int, key: str) -> int:
     """把某行为计数字段 +1，返回新值。
 
     JSON 列的 in-place 变更不会被 SQLAlchemy 追踪，需整列重赋以标记 dirty。
+    先锁行再读改写，防止与 do_checkin 等并发写 stats 时互覆盖丢更新。
     """
-    stat = await _get_or_create_stats(db, user_id)
+    stat = await _get_or_create_stats(db, user_id, for_update=True)
     cur = int(stat.stats.get(key, 0))
     stat.stats = {**stat.stats, key: cur + 1}
     return cur + 1

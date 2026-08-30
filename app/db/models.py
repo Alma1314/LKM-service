@@ -377,7 +377,9 @@ class ContentComment(Base):
     content_id: Mapped[int] = mapped_column(
         ForeignKey("content_items.id"), nullable=False
     )
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     floor_number: Mapped[int] = mapped_column(Integer, nullable=False)
     parent_id: Mapped[int | None] = mapped_column(
@@ -933,8 +935,12 @@ class ArticleComment(Base):
     __tablename__: str = "article_comments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    article_id: Mapped[int] = mapped_column(ForeignKey("articles.id"), nullable=False)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    article_id: Mapped[int] = mapped_column(
+        ForeignKey("articles.id"), nullable=False, index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     parent_id: Mapped[int | None] = mapped_column(
         ForeignKey("article_comments.id"), nullable=True
@@ -993,7 +999,9 @@ class ArticleTag(Base):
     __tablename__: str = "article_tag"
 
     article_id: Mapped[int] = mapped_column(ForeignKey("articles.id"), primary_key=True)
-    tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id"), primary_key=True)
+    tag_id: Mapped[int] = mapped_column(
+        ForeignKey("tags.id"), primary_key=True, index=True
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
     )
@@ -1003,6 +1011,11 @@ class Report(Base):
     """后台举报记录：用户对帖子/评论/文件等目标发起的举报，供后台审核。"""
 
     __tablename__: str = "reports"
+    __table_args__: tuple[Any, ...] = (
+        # 后台「按 status 分页列的待办举报」高频查询：条件 status + 排序 id desc
+        Index("ix_reports_status_id", "status", "id"),
+        Index("ix_reports_target", "type", "target_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     type: Mapped[str] = mapped_column(String(20), nullable=False)  # post/comment/file
@@ -1148,7 +1161,9 @@ class ExamQuestion(Base):
     __tablename__: str = "exam_questions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id"), nullable=False)
+    exam_id: Mapped[int] = mapped_column(
+        ForeignKey("exams.id"), nullable=False, index=True
+    )
     kind: Mapped[str] = mapped_column(String(20), nullable=False)  # single | judge
     content: Mapped[str] = mapped_column(Text, nullable=False)
     # JSON 字符串：[{"key":"A","text":"..."}] 单选多选项；judge 为空列表
@@ -1171,8 +1186,12 @@ class ExamAttempt(Base):
     __tablename__: str = "exam_attempts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id"), nullable=False)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    exam_id: Mapped[int] = mapped_column(
+        ForeignKey("exams.id"), nullable=False, index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="in_progress"
     )
@@ -1195,8 +1214,12 @@ class ExamCertificate(Base):
     __tablename__: str = "exam_certificates"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id"), nullable=False)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    exam_id: Mapped[int] = mapped_column(
+        ForeignKey("exams.id"), nullable=False, index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
     score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     passed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     cert_no: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
@@ -1317,9 +1340,11 @@ class UserFollow(Base):
     """
 
     __tablename__: str = "user_follows"
-    __table_args__: tuple[UniqueConstraint, Index] = (
+    __table_args__: tuple[UniqueConstraint, Index, Index] = (
         UniqueConstraint("follower_id", "following_id", name="uq_user_follows_pair"),
         Index("ix_user_follows_following_created", "following_id", "created_at"),
+        # "我关注了谁"（follower 视角）按时间排序/分页
+        Index("ix_user_follows_follower_created", "follower_id", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
