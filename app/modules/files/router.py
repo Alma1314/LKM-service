@@ -1,11 +1,11 @@
 import json
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.err import respond
+from app.core.err import BizError, CommonErr, respond
 from app.db.models import LibraryFile
 from app.db.session import get_read_session, get_session
 from app.modules.auth.deps import CurrentUser, get_current_user
@@ -38,9 +38,10 @@ from app.modules.files.service import (
 from app.modules.files.service import (
     create_file as create_file_service,
 )
+from app.modules.admin.deps import require_admin_2fa
 from app.modules.rbac.deps import RequirePermission
-from app.modules.rbac.permissions import Permission
-from app.modules.rbac.service import check_owner
+from app.modules.rbac.permissions import Permission, composible_role
+from app.modules.rbac.service import check_owner, role_has_permission
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -143,16 +144,21 @@ async def download_file(
 @respond
 async def review_uploaded_file(
     file_id: int,
+    _cur: Annotated[CurrentUser, require_admin_2fa],
     status: FileStatus = Form(...),
     review_comment: str | None = Form(default=None),
-    cur: CurrentUser = RequirePermission(Permission.files_review),
     db: AsyncSession = Depends(get_session),
 ) -> FileInfo:
     """管理员审核文件：通过 / 驳回（驳回时删除物理文件并联动同 hash 条目）。
 
-    RBAC：审核能力由 files_review 权限点把关（RequirePermission 已拦无权限者），
-    故 here 一律传 is_admin=True 跳过 service 的 account_level==admin 门槛。
+    高危破坏性操作（驳回删物理文件 + 发放积分）：先经 require_admin_2fa（后台会话 +
+    1h 2FA 信任），再叠加 files_review 权限点；二者并取才放行，避免将来 files_review
+    被授给非管理角色时"仅凭权限点即越权审核/删文件"。通过后 service 层仍走
+    is_admin=True 跳过 account_level==admin 门槛（权限点已代管）。
     """
+    role = composible_role(_cur.account_level, _cur.role)
+    if not await role_has_permission(db, role, Permission.files_review):
+        raise BizError(CommonErr.FORBIDDEN)
     return await review_file(
         db,
         file_id,

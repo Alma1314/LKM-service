@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -291,9 +291,16 @@ async def login_password_route(
 @router.post("/refresh", response_model=ApiResp[TokenPair])
 @respond
 async def refresh_access_token_route(
-    info: RefreshRequest, db: AsyncSession = Depends(get_session)
+    info: RefreshRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    await check_code_rate_limit("token:refresh:global", max_count=30, window=60)
+    # 按 IP 限流而非全局，避免单用户频繁刷新拖垮/阻塞全站其他用户；
+    # 刷新签发新 token 属安全敏感路径，Redis 故障时 fail-close（拒绝）。
+    client_ip = request.client.host if request.client else ""
+    await check_code_rate_limit(
+        f"token:refresh:ip:{client_ip}", max_count=30, window=60
+    )
     return await service_auth.refresh_access_token(db, info.refresh_token)
 
 

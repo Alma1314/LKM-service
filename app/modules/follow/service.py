@@ -185,7 +185,7 @@ async def list_following_users(
         await db.execute(
             select(User.id, User.username, Profile.nickname, Profile.avatar).outerjoin(
                 Profile, Profile.user_id == User.id
-            )
+            ).where(User.id.in_(ids))
         )
     ).all()
     by_id: dict[int, tuple[str, str | None]] = {}

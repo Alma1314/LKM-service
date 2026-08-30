@@ -10,6 +10,7 @@
 import io
 
 from app.db.models import Profile, RolePermission, User
+from app.modules.admin.deps import COOKIE_NAME, COOKIE_PATH, create_admin_access_token
 from app.modules.auth.security import create_access_token
 from tests.conftest import DB, Client
 
@@ -85,9 +86,11 @@ async def _mk_file(
     if approved:
         sa = await _mk_user(db, "sa_review", level="admin", role="super_admin")
         await _grant(db, "admin:super_admin", "files.review")
+        # 审核走后台会话：require_admin_2fa 读 cookie 且需 2FA 信任
+        tok = create_admin_access_token(sa, mfa_verified=True)
+        client.cookies.set(COOKIE_NAME, tok, path=COOKIE_PATH)
         rr = await client.post(
             f"/api/v1/files/{fid}/review",
-            headers=_admin_h(sa),
             data={"status": "approved"},
         )
         assert rr.status_code == 200, rr.text

@@ -156,7 +156,8 @@ async def check_code_rate_limit(
 ) -> None:
     """如果 *key* 超过了限制，则抛出 ``BizError(VERIFICATION_CODE_RATE_LIMIT)``。
 
-    Redis 不可用时 fail-open（放行），避免限流成为单点故障。
+    Redis 不可用时 fail-open（放行），避免限流成为单点故障拖垮可用性；
+    账号锁定的暴力破解兜底由 DB 级 failed_login_attempts/is_locked 承担（不依赖 Redis）。
     """
     if not await RedisRateLimiter().check(key, max_count, window):
         raise BizError(AuthErr.VERIFICATION_CODE_RATE_LIMIT)

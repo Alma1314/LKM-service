@@ -298,6 +298,7 @@ class ContentItem(Base):
             "ix_content_board_type_status", "board_id", "content_type", "status", "id"
         ),
         Index("ix_content_board_pinned", "board_id", "is_pinned", "id"),
+        Index("ix_content_status_pinned", "status", "is_pinned", "id"),
         Index("ix_content_published", "published_at"),
         Index("ix_content_slug", "slug"),
     )

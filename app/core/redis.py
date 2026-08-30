@@ -33,7 +33,14 @@ async def get_redis() -> Redis | None:
         if _client is not None:
             return _client
         try:
-            _client_pool = Redis.from_url(settings.redis_url, decode_responses=True)
+            _client_pool = Redis.from_url(
+                settings.redis_url,
+                decode_responses=True,
+                # 每次命令的 socket 超时：Redis 半挂（网络黑洞）时命令最多等
+                # 0.5s 即抛错，由调用方 fail-open 兜底，避免无限挂起拖死事件循环。
+                socket_timeout=0.5,
+                socket_connect_timeout=0.5,
+            )
             # 探测：PING 在极短超时内通过才视为可用
             try:
                 assert await asyncio.wait_for(_client_pool.ping(), _PING_TIMEOUT)

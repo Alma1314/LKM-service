@@ -6,7 +6,7 @@ import logging
 import secrets
 from typing import Any, Protocol, runtime_checkable
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -178,25 +178,33 @@ async def _check_account_locked(user: User) -> None:
         user.failed_login_attempts = 0
 
 
-async def _record_failed_attempt(db: AsyncSession, user: User) -> None:
-    """通过子事务（保存点）递增登录失败计数器。"""
+async def _record_failed_attempt(db: AsyncSession, user: User) -> bool:
+    """通过子事务（保存点）递增登录失败计数器，达到阈值时原子锁定。
+
+    自增与锁定判定合并为单条 UPDATE：同一语句内所有列引用都取旧行值，
+    由数据库对该行加锁，避免此前「自增后 refresh 再比较」在并发下读到
+    自己事务快照、漏锁或延迟触达阈值的竞态。返回是否本次触达锁定阈值。
+    """
     await isolated_update(
         db,
         sa_update(User)
         .where(User.id == user.id)
-        .values(failed_login_attempts=User.failed_login_attempts + 1),
+        .values(
+            failed_login_attempts=User.failed_login_attempts + 1,
+            # 旧值 +1 即新失败次数；达到阈值时同语句内同时锁定，保证原子
+            is_locked=User.failed_login_attempts >= _FAIL_LOCK_THRESHOLD - 1,
+            locked_until=case(
+                (
+                    User.failed_login_attempts >= _FAIL_LOCK_THRESHOLD - 1,
+                    expires_at(minutes=_FAIL_LOCK_MINUTES),
+                ),
+                else_=User.locked_until,
+            ),
+        ),
     )
     await db.refresh(user)
 
-    if user.failed_login_attempts >= _FAIL_LOCK_THRESHOLD:
-        locked_until = expires_at(minutes=_FAIL_LOCK_MINUTES)
-        await isolated_update(
-            db,
-            sa_update(User)
-            .where(User.id == user.id)
-            .values(is_locked=True, locked_until=locked_until),
-        )
-        await db.refresh(user)
+    return user.failed_login_attempts >= _FAIL_LOCK_THRESHOLD
 
 
 async def ensure_unique_username(db: AsyncSession, base: str) -> str:
@@ -498,8 +506,8 @@ async def login_password(
         )
         ok = False
     if not ok:
-        await _record_failed_attempt(db, user)
-        if user.failed_login_attempts >= _FAIL_LOCK_THRESHOLD:
+        locked = await _record_failed_attempt(db, user)
+        if locked:
             await log_audit(db, user.id, "account_locked", "5 failed login attempts")
         raise BizError(AuthErr.INVALID_CREDENTIALS)
 

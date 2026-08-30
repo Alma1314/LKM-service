@@ -4,8 +4,10 @@ from typing import ClassVar
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# 存在即安全的非生产占位桶：仅当 env 属于这二者时允许占位密钥，其余一律 fail-fast
-_PERMISSIVE_ENVS: set[str | None] = {"", None, "dev", "local", "test"}
+# 存在即安全的非生产占位桶：仅当显式认领 dev/local/test 才允许占位密钥。
+# 刻意不包含 ""/None —— LKM_ENV 缺失（含显式设为空串）一律按生产 fail-fast，
+# 避免"忘了设 LKM_ENV=production"时占位密钥悄悄放行。本地开发默认 env="dev" 不受影响。
+_PERMISSIVE_ENVS: set[str] = {"dev", "local", "test"}
 
 
 class Settings(BaseSettings):

@@ -39,13 +39,25 @@ async def _ensure_script(redis: Redis) -> str:
 
 
 class RedisRateLimiter:
-    """每个 key 维护一个 ZSET（score=时间戳、member=随机 UUID）。"""
+    """每个 key 维护一个 ZSET（score=时间戳、member=随机 UUID）。
 
-    async def check(self, key: str, max_count: int, window_seconds: float) -> bool:
-        """允许继续则 True；否则 False。Redis 不可用时放行（fail-open）。"""
+    ``fail_open=True``（默认）时 Redis 不可用/异常即放行，适合读缓存等非安全场景；
+    登录、验证码、2FA 等安全限流应传 ``fail_open=False``，Redis 故障时宁可拒绝
+    （fail-close），避免暴力破解防线在依赖抖动瞬间消失。
+    """
+
+    async def check(
+        self,
+        key: str,
+        max_count: int,
+        window_seconds: float,
+        *,
+        fail_open: bool = True,
+    ) -> bool:
+        """允许继续则 True；否则 False。失败时按 *fail_open* 决定放行或拒绝。"""
         redis = await _redis_core.get_redis()
         if redis is None:
-            return True  # fail-open
+            return fail_open
         try:
             now = time.time()
             sha = await _ensure_script(redis)
@@ -65,7 +77,7 @@ class RedisRateLimiter:
             )
             return await awaitable == 1
         except Exception:
-            return True  # 运行期异常同样 fail-open
+            return fail_open  # 运行期异常按 fail_open 决定
 
     async def reset(self, key: str) -> None:
         """清除 *key*。Redis 不可用或 key 不存在时静默无操作。"""

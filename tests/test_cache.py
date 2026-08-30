@@ -102,3 +102,30 @@ async def test_cached_read_loads_on_miss_and_hits(monkeypatch) -> None:
     second = await cached_read(make_key("a", 1), 60, _loader)
     assert second == {"value": 1}
     assert loader_calls == 1
+
+
+async def test_cached_read_single_flight_on_concurrent_miss(monkeypatch) -> None:
+    """同一 key 的并发 miss：单飞合并，loader 只执行一次，结果共享。"""
+    await _enable_fake_redis(monkeypatch)
+    in_flight = 0
+    peak = 0
+    loader_calls = 0
+
+    async def _slow_loader() -> dict[str, Any]:
+        nonlocal in_flight, peak, loader_calls
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.05)  # 让并发请求都进入争锁状态
+        in_flight -= 1
+        loader_calls += 1
+        return {"done": True}
+
+    import asyncio
+
+    key = make_key("single", "flight")
+    results = await asyncio.gather(
+        *(cached_read(key, 60, _slow_loader) for _ in range(10))
+    )
+    assert all(r == {"done": True} for r in results)
+    assert loader_calls == 1  # 并发 miss 只加载一次
+    assert peak == 1  # 任意时刻最多一个 loader 在跑

@@ -5,6 +5,7 @@
 纯逻辑、不依赖 HTTP，便于用 mock git 单测。
 """
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -49,16 +50,20 @@ async def backfill_series_from_git(
     await get_or_raise(
         db, BlogSeries, BlogErr.SERIES_NOT_FOUND, BlogSeries.id == series_id
     )
-    new_sha = git_svc.revparse_or_none(repo_name)
+    # git_svc.* 是同步 subprocess 调用（单条最长 30s），必须 to_thread 放到线程池，
+    # 避免在事件循环里同步阻塞；且三条并发取 git 内容互不依赖，可 gather 并行。
+    new_sha = await asyncio.to_thread(git_svc.revparse_or_none, repo_name)
     if not new_sha:
         return BackfillResult()
     push_at = push_at or now_iso()
 
-    changed = git_svc.diff_tree_names(repo_name, old_sha, new_sha)
+    changed = await asyncio.to_thread(
+        git_svc.diff_tree_names, repo_name, old_sha, new_sha
+    )
     result = BackfillResult(paths=changed)
 
     for path in changed:
-        content = git_svc.read_file(repo_name, path)
+        content = await asyncio.to_thread(git_svc.read_file, repo_name, path)
         sha = _sha3(content)
 
         row = (

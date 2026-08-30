@@ -182,7 +182,7 @@ def verify_totp(secret: str, code: str, window: int = 1) -> int | None:
         return None
     now = _totp_now()
     for step in range(now - window, now + window + 1):
-        if _totp_code(key, step) == code:
+        if hmac.compare_digest(_totp_code(key, step), code):
             return step
     return None
 
