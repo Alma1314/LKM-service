@@ -211,24 +211,49 @@ class TestConsumePhoneCode:
 
 
 class TestCheckCodeRateLimit:
-    """验证码限流的 fail-open 行为（放行不抛）。
+    """验证码限流的 fail-close 行为（Redis 运行期不可用拒绝，不放开爆破面）。
+
+    - Redis 未配置（redis_url 空）：无分布式限流可失败，放行（保持原语义）。
+    - Redis 已配置但运行期不可用（get_redis 返回 None）：拒绝（fail-close）。
 
     滑动窗口语义（超限抛 BizError / reset / 隔离 / 窗口过期）依赖真实 Redis 的
     Lua 脚本，由集成测试 tests/integration/test_redis_limiter_integration.py 覆盖。
     """
 
-    async def should_fail_open_when_redis_url_empty(self) -> None:
-        """LKM_REDIS_URL 为空（get_redis 返回 None）→ 放行，不抛异常。"""
+    async def should_pass_when_redis_unconfigured(self) -> None:
+        """LKM_REDIS_URL 为空 → 放行，不抛异常（无分布式限流依赖可失败）。"""
+        from app.core.config import settings
+
+        original_url = settings.redis_url
+        settings.redis_url = ""
+        try:
+            await check_code_rate_limit("test@example.com", max_count=5, window=3600)
+            # 不应抛 BizError
+        finally:
+            settings.redis_url = original_url
+
+    async def should_fail_close_when_redis_configured_but_down(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """LKM_REDIS_URL 已配置但运行期不可用（get_redis 返回 None）→ 拒绝。
+
+        Redis 抖动瞬间 fail-open 等于放开暴力破解面，这里宁可拒绝。
+        """
         from app.core import redis as redis_core
+        from app.core.config import settings
 
         original = redis_core.get_redis
 
         async def _none() -> Any:
             return None
 
+        monkeypatch.setattr(settings, "redis_url", "redis://localhost:6379/0")
         redis_core.get_redis = _none  # ty: ignore[invalid-assignment]  # runtime monkeypatch
         try:
-            await check_code_rate_limit("test@example.com", max_count=5, window=3600)
-            # 不应抛 BizError
+            with pytest.raises(BizError) as exc_info:
+                await check_code_rate_limit(
+                    "test@example.com", max_count=5, window=3600
+                )
+            assert exc_info.value.errcode == AuthErr.VERIFICATION_CODE_RATE_LIMIT
         finally:
             redis_core.get_redis = original  # type: ignore[assignment]

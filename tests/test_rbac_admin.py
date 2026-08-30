@@ -130,6 +130,51 @@ class TestAdminContentReview:
         assert r.status_code == 404
 
 
+class TestAdminModerationManage:
+    """审校规则写端点：叠加 require_admin_2fa + admin.moderation_manage 权限点。"""
+
+    async def test_org_member_without_grant_forbidden(
+        self,
+        db: DB,
+        client: Client,
+    ) -> None:
+        # org_member 不授 admin.moderation_manage → 越过 2FA 后仍 403（RBAC 收紧）
+        await _seed_perm(db, "admin:org_member", "admin.dashboard")
+        u = await _mk_user(db, "org_mod", role="org_member")
+        _set_admin_cookie(client, u, mfa_verified=True)
+        r = await client.post(
+            "/api/v1/admin/moderation/rules", json={"pattern": "风控", "weight": 0.5}
+        )
+        assert r.status_code == 403
+
+    async def test_org_member_list_rules_forbidden(
+        self,
+        db: DB,
+        client: Client,
+    ) -> None:
+        # 规则列表暴露内部正则权重，同样收紧到该权限点
+        await _seed_perm(db, "admin:org_member", "admin.dashboard")
+        u = await _mk_user(db, "org_mod_l", role="org_member")
+        _set_admin_cookie(client, u)
+        r = await client.get("/api/v1/admin/moderation/rules")
+        assert r.status_code == 403
+
+    async def test_super_admin_with_grant_allowed(
+        self,
+        db: DB,
+        client: Client,
+    ) -> None:
+        # super_admin 授 admin.moderation_manage → 越过 2FA + RBAC 后创建成功
+        await _seed_perm(db, "admin:super_admin", "admin.moderation_manage")
+        u = await _mk_user(db, "sadmin_mod", role="super_admin")
+        _set_admin_cookie(client, u, mfa_verified=True)
+        r = await client.post(
+            "/api/v1/admin/moderation/rules", json={"pattern": "风控", "weight": 0.5}
+        )
+        assert r.status_code == 200
+        assert r.json()["data"]["pattern"] == "风控"
+
+
 class TestAdminMe:
     async def test_super_admin_me_allowed(
         self,

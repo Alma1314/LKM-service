@@ -25,6 +25,7 @@ from app.modules.content.schemas import (
     ContentItemCreate,
 )
 from app.modules.content.service import (
+    bump_item_view,
     create_comment,
     create_item,
     delete_item,
@@ -226,6 +227,42 @@ async def test_get_nonexistent_item_raises(db: AsyncSession) -> None:
     with pytest.raises(BizError) as e:
         await get_item(db, 999)
     assert e.value.errcode == ContentErr.CONTENT_NOT_FOUND
+
+
+async def test_bump_item_view_makes_write_session_commit(
+    db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """bump_item_view 自建独立写会话原子 +1 并 commit（GraphQL 只读会话不可写）。
+
+    seam 注回绑定同一引擎的新会话：bump 内 commit/close 该新会话，不影响 fixture db。
+    """
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    uid = await _user(db)
+    bid = await _make_board(db, "math")
+    item = await create_item(
+        db, uid, ContentItemCreate(board_id=bid, title="t", content="c")
+    )
+    assert item.view_count == 0
+
+    async def _new_session() -> AsyncSession:
+        assert db.bind is not None
+        factory = async_sessionmaker(db.bind, expire_on_commit=False)
+        return factory()
+
+    from app.modules.content import service as content_service
+
+    monkeypatch.setattr(content_service, "_new_write_session", _new_session)
+    await bump_item_view(item.id)
+
+    # 从 DB 重新读取 ORM 行（同一 StaticPool 连接），应看到 bump 提交后的计数
+    row = (
+        (await db.execute(select(ContentItem).where(ContentItem.id == item.id)))
+        .scalars()
+        .one()
+    )
+    assert row.view_count == 1
 
 
 async def test_delete_own_item(db: AsyncSession) -> None:

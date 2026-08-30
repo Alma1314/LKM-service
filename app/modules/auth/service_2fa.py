@@ -4,7 +4,7 @@ import hashlib
 from typing import Any
 
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,11 +23,14 @@ from app.modules.auth.security import (
     generate_recovery_codes,
     generate_totp_secret,
     get_totp_uri,
+    hash_recovery_code,
+    legacy_hash_recovery_code,
     verify_totp,
 )
 from app.modules.auth.service_auth import issue_session_tokens, log_audit
 
 _TOTP_MAX_FAILED = 3
+_RECOVERY_MAX_FAILED = 3  # 恢复码暴力尝试上限（对齐 TOTP 的失败锁定）
 
 
 async def get_enabled_totp(db: AsyncSession, user_id: int) -> TOTP | None:
@@ -97,6 +100,73 @@ async def _verify_totp_guarded(
         raise BizError(AuthErr.TOTP_CODE_INVALID)
     await _reset_totp_failures(db, totp_record)
     return counter
+
+
+def _recovery_candidate_hashes(plain: str) -> list[str]:
+    """恢复码匹配候选哈希：新格式（HMAC+pepper）+ 旧格式（裸 SHA-256）
+    兜底，兼容已落库的存量恢复码；新生成的一律走 HMAC。
+    """
+    hashes = [hash_recovery_code(plain)]
+    legacy = legacy_hash_recovery_code(plain)
+    if legacy != hashes[0]:
+        hashes.append(legacy)
+    return hashes
+
+
+async def _check_recovery_locked(db: AsyncSession, user_id: int) -> None:
+    """恢复码暴力尝试超限（任一未用码 failed_attempts 达上限）即拒绝验证。"""
+    maxf = await db.scalar(
+        select(func.max(RecoveryCode.failed_attempts)).where(
+            RecoveryCode.user_id == user_id, RecoveryCode.used.is_(False)
+        )
+    )
+    if (maxf or 0) >= _RECOVERY_MAX_FAILED:
+        raise BizError(
+            AuthErr.RECOVERY_CODE_INVALID,
+            "Recovery verification locked – too many failures",
+        )
+
+
+async def _record_recovery_failure(db: AsyncSession, user_id: int) -> None:
+    """恢复码验证失败：经保存点原子递增失败计数，即使外层事务回滚也保留。"""
+    await isolated_update(
+        db,
+        sa_update(RecoveryCode)
+        .where(RecoveryCode.user_id == user_id, RecoveryCode.used.is_(False))
+        .values(failed_attempts=RecoveryCode.failed_attempts + 1),
+    )
+
+
+async def _reset_recovery_failures(db: AsyncSession, user_id: int) -> None:
+    """恢复码成功消费后清零失败计数。"""
+    await db.execute(
+        sa_update(RecoveryCode)
+        .where(RecoveryCode.user_id == user_id, RecoveryCode.used.is_(False))
+        .values(failed_attempts=0)
+    )
+
+
+async def consume_recovery_code(
+    db: AsyncSession, user_id: int, recovery_code: str
+) -> None:
+    """原子消费恢复码（一次性）并带失败锁定；失败抛 RECOVERY_CODE_INVALID。
+
+    候选哈希含新旧两种格式，兼容既有存量码与测试种子；失败累计计数并在达上限后锁定。
+    """
+    if not recovery_code:
+        raise BizError(AuthErr.RECOVERY_CODE_INVALID)
+    await _check_recovery_locked(db, user_id)
+    consumed = await consume_once(
+        db,
+        RecoveryCode,
+        {"used": True, "failed_attempts": 0},
+        RecoveryCode.user_id == user_id,
+        RecoveryCode.code_hash.in_(_recovery_candidate_hashes(recovery_code)),
+        RecoveryCode.used.is_(False),
+    )
+    if not consumed:
+        await _record_recovery_failure(db, user_id)
+        raise BizError(AuthErr.RECOVERY_CODE_INVALID)
 
 
 def _decode_temp_token(raw_token: str) -> dict[str, Any]:
@@ -265,17 +335,7 @@ async def verify_2fa(
     txn_id = payload.get("txn_id")
 
     if recovery_code:
-        code_hash = hashlib.sha256(recovery_code.encode()).hexdigest()
-        # 原子消费：仅在尚未使用时才标记为已使用
-        if not await consume_once(
-            db,
-            RecoveryCode,
-            {"used": True},
-            RecoveryCode.user_id == user_id,
-            RecoveryCode.code_hash == code_hash,
-            RecoveryCode.used.is_(False),
-        ):
-            raise BizError(AuthErr.RECOVERY_CODE_INVALID)
+        await consume_recovery_code(db, user_id, recovery_code)
     elif code:
         totp_record = await get_enabled_totp(db, user_id)
         if not totp_record:
@@ -379,16 +439,7 @@ async def verify_second_factor(
     供危险操作 step-up、关闭 2FA、解绑绑定等「所有 2FA 场景」复用，恢复码作 TOTP 兜底。
     """
     if recovery_code:
-        code_hash = hashlib.sha256(recovery_code.encode()).hexdigest()
-        if not await consume_once(
-            db,
-            RecoveryCode,
-            {"used": True},
-            RecoveryCode.user_id == user_id,
-            RecoveryCode.code_hash == code_hash,
-            RecoveryCode.used.is_(False),
-        ):
-            raise BizError(AuthErr.RECOVERY_CODE_INVALID)
+        await consume_recovery_code(db, user_id, recovery_code)
         return
 
     if not code:

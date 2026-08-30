@@ -3,6 +3,7 @@ import json
 import re
 
 from sqlalchemy import func, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -152,6 +153,33 @@ async def list_items(
         page=page,
         pages=paginate_pages(total_count, limit),
     )
+
+
+# 视图计数写会话缝：GraphQL 用只读会话不能写，故 bump 自建独立写会话。
+# 默认 new_session()；测试可替换为 conftest 内存会话以断言落库（仿 blog git _session_factory）。
+async def _new_write_session() -> AsyncSession:
+    from app.db.session import new_session
+
+    return await new_session()
+
+
+async def bump_item_view(item_id: int) -> None:
+    """原子地给内容项 view_count +1（供公开详情阅读计数增长路径）。
+
+    前端详情走 GraphQL ``contentItem``，此前 get_item 恒 bump_view=False 且 REST 无详情
+    端点，导致 view_count 无增长路径。GraphQL 用只读会话（读后显式 rollback），不能在其上写，
+    故自建独立写会话原子 UPDATE 并 commit，原子 UPDATE 避免并发 read-modify-write 丢计数。
+    """
+    dbw = await _new_write_session()
+    try:
+        await dbw.execute(
+            sa_update(ContentItem)
+            .where(ContentItem.id == item_id)
+            .values(view_count=ContentItem.view_count + 1)
+        )
+        await dbw.commit()
+    finally:
+        await dbw.close()
 
 
 async def get_item(

@@ -58,8 +58,9 @@ class TestAccessToken:
             decode_access_token(token)
 
     def should_reject_non_access_type(self):
+        # 传入 temp token：其 audience 与 access 不同，单次验 aud 即被拒（不再是"先看 type"）
         token = create_temp_token(user_id=4)
-        with pytest.raises(ValueError, match="non-access token"):
+        with pytest.raises((jwt.exceptions.InvalidAudienceError, ValueError)):
             decode_access_token(token)
 
 
@@ -76,8 +77,9 @@ class TestTempToken:
         assert payload["type"] == "temp"
 
     def should_reject_non_temp_type(self):
+        # 传入 access token：audience 与 temp 不同，单次验 aud 即被拒
         token = create_access_token(user_id=6, account_level="normal", role="member")
-        with pytest.raises(ValueError, match="non-temp token"):
+        with pytest.raises((jwt.exceptions.InvalidAudienceError, ValueError)):
             decode_temp_token(token)
 
 

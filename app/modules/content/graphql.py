@@ -9,16 +9,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from strawberry.types.info import Info
 
 from app.core.err import BizError
+from app.db.models import ContentStatus
 from app.modules.content.boards_service import list_boards
 from app.modules.content.errors import ContentErr
 from app.modules.content.schemas import ContentCommentInfo, ContentItemInfo
 from app.modules.content.service import (
+    bump_item_view,
     get_item,
     get_item_by_slug,
     list_all_comments,
     list_comments,
     list_items,
 )
+
+# 公开 GraphQL 仅暴露该状态的内容（对齐 REST 列表的 PUBLISHED 过滤）
+PUBLISHED_STATUS = ContentStatus.PUBLISHED.value
 
 # ---- 节点类型 ----
 
@@ -190,6 +195,11 @@ class ContentQuery:
             if e.errcode != ContentErr.CONTENT_NOT_FOUND:
                 raise
             return None
+        # 仅暴露已发布内容；草稿/待审/驳回(未发布)不向公开 GraphQL 泄露
+        if item.status != PUBLISHED_STATUS:
+            return None
+        # 详情阅读计数增长：只在公开可见时原子 +1（草稿探测不计数）
+        await bump_item_view(id)
         return _map_item(item)
 
     @strawberry.field
@@ -200,6 +210,8 @@ class ContentQuery:
         except BizError as e:
             if e.errcode != ContentErr.CONTENT_NOT_FOUND:
                 raise
+            return None
+        if item.status != PUBLISHED_STATUS:
             return None
         return _map_item(item)
 

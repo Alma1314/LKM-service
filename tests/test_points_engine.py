@@ -199,3 +199,34 @@ async def test_unknown_event_is_noop(db: AsyncSession):
     await apply_event_side_effects(db, uid, "unknown_event", "x", today="2026-08-21")
     stat = await db.get(UserBehaviorStat, uid)
     assert stat is None
+
+
+@pytest.mark.asyncio
+async def test_apply_side_effects_is_idempotent_per_ref(db: AsyncSession):
+    """副作用以 (event, ref_id) 去重：重复投递不重复累计计数/进度/发分(ARQ 重投语义)。"""
+    uid = await _user(db)
+    await _achievement(db, "a2", "post_count", threshold=1)
+    await _task(db, "t5", "post", requirement_count=2, reward_points=5)
+
+    # 同一 ref 投递两次（模拟 commit 成功但 ack 前崩溃后 arq 重投）
+    for _ in range(2):
+        await apply_event_side_effects(db, uid, "post", "ref-1", today="2026-08-21")
+
+    stat = await db.get(UserBehaviorStat, uid)
+    assert stat is not None
+    assert stat.stats["post"] == 1  # 只累计一次
+    ua = (
+        (
+            await db.execute(
+                select(UserAchievement).where(UserAchievement.user_id == uid)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert ua is not None and ua.progress == 1
+
+    # 不同 ref 正常累计
+    await apply_event_side_effects(db, uid, "post", "ref-2", today="2026-08-21")
+    stat = await db.get(UserBehaviorStat, uid)
+    assert stat.stats["post"] == 2

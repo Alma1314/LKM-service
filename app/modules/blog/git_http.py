@@ -79,18 +79,52 @@ def _is_receive_pack(request: Request) -> bool:
     return "git-receive-pack" in path
 
 
-async def _resolve_series_id(db: AsyncSession, repo_name: str) -> int | None:
-    """repo_name → blog_series.id；无记录（孤儿仓库）返回 None。"""
-    row = (
-        (
-            await db.execute(
-                select(BlogSeries.id).where(BlogSeries.repo_name == repo_name)
-            )
-        )
+async def _resolve_series(db: AsyncSession, repo_name: str) -> BlogSeries | None:
+    """repo_name → blog_series；无记录（孤儿仓库）返回 None。"""
+    return (
+        (await db.execute(select(BlogSeries).where(BlogSeries.repo_name == repo_name)))
         .scalars()
         .first()
     )
-    return row
+
+
+async def _resolve_series_id(db: AsyncSession, repo_name: str) -> int | None:
+    """repo_name → blog_series.id；无记录（孤儿仓库）返回 None。"""
+    series = await _resolve_series(db, repo_name)
+    return series.id if series is not None else None
+
+
+async def _require_owner_for_push(
+    db: AsyncSession, repo_name: str, request: Request
+) -> User:
+    """写路径(push)授权：校验 Basic Auth 身份，且该用户须为 repo 对应 blog_series 的属主。
+
+    任一环节失败抛 HTTPException(401/403)，git http-backend 不会被调用，refs 不会被更新。
+    - 无有效身份 → 401（git push 将其视为认证失败并提示）。
+    - 仓库无归属（孤儿）或无属主匹配 → 403，防止越权写入他人/无人认领的仓库。
+    """
+    auth = request.headers.get("Authorization", "")
+    creds = _decode_basic_auth(auth)
+    if creds is None:
+        # 缺失或格式非法的 Basic 凭据都算未认证
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": 'Basic realm="lkm-git"'},
+        )
+    username, password = creds
+    user = (
+        (await db.execute(select(User).where(User.username == username)))
+        .scalars()
+        .first()
+    )
+    if user is None or not await verifypwd(password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    series = await _resolve_series(db, repo_name)
+    if series is None or series.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="Not repository owner")
+    return user
 
 
 async def maybe_backfill_after_push(repo_name: str, old_sha: str | None) -> None:
@@ -161,6 +195,12 @@ async def git_http_backend(
         raise HTTPException(status_code=404, detail="Repository not found")
 
     is_push = _is_receive_pack(request)
+
+    # 写路径(push)必须先确认身份 + 属主，未通过直接 401/403，绝不让 git http-backend 处理。
+    # 读路径维持原语义（Basic 通过即设 REMOTE_USER，匿名回退公开读）。
+    auth_user: User | None = None
+    if is_push:
+        auth_user = await _require_owner_for_push(db, repo_name, request)
     old_sha = None
     if is_push:
         old_sha = await asyncio.to_thread(git_svc.revparse_or_none, repo_name)
@@ -176,20 +216,25 @@ async def git_http_backend(
     env["QUERY_STRING"] = qs
 
     # Basic Auth 校验（读权限门槛；会话由 FastAPI 依赖注入统一管理）
-    auth = request.headers.get("Authorization", "")
-    creds = _decode_basic_auth(auth)
-    if creds is not None:
-        username, password = creds
-        user = (
-            (await db.execute(select(User).where(User.username == username)))
-            .scalars()
-            .first()
-        )
-        if user and await verifypwd(password, user.hashed_password):
-            env["REMOTE_USER"] = username
-    elif auth.startswith("Basic "):
-        # 仅格式错误（非 base64/缺冒号/非 UTF-8）回退匿名读；DB/内部错误不在此捕获，正常传播
-        logger.warning("git Basic Auth 格式无效，回退为匿名（读公开）")
+    if is_push:
+        # push 鉴权已在 _require_owner_for_push 完成，落库用户名供 http-backend 标记远程用户
+        assert auth_user is not None
+        env["REMOTE_USER"] = auth_user.username
+    else:
+        auth = request.headers.get("Authorization", "")
+        creds = _decode_basic_auth(auth)
+        if creds is not None:
+            username, password = creds
+            user = (
+                (await db.execute(select(User).where(User.username == username)))
+                .scalars()
+                .first()
+            )
+            if user and await verifypwd(password, user.hashed_password):
+                env["REMOTE_USER"] = username
+        elif auth.startswith("Basic "):
+            # 仅格式错误（非 base64/缺冒号/非 UTF-8）回退匿名读；DB/内部错误不在此捕获，正常传播
+            logger.warning("git Basic Auth 格式无效，回退为匿名（读公开）")
 
     # 用 asyncio 子进程 + request.stream() 流式喂入请求体，避免 request.body() 全量缓冲
     try:

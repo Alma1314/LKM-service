@@ -159,6 +159,7 @@ class RecoveryCode(Base):
     )
     code_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    failed_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
     )

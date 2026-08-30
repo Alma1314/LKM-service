@@ -9,14 +9,17 @@ from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import BlogContent, BlogSeries
+from app.db.models import BlogContent, BlogSeries, User
+from app.modules.auth.security import hashpwd
 from app.modules.blog import backfill
 from app.modules.blog.git_http import (
     _decode_basic_auth,
     _is_receive_pack,
+    _require_owner_for_push,
     _resolve_series_id,
     maybe_backfill_after_push,
 )
@@ -178,6 +181,80 @@ class TestResolveSeriesId:
 
     async def should_return_none_when_no_series(self, db):
         assert await _resolve_series_id(db, "repo-orphan") is None
+
+
+def _auth_header(username: str, password: str) -> dict[str, str]:
+    token = base64.b64encode(f"{username}:{password}".encode()).decode()
+    return {"Authorization": f"Basic {token}"}
+
+
+def _push_auth_request(auth_header: dict[str, str]) -> SimpleNamespace:
+    return SimpleNamespace(headers=auth_header)
+
+
+class TestRequireOwnerForPush:
+    """写路径(push)授权：仅 repo 属主可 push；未认证/非属主/孤儿一律拒绝。"""
+
+    @pytest.fixture(autouse=True)
+    async def _users(self, db):
+        owner = User(username="owner", hashed_password=await hashpwd("pw123456"))
+        other = User(username="other", hashed_password=await hashpwd("pw123456"))
+        db.add_all([owner, other])
+        await db.flush()
+        return owner, other
+
+    async def _series(self, db, owner_id: int, repo_name: str) -> int:
+        series = BlogSeries(
+            owner_id=owner_id, title="t", repo_name=repo_name, description=None
+        )
+        db.add(series)
+        await db.flush()
+        return series.id
+
+    async def should_reject_anonymous(self, db):
+        repo = "blog-anon"
+        await self._series(db, 1, repo)
+        with pytest.raises(HTTPException) as ei:
+            await _require_owner_for_push(db, repo, _push_auth_request({}))
+        assert ei.value.status_code == 401
+
+    async def should_reject_wrong_password(self, db, _users):
+        repo = "blog-badpw"
+        owner, _ = _users
+        await self._series(db, owner.id, repo)
+        with pytest.raises(HTTPException) as ei:
+            await _require_owner_for_push(
+                db, repo, _push_auth_request(_auth_header("owner", "wrong-pass"))
+            )
+        assert ei.value.status_code == 401
+
+    async def should_reject_non_owner(self, db, _users):
+        repo = "blog-nonowner"
+        owner, _ = _users
+        await self._series(db, owner.id, repo)
+        with pytest.raises(HTTPException) as ei:
+            await _require_owner_for_push(
+                db, repo, _push_auth_request(_auth_header("other", "pw123456"))
+            )
+        assert ei.value.status_code == 403
+
+    async def should_reject_orphan_repo_even_for_owner(self, db, _users):
+        """孤儿仓库(无 blog_series)无属主可言，属主身份也不能写入。"""
+        del _users
+        with pytest.raises(HTTPException) as ei:
+            await _require_owner_for_push(
+                db, "blog-orphan", _push_auth_request(_auth_header("other", "pw123456"))
+            )
+        assert ei.value.status_code in (401, 403)
+
+    async def should_allow_owner(self, db, _users):
+        repo = "blog-ok"
+        owner, _ = _users
+        await self._series(db, owner.id, repo)
+        user = await _require_owner_for_push(
+            db, repo, _push_auth_request(_auth_header("owner", "pw123456"))
+        )
+        assert user.id == owner.id
 
 
 class TestMaybeBackfillAfterPush:

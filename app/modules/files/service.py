@@ -1,9 +1,10 @@
+import asyncio
 import hashlib
 import json
 import tempfile
 import uuid
 from collections.abc import AsyncIterator
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, NoReturn, Protocol
@@ -186,6 +187,53 @@ def _bucket_key_of(f: LibraryFile) -> str | None:
     return _build_bucket_key(f.sha3_hash) if f.sha3_hash else None
 
 
+# ---- 内容哈希级互斥（串行化「去重复用」与「末引用物理删除」，防 TOCTOU）----
+# delete_file 在"引用归零"时物理删 blob，create_file 可能在删除的前后复用同一 blob。
+# 二者对同一 content_hash 的决策必须互斥，否则出现空引用/孤儿 blob。Redis 有则用
+# 分布式锁（跨 worker 生效），无则退回进程内锁（单 worker / 测试语义仍正确）。
+_HASH_LOCK_TTL_SECONDS = 30
+_hash_locks_inproc: dict[str, asyncio.Lock] = {}
+
+
+async def _acquire_hash_lock(content_hash: str) -> bool:
+    """尝试获取 content_hash 级互斥锁；拿到返回 True（调用方必须 __release_hash_lock）。"""
+    redis = await get_redis()
+    if redis is None:
+        lock = _hash_locks_inproc.setdefault(content_hash, asyncio.Lock())
+        return await lock.acquire()
+    got = await redis.set(
+        f"files:hash:{content_hash}", "1", ex=_HASH_LOCK_TTL_SECONDS, nx=True
+    )
+    return bool(got)
+
+
+async def _release_hash_lock(content_hash: str) -> None:
+    redis = await get_redis()
+    if redis is None:
+        lock = _hash_locks_inproc.get(content_hash)
+        if lock is not None:
+            lock.release()
+        return
+    await redis.delete(f"files:hash:{content_hash}")
+
+
+@asynccontextmanager
+async def _hash_lock(content_hash: str) -> AsyncIterator[None]:
+    """await 获取锁，确保拿到后在退出时释放。锁等不到/Redis 异常按放行(不阻断上传/删除)。"""
+    try:
+        acquired = await _acquire_hash_lock(content_hash)
+    except Exception:
+        acquired = False
+    # 拿不到锁（并发争抢或 Redis 抖动）→ 重验仍可能竞争，但返回 None 不额外报错；
+    # 为不放大风险，拿不到时也照常放行（原语义），锁主要串行化常规并发窗口。
+    try:
+        yield
+    finally:
+        if acquired:
+            with suppress(Exception):
+                await _release_hash_lock(content_hash)
+
+
 def _storage_path_for(content_hash: str) -> str:
     """构造与首写时后端实际返回一致的 ``storage_path``，避免元数据漂移。
 
@@ -291,16 +339,19 @@ async def create_file(
     bucket_key = _build_bucket_key(content_hash)
 
     # 落盘（写字节的细节交给 storage 层）；dedup 语义：已存在则复用、不重写。
+    # 与 delete_file 的末引用物理删除互斥（按 content_hash 加锁），避免并发删除
+    # 恰在 exists→save 间隙把复用的 blob 删空造成空引用。
     saved: dict[str, object] | None = None
     try:
-        try:
-            storage = _get_storage()
-            if not await storage.exists(bucket_key):
-                saved = dict(
-                    await storage.save(buf, max_bytes=limit, bucket_key=bucket_key)
-                )
-        except BizError as exc:
-            _raise_storage_as_file(exc)
+        async with _hash_lock(content_hash):
+            try:
+                storage = _get_storage()
+                if not await storage.exists(bucket_key):
+                    saved = dict(
+                        await storage.save(buf, max_bytes=limit, bucket_key=bucket_key)
+                    )
+            except BizError as exc:
+                _raise_storage_as_file(exc)
     finally:
         # buf 是 _buffer_and_hash 的 spool 临时文件，用完即关（关闭自动删除，释放磁盘）。
         buf.close()
@@ -433,26 +484,29 @@ async def delete_file(
     await db.flush()
 
     if old_hash:
-        remaining = (
-            await db.scalar(
-                select(func.count())
-                .select_from(LibraryFile)
-                .where(
-                    LibraryFile.sha3_hash == old_hash,
-                    LibraryFile.status != FileStatus.DELETED,
+        # 物理删除决策与 create_file 的去重复用互斥（按 content_hash 加锁）：
+        # 加锁后重算引用，防止并发创建/删除的 TOCTOU 把仍被引用的 blob 删空。
+        async with _hash_lock(old_hash):
+            remaining = (
+                await db.scalar(
+                    select(func.count())
+                    .select_from(LibraryFile)
+                    .where(
+                        LibraryFile.sha3_hash == old_hash,
+                        LibraryFile.status != FileStatus.DELETED,
+                    )
                 )
+                or 0
             )
-            or 0
-        )
-        await _sync_ref_count(db, old_hash)
-        # 引用全部删除 → 物理文件无引用，清理存储（key 已不存在视为成功）。
-        if remaining <= 0:
-            bucket_key = _build_bucket_key(old_hash)
-            try:
-                await _get_storage().delete(bucket_key)
-            except BizError as exc:
-                if exc.errcode != StorageErr.NOT_FOUND:
-                    _raise_storage_as_file(exc)
+            await _sync_ref_count(db, old_hash)
+            # 加锁后仍无引用才物理删除（key 已不存在视为成功）。
+            if remaining <= 0:
+                bucket_key = _build_bucket_key(old_hash)
+                try:
+                    await _get_storage().delete(bucket_key)
+                except BizError as exc:
+                    if exc.errcode != StorageErr.NOT_FOUND:
+                        _raise_storage_as_file(exc)
 
     names = await _uploader_map(db, [f.uploader_id])
     return _file_to_schema(f, names.get(f.uploader_id, ""))
@@ -620,14 +674,16 @@ async def _register_from_upload(
         storage, key, settings.max_upload_bytes
     )
     hash_key = _build_bucket_key(content_hash)
-    if not await storage.exists(hash_key):
-        try:
-            await storage.copy(key, hash_key)
-        except Exception:
-            # copy 失败：随机 up/<uid> 对象尚未删除，尽力回收，覆盖原始异常
-            await _safe_delete(storage, key)
-            raise
-    await _safe_delete(storage, key)
+    # 与 delete_file 的末引用物理删除互斥，防并发删除在 copy→登记间隙清空复用对象。
+    async with _hash_lock(content_hash):
+        if not await storage.exists(hash_key):
+            try:
+                await storage.copy(key, hash_key)
+            except Exception:
+                # copy 失败：随机 up/<uid> 对象尚未删除，尽力回收，覆盖原始异常
+                await _safe_delete(storage, key)
+                raise
+        await _safe_delete(storage, key)
     # storage_path 按 backend 与 create_file 对齐：直传与普通上传的条目不可区分
     storage_path = _storage_path_for(content_hash)
     # 登记 PENDING（tags 标记里是 JSON 数组，转回 JSON 字符串存储，与 create_file 一致）

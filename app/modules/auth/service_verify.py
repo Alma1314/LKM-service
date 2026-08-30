@@ -156,10 +156,15 @@ async def check_code_rate_limit(
 ) -> None:
     """如果 *key* 超过了限制，则抛出 ``BizError(VERIFICATION_CODE_RATE_LIMIT)``。
 
-    Redis 不可用时 fail-open（放行），避免限流成为单点故障拖垮可用性；
-    账号锁定的暴力破解兜底由 DB 级 failed_login_attempts/is_locked 承担（不依赖 Redis）。
+    Redis 已在栈上（``redis_url`` 非空）但运行期不可用时 **拒绝（fail-close）**：
+    本函数守卫登录/验证码/2FA/恢复等暴力破解关键路径，若在依赖抖动瞬间 fail-open，
+    等于防线直接消失，宁可短暂拒绝。而未配置 Redis（``redis_url`` 为空）时没有分布式
+    限流依赖可失败，放行保持原语义（那种部署本就不靠 Redis 防爆破，靠 DB 级锁定兜底）。
     """
-    if not await RedisRateLimiter().check(key, max_count, window):
+    # 未配置 Redis：无分布式限流可失败，非"运行期抖动"，按原行为放行。
+    if not settings.redis_url:
+        return
+    if not await RedisRateLimiter().check(key, max_count, window, fail_open=False):
         raise BizError(AuthErr.VERIFICATION_CODE_RATE_LIMIT)
 
 

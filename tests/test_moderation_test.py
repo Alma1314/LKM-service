@@ -9,7 +9,7 @@
 import pytest
 from httpx import AsyncClient
 
-from app.db.models import Profile, User
+from app.db.models import Profile, RolePermission, User
 from app.modules.admin.deps import COOKIE_NAME, COOKIE_PATH, create_admin_access_token
 from app.modules.admin.moderation import service as mod_service
 from app.modules.admin.moderation.schemas import RuleCreate
@@ -26,6 +26,13 @@ async def _admin(db: DB, username: str) -> User:
     db.add(u)
     await db.flush()
     db.add(Profile(user_id=u.id, role="super_admin", nickname=username))
+    # 授予 moderation 权限点，使叠加了 require_permission 的端点可放行
+    db.add(
+        RolePermission(
+            role_name="admin:super_admin",
+            permission="admin.moderation_manage",
+        )
+    )
     await db.flush()
     return u
 

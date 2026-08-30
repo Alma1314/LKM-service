@@ -2,6 +2,8 @@ from typing import Any
 
 from httpx import AsyncClient
 
+from app.db.models import Board, ContentItem, ContentStatus, ContentType
+
 
 async def _run(client: AsyncClient, query: str, variables: dict[str, Any]) -> Any:
     resp = await client.post("/graphql", json={"query": query, "variables": variables})
@@ -30,6 +32,43 @@ class TestContentGraphQL:
         )
         assert data["contentItems"]["total"] >= 0
         assert isinstance(data["contentItems"]["items"], list)
+
+    async def should_hide_unpublished_detail(self, client: AsyncClient, db):
+        """contentItem 详情仅暴露 PUBLISHED；草稿/待审等未发布内容返回 null。"""
+        b = Board(title="b", slug="b", description="", status="active")
+        db.add(b)
+        await db.flush()
+        draft = ContentItem(
+            content_type=ContentType.ARTICLE,
+            board_id=b.id,
+            title="草稿",
+            content="未发布正文",
+            status=ContentStatus.DRAFT,
+        )
+        published = ContentItem(
+            content_type=ContentType.ARTICLE,
+            board_id=b.id,
+            title="已发布",
+            content="公开正文",
+            status=ContentStatus.PUBLISHED,
+        )
+        db.add_all([draft, published])
+        await db.flush()
+
+        data = await _run(
+            client,
+            "query($id: Int!) { contentItem(id: $id) { id title content } }",
+            {"id": draft.id},
+        )
+        assert data["contentItem"] is None
+
+        data = await _run(
+            client,
+            "query($id: Int!) { contentItem(id: $id) { id title content } }",
+            {"id": published.id},
+        )
+        assert data["contentItem"] is not None
+        assert data["contentItem"]["title"] == "已发布"
 
 
 class TestArticlesGraphQL:

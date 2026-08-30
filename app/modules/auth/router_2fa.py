@@ -175,8 +175,14 @@ async def verify_2fa(
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """在登录时使用临时令牌和 TOTP / 恢复码验证 2FA。"""
+    # 按用户分桶（而非全站共享）：防止单个攻击者刷错耗尽共享额度封锁所有用户的 2FA
+    # 登录。临时令牌可解码出 user_id；无法解码（本就会 400）用低熵兜底桶，避免泄漏失败面。
+    try:
+        _v_uid = int(security.decode_temp_token(body.temp_token).get("user_id", 0))
+    except Exception:
+        _v_uid = 0
     await check_code_rate_limit(
-        "2fa:verify:global",
+        f"2fa:verify:user:{_v_uid}",
         max_count=GLOBAL_VERIFY_MAX_PER_WINDOW,
         window=GLOBAL_VERIFY_WINDOW_SECONDS,
     )
@@ -229,7 +235,7 @@ async def step_up_2fa(
     返回新 access/refresh token（`mfa`/`mfa_at` 标记已编入 access token）。
     """
     await check_code_rate_limit(
-        "2fa:stepup",
+        f"2fa:stepup:user:{cur.id}",
         max_count=GLOBAL_VERIFY_MAX_PER_WINDOW,
         window=GLOBAL_VERIFY_WINDOW_SECONDS,
     )

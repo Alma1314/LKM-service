@@ -215,7 +215,8 @@ async def begin_passkey_registration(db: AsyncSession, user_id: int) -> dict:
         attestation=AttestationConveyancePreference.NONE,
         authenticator_selection=AuthenticatorSelectionCriteria(
             authenticator_attachment=AuthenticatorAttachment.PLATFORM,
-            user_verification=UserVerificationRequirement.PREFERRED,
+            # 强制本地用户验证（指纹/面容等），保证无密码登录的防冒用强度
+            user_verification=UserVerificationRequirement.REQUIRED,
         ),
         exclude_credentials=exclude_credentials,
         supported_pub_key_algs=[
@@ -296,7 +297,7 @@ async def begin_passkey_login(db: AsyncSession) -> dict:
         rp_id=settings.rp_id,
         challenge=challenge,
         timeout=60000,
-        user_verification=UserVerificationRequirement.PREFERRED,
+        user_verification=UserVerificationRequirement.REQUIRED,
     )
     return {
         "challenge_id": challenge_id,

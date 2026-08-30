@@ -88,24 +88,17 @@ def create_access_token(
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
-    # 先读 payload（不验 aud）判断 token 类型：
-    # 若本身不是 access token（例如 temp token），直接抛明确类型错误，而不是被
-    # audience 校验提前拦截成 InvalidAudienceError（那样类型检查永远是死代码）。
+    # 单次验签：同时校验 audience(lkm:web) 与类型标记(access)。
+    # 之前先读"不验 aud"看类型、再"验 aud"验第二遍，导致每次调用重复验签(HMAC)两次。
     payload = jwt.decode(
-        token,
-        settings.jwt_secret,
-        algorithms=[settings.jwt_algorithm],
-        options={"verify_aud": False},
-    )
-    if payload.get("type") != _ACCESS_TYPE:
-        raise ValueError("non-access token")
-    # 类型匹配后再严格校验 audience（lkm:web）。
-    return jwt.decode(
         token,
         settings.jwt_secret,
         algorithms=[settings.jwt_algorithm],
         audience=_AUD_WEB,
     )
+    if payload.get("type") != _ACCESS_TYPE:
+        raise ValueError("non-access token")
+    return payload
 
 
 _TEMP_EXPIRE_SECONDS = 60
@@ -129,23 +122,16 @@ def create_temp_token(
 
 
 def decode_temp_token(token: str) -> dict[str, Any]:
-    # 先读 payload（不验 aud）判断 token 类型；非 temp token 抛明确类型错误，
-    # 避免被 audience 校验提前拦成 InvalidAudienceError 掩盖类型检查。
+    # 单次验签：同时校验 audience(lkm:temp) 与类型标记(temp)。
     payload = jwt.decode(
-        token,
-        settings.jwt_secret,
-        algorithms=[settings.jwt_algorithm],
-        options={"verify_aud": False},
-    )
-    if payload.get("type") != _TEMP_TYPE:
-        raise ValueError("non-temp token")
-    # 类型匹配后再严格校验 audience（lkm:temp）。
-    return jwt.decode(
         token,
         settings.jwt_secret,
         algorithms=[settings.jwt_algorithm],
         audience=_AUD_TEMP,
     )
+    if payload.get("type") != _TEMP_TYPE:
+        raise ValueError("non-temp token")
+    return payload
 
 
 _TOTP_DIGITS = 6
@@ -190,11 +176,26 @@ def verify_totp(secret: str, code: str, window: int = 1) -> int | None:
 _RECOVERY_CODE_BYTES = 10  # 20 hex chars
 
 
+def hash_recovery_code(plain: str) -> str:
+    """恢复码 HMAC 存储：带 pepper 的 HMAC-SHA256（非裸 SHA-256）。
+
+    裸哈希在明文空间可离线枚举（恢复码熵 80-bit 虽低，但带 pepper 可挡离线彩虹表/暴力），
+    与验证码哈希一致（见 service_verify.hash_code）。
+    """
+    pepper = settings.verification_code_pepper.encode()
+    return hmac.new(pepper, plain.encode(), hashlib.sha256).hexdigest()
+
+
+def legacy_hash_recovery_code(plain: str) -> str:
+    """旧版恢复码哈希（裸 SHA-256）——仅用于校验既有存量，新码一律走 hash_recovery_code。"""
+    return hashlib.sha256(plain.encode()).hexdigest()
+
+
 def generate_recovery_codes(n: int = 10) -> list[tuple[str, str]]:
     codes: list[tuple[str, str]] = []
     for _ in range(n):
         plain = secrets.token_hex(_RECOVERY_CODE_BYTES)
-        hashed = hashlib.sha256(plain.encode()).hexdigest()
+        hashed = hash_recovery_code(plain)
         codes.append((plain, hashed))
     return codes
 

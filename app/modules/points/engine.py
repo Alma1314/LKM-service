@@ -35,6 +35,17 @@ STAT_TO_ACHIEVEMENT_TYPE: dict[str, str] = {
     "competition": "competition_count",
 }
 
+# 事件 → 任务匹配 category（推进当日任务）
+EVENT_TASK_KEY: dict[str, str] = {
+    "post": "post",
+    # 评论不入任何任务：仅发帖(post)推进发表任务，回帖不再 feed
+    "answer_accepted": "answer",
+    "like": "like",
+    "file_approved": "file_upload",
+    "checkin": "checkin",
+    "competition": "competition",
+}
+
 
 def _today() -> str:
     """当前日期（本地时区，YYYY-MM-DD）。"""
@@ -67,12 +78,15 @@ async def _get_or_create_stats(
     if stat is None:
         stat = UserBehaviorStat(user_id=user_id, stats={})
         db.add(stat)
+        # 用 savepoint 承载插入；并发撞主键只回滚本 savepoint，而非 db.rollback()
+        # 整事务——否则会连带回滚调用方本事务里未提交的其它写（如 worker 里 reward()
+        # 已写入的 ledger 流水），导致发分后续又因重试被跳过，数据不一致。
+        sp = await db.begin_nested()
         try:
             await db.flush()
+            await sp.commit()
         except IntegrityError:
-            # 并发下两写协程同时看到 None 各自 insert → 撞主键。回滚本次插入，
-            # 重取并发方已提交的行继续（对齐 do_checkin / reward 的幂等范式）。
-            await db.rollback()
+            await sp.rollback()
             updated = await db.get(UserBehaviorStat, user_id)
             if updated is None:
                 raise  # 理论上不会发生；保守上抛
@@ -92,6 +106,31 @@ async def _bump_count(db: AsyncSession, user_id: int, key: str) -> int:
     return cur + 1
 
 
+# stats JSON 里记录已消费 (event, ref_id) 的保留键（幂等去重）
+_PROCESSED_KEY = "processed_events"
+
+
+async def _already_processed(
+    db: AsyncSession, user_id: int, event: str, ref_id: str
+) -> bool:
+    """该事件 (event, ref_id) 是否已消费过？仅由 apply_event_side_effects 经行锁调用。"""
+    stat = await _get_or_create_stats(db, user_id, for_update=True)
+    processed = stat.stats.get(_PROCESSED_KEY)
+    return isinstance(processed, dict) and f"{event}:{ref_id}" in processed
+
+
+async def _mark_processed(
+    db: AsyncSession, user_id: int, event: str, ref_id: str
+) -> None:
+    """记录该事件已消费，与副作用同一事务原子落库。"""
+    stat = await _get_or_create_stats(db, user_id, for_update=True)
+    processed = stat.stats.get(_PROCESSED_KEY)
+    if not isinstance(processed, dict):
+        processed = {}
+    processed = {**processed, f"{event}:{ref_id}": True}
+    stat.stats = {**stat.stats, _PROCESSED_KEY: processed}
+
+
 async def apply_event_side_effects(
     db: AsyncSession,
     user_id: int,
@@ -100,10 +139,23 @@ async def apply_event_side_effects(
     *,
     today: str | None = None,
 ) -> None:
-    """事件副作用主入口。today 可注入，便于测试对齐日期。"""
+    """事件副作用主入口。today 可注入，便于测试对齐日期。
+
+    幂等：以 ``UserBehaviorStat`` 行锁内的 ``processed_events`` 标记去重。ARQ 可能
+    在「commit 成功但 ack 前崩溃」后重投：此时 reward() 靠 ledger 唯一约束跳过，
+    但此处若不幂等，行为计数/成就/任务进度会重复累计。副作用与该标记同一事务
+    提交，故重投读到已提交标记即整体跳过；部分失败回滚则重投干净重做。
+    """
+    stat_key = EVENT_STAT_KEY.get(event)
+    task_key = EVENT_TASK_KEY.get(event)
+    # 未知/未映射事件：无副作用可做，保持原「不触碰 UserBehaviorStat」语义。
+    if not stat_key and not task_key:
+        return
+    if await _already_processed(db, user_id, event, ref_id):
+        return
+    await _mark_processed(db, user_id, event, ref_id)
     tday = today or _today()
     # 1. 行为计数 + 成就重算
-    stat_key = EVENT_STAT_KEY.get(event)
     if stat_key:
         await _bump_count(db, user_id, stat_key)
         await _recheck_achievements(db, user_id, stat_key)
@@ -170,16 +222,7 @@ async def _advance_tasks(
     db: AsyncSession, user_id: int, event: str, *, today: str
 ) -> None:
     """推进当日任务进度，达标且未奖励的发放额外积分。"""
-    task_events = {
-        "post": "post",
-        # 评论不入任何任务：仅发帖(post)推进发表任务，回帖不再 feed
-        "answer_accepted": "answer",
-        "like": "like",
-        "file_approved": "file_upload",
-        "checkin": "checkin",
-        "competition": "competition",
-    }
-    cat = task_events.get(event)
+    cat = EVENT_TASK_KEY.get(event)
     if cat is None:
         return
     tasks = (await db.execute(select(Task).where(Task.category == cat))).scalars().all()

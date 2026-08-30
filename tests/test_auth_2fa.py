@@ -516,3 +516,121 @@ class TestDeleteNot2FAGated:
         resp = await client.delete("/api/v1/content/items/999999", headers=_auth(token))
         # 能走到权限判定（而非被 2FA 门禁拦住）→ 不再是 401 code=4
         assert resp.status_code == 403
+
+
+class TestRecoveryCodeHashing:
+    """恢复码存储升级：新码用带 pepper 的 HMAC（非裸 SHA-256），校验兼容存量裸哈希。"""
+
+    async def should_store_new_codes_with_hmac(self, db: AsyncSession):
+        from app.modules.auth.security import hash_recovery_code
+
+        user = await _create_user(db, username="hash_rc_user")
+        # 完整 setup 流程：begin 创建未启用 TOTP → complete 启用并生成恢复码（HMAC 落库）
+        begin = await _svc().setup_2fa_begin(db, user.id)
+        secret = begin["secret"]
+        totp_code = _generate_totp_code(secret)
+        await _svc().setup_2fa_complete(db, user.id, code=totp_code)
+        rows = (
+            (
+                await db.execute(
+                    select(RecoveryCode).where(RecoveryCode.user_id == user.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert rows
+        # 都是 64 hex 的哈希结果；存的是带 pepper 的 HMAC（与裸 SHA-256 内容不同）
+        assert all(len(r.code_hash) == 64 for r in rows)
+        assert hash_recovery_code("anything") != hashlib.sha256(b"anything").hexdigest()
+
+    async def should_verify_legacy_and_new_hash(self, db: AsyncSession):
+        """consume_recovery_code 对旧裸哈希种子也能消费（向后兼容）。"""
+        user = await _create_user(db, username="legacy_rc_user")
+        await _enable_totp_for_user(db, user.id)
+        db.add(
+            RecoveryCode(
+                user_id=user.id,
+                code_hash=hashlib.sha256(b"legacy-seed").hexdigest(),
+                used=False,
+            )
+        )
+        await db.flush()
+        await _svc().verify_second_factor(db, user.id, recovery_code="legacy-seed")
+        row = (
+            (
+                await db.execute(
+                    select(RecoveryCode).where(
+                        RecoveryCode.user_id == user.id,
+                        RecoveryCode.code_hash
+                        == hashlib.sha256(b"legacy-seed").hexdigest(),
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        assert row is not None and row.used is True
+
+
+class TestRecoveryCodeRateLock:
+    """恢复码暴力尝试在达到上限后锁定（不再放行）。"""
+
+    async def should_lock_after_too_many_failures(self, db: AsyncSession):
+        user = await _create_user(db, username="rc_lock_user")
+        await _enable_totp_for_user(db, user.id)
+        db.add(
+            RecoveryCode(
+                user_id=user.id,
+                code_hash=hashlib.sha256(b"real-code").hexdigest(),
+                used=False,
+            )
+        )
+        await db.flush()
+
+        threshold = 3
+        for _ in range(threshold):
+            with pytest.raises(BizError) as exc:
+                await _svc().verify_second_factor(
+                    db, user.id, recovery_code="wrong-code"
+                )
+            assert exc.value.errcode == AuthErr.RECOVERY_CODE_INVALID
+
+        # 已达上限：即使提供正确恢复码也被拒（失败计数锁命中了真实码行）
+        for _ in range(2):
+            with pytest.raises(BizError) as exc:
+                await _svc().verify_second_factor(
+                    db, user.id, recovery_code="real-code"
+                )
+            assert exc.value.errcode == AuthErr.RECOVERY_CODE_INVALID
+
+    async def should_succeed_after_reset_on_success(self, db: AsyncSession):
+        user = await _create_user(db, username="rc_reset_user")
+        await _enable_totp_for_user(db, user.id)
+        db.add(
+            RecoveryCode(
+                user_id=user.id,
+                code_hash=hashlib.sha256(b"code-ok").hexdigest(),
+                used=False,
+            )
+        )
+        await db.flush()
+        # 失败一次后成功消费：清零计数不锁定
+        with pytest.raises(BizError) as exc:
+            await _svc().verify_second_factor(db, user.id, recovery_code="bad")
+        assert exc.value.errcode == AuthErr.RECOVERY_CODE_INVALID
+        await _svc().verify_second_factor(db, user.id, recovery_code="code-ok")
+        row = (
+            (
+                await db.execute(
+                    select(RecoveryCode).where(
+                        RecoveryCode.user_id == user.id,
+                        RecoveryCode.code_hash
+                        == hashlib.sha256(b"code-ok").hexdigest(),
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        assert row is not None and row.used is True

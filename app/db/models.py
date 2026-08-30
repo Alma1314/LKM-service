@@ -833,6 +833,11 @@ class ExchangeItem(Base):
 
 class QAQuestion(Base):
     __tablename__: str = "qa_questions"
+    # 问答列表按 category + id 倒序，status 用于状态筛选；无索引则列表页全表扫
+    __table_args__: tuple[Index, ...] = (
+        Index("ix_qa_question_category_id", "category", "id"),
+        Index("ix_qa_question_status_id", "status", "id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
@@ -862,6 +867,11 @@ class QAQuestion(Base):
 
 class QAAnswer(Base):
     __tablename__: str = "qa_answers"
+    # 按 question_id 拉回答 / 判定是否已采纳；无索引时按提问拉回答全表扫
+    __table_args__: tuple[Index, ...] = (
+        Index("ix_qa_answer_question", "question_id"),
+        Index("ix_qa_answer_question_accepted", "question_id", "is_accepted"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     question_id: Mapped[int] = mapped_column(
@@ -877,6 +887,9 @@ class QAAnswer(Base):
 
 class QAQuestionImage(Base):
     __tablename__: str = "qa_question_images"
+    __table_args__: tuple[Index, ...] = (
+        Index("ix_qa_question_image_question", "question_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     question_id: Mapped[int] = mapped_column(
