@@ -182,6 +182,11 @@ async def recover_admin_begin(
         .first()
     )
 
+    # 恒定时序：无论邮箱/手机是否注册为 admin，都在分支前执行一次等成本的
+    # argon2 虚拟哈希——避免「存在=不发散(快)、不存在=跑 dummy_verify(慢)」的
+    # 耗时差被攻击者当作账号枚举 oracle。
+    await dummy_verify()
+
     if user and str(user.account_level) == "admin":
         txn_id = _generate_recovery_txn_id()
         expiry = expires_at(minutes=15)
@@ -213,7 +218,6 @@ async def recover_admin_begin(
         }
 
     await check_code_rate_limit(f"recover:admin:{contact}", max_count=3, window=3600)
-    await dummy_verify()
     return {
         "message": "If the account is eligible, recovery instructions will be sent to the registered contact."
     }

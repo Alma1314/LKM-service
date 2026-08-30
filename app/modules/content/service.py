@@ -6,6 +6,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.cache import (
+    bump_collection_version,
+    cached_read,
+    collection_version,
+    make_key,
+)
 from app.core.err import BizError
 from app.db.models import (
     Board,
@@ -106,8 +112,19 @@ async def list_items(
     if content_type:
         base = base.where(ContentItem.content_type == content_type)
 
-    count_stmt = select(func.count()).select_from(base.subquery())
-    total_count = await db.scalar(count_stmt) or 0
+    # 计数走短 TTL 缓存 + content 集合版本号：任何增删 ContentItem 的行都会
+    # bump_content_version() 递增集合版本，使旧(count)键立即失效，杜绝脏计数。
+    async def _count() -> int:
+        count_stmt = select(func.count()).select_from(base.subquery())
+        total: int | None = await db.scalar(count_stmt)
+        return total or 0
+
+    ver = await collection_version("content")
+    total_count = await cached_read(
+        make_key("content:list:total", ver, board_id or "", content_type or ""),
+        60,
+        _count,
+    )
 
     stmt = (
         base.order_by(ContentItem.is_pinned.desc(), ContentItem.id.desc())
@@ -258,6 +275,7 @@ async def create_item(
 
     # 积分事件（异步计分，不阻塞 200）
     await enqueue_points_event(author_id, "post", f"item:{item.id}")
+    await bump_collection_version("content")
 
     names = await _author_map(db, [author_id])
     return _item_to_schema(item, names.get(author_id, ""))
@@ -276,6 +294,7 @@ async def delete_item(
     author_id = item.author_id or -1
     await db.delete(item)
     await db.flush()
+    await bump_collection_version("content")
     return author_id
 
 
@@ -369,9 +388,7 @@ async def list_comments(
     )
 
 
-async def list_all_comments(
-    db: AsyncSession, item_id: int
-) -> list[ContentCommentInfo]:
+async def list_all_comments(db: AsyncSession, item_id: int) -> list[ContentCommentInfo]:
     """一次取回某内容的全部评论（floor 升序），供 GraphQL 组装评论树。"""
     await get_or_raise(
         db, ContentItem, ContentErr.CONTENT_NOT_FOUND, ContentItem.id == item_id
@@ -494,4 +511,5 @@ async def publish_blog_item(
     db.add(item)
     await db.flush()
     await enqueue_points_event(owner_id, "post", f"item:{item.id}")
+    await bump_collection_version("content")
     return item.id

@@ -23,8 +23,6 @@ from app.db.models import (
 )
 from app.db.repo import get_or_raise
 from app.modules.common import PageData, paginate_offset, paginate_pages
-from app.modules.points.rules import enqueue_points_event
-from app.modules.points.service import reward, spend
 from app.modules.content.errors import QaErr
 from app.modules.content.qa_schemas import (
     AnswerCreate,
@@ -33,6 +31,8 @@ from app.modules.content.qa_schemas import (
     QuestionDetail,
     QuestionOut,
 )
+from app.modules.points.rules import enqueue_points_event
+from app.modules.points.service import reward, spend
 
 
 async def create_question(
@@ -98,6 +98,8 @@ async def _sync_question_content_item(
     )
     db.add(item)
     await db.flush()
+    # QA 提问同步落成 content_items 会增加统一内容列表的计数，需 bump content 集合版本
+    await bump_collection_version("content")
 
 
 def _plain(text: str, limit: int = 150) -> str:
@@ -165,15 +167,12 @@ async def list_questions(
         ]
 
     ver = await collection_version("qa")
-    payload = await cached_read(make_key("qa:list", ver, page, limit, category or ""), 60, load)
+    payload = await cached_read(
+        make_key("qa:list", ver, page, limit, category or ""), 60, load
+    )
     # 分页元信息（total 单独查，不缓存）
     total_where = [QAQuestion.category == category] if category else []
-    total = (
-        await db.scalar(
-            select(func.count(QAQuestion.id)).where(*total_where)
-        )
-        or 0
-    )
+    total = await db.scalar(select(func.count(QAQuestion.id)).where(*total_where)) or 0
     return PageData(
         items=[QuestionOut.model_validate(p) for p in payload],
         total=total,

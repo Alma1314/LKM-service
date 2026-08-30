@@ -102,21 +102,9 @@ async def bump_collection_version(name: str) -> None:
 # 单飞（single-flight）：同一事件循环内，同一 key 的并发 miss 只让一个协程执行
 # loader／回填，其余协程复用其结果，避免热点 key 击穿时同时打穿 DB。进程内锁即可
 # 覆盖单 worker 内的并发；跨 worker 的击穿由 Redis SET NX 接续（此处未启用）。
+# 锁字典按 key 常驻，key 数量受「不同缓存端点 × 过滤器组合」约束、天然有界，不做
+# 清理——若动态增删锁，释放与移除之间会产生窗口让后到者拿到新锁、并发挤进 loader。
 _flight_locks: dict[str, asyncio.Lock] = {}
-
-
-def _flight_lock(key: str) -> asyncio.Lock:
-    lock = _flight_locks.get(key)
-    if lock is None:
-        lock = asyncio.Lock()
-        _flight_locks[key] = lock
-    return lock
-
-
-async def _release_flight_lock(key: str, lock: asyncio.Lock) -> None:
-    if not lock.locked():
-        # 无等待者 → 移除以防字典无限增长（键数量 = 热点 key 数，长期有界）
-        _flight_locks.pop(key, None)
 
 
 async def cached_read[T](
@@ -132,10 +120,11 @@ async def cached_read[T](
     if cached is not None:
         return cached  # type: ignore[return-value]
 
-    lock = _flight_lock(key)
-    await lock.acquire()
-
-    async def _acquire_or_reuse() -> T:
+    lock = _flight_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _flight_locks[key] = lock
+    async with lock:
         # 已持有锁：可能之前协程已回填，先重读；仍 miss 才执行 loader
         cached2 = await cache_get(key)
         if cached2 is not None:
@@ -144,10 +133,3 @@ async def cached_read[T](
         if value is not None:
             await cache_set(key, value, ttl_seconds)
         return value
-
-    try:
-        value = await _acquire_or_reuse()
-    finally:
-        lock.release()
-        await _release_flight_lock(key, lock)
-    return value
