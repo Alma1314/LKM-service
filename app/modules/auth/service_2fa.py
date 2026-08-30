@@ -43,6 +43,15 @@ async def get_enabled_totp(db: AsyncSession, user_id: int) -> TOTP | None:
     )
 
 
+async def get_totp(db: AsyncSession, user_id: int) -> TOTP | None:
+    """取用户 TOTP 记录（不分启用/禁用），setup/verify/disable 复用，避免重复裸查询。"""
+    return (
+        (await db.execute(select(TOTP).where(TOTP.user_id == user_id)))
+        .scalars()
+        .first()
+    )
+
+
 def _check_totp_failed(totp_record: TOTP | None) -> None:
     if totp_record and totp_record.failed_attempts >= _TOTP_MAX_FAILED:
         raise BizError(
@@ -170,11 +179,7 @@ async def setup_2fa_begin(db: AsyncSession, user_id: int) -> dict[str, Any]:
     if user.account_level == "local":
         raise BizError(AuthErr.ACCOUNT_LEVEL_INSUFFICIENT)
 
-    totp_record = (
-        (await db.execute(select(TOTP).where(TOTP.user_id == user_id)))
-        .scalars()
-        .first()
-    )
+    totp_record = await get_totp(db, user_id)
     if totp_record and totp_record.enabled:
         raise BizError(AuthErr.TOTP_ALREADY_ENABLED)
 
@@ -200,11 +205,7 @@ async def setup_2fa_begin(db: AsyncSession, user_id: int) -> dict[str, Any]:
 async def setup_2fa_complete(
     db: AsyncSession, user_id: int, code: str
 ) -> dict[str, Any]:
-    totp_record = (
-        (await db.execute(select(TOTP).where(TOTP.user_id == user_id)))
-        .scalars()
-        .first()
-    )
+    totp_record = await get_totp(db, user_id)
     if not totp_record or totp_record.enabled:
         raise BizError(AuthErr.TOTP_NOT_ENABLED)
 
@@ -230,11 +231,7 @@ async def confirm_recovery_codes_saved(
     db: AsyncSession, user_id: int
 ) -> dict[str, Any]:
     """标记用户已保存其恢复码。"""
-    totp_record = (
-        (await db.execute(select(TOTP).where(TOTP.user_id == user_id)))
-        .scalars()
-        .first()
-    )
+    totp_record = await get_totp(db, user_id)
     if not totp_record or not totp_record.enabled:
         raise BizError(AuthErr.TOTP_NOT_ENABLED)
     totp_record.confirmed_saved = True
@@ -336,11 +333,7 @@ async def disable_2fa(
     code: str | None = None,
     recovery_code: str | None = None,
 ) -> dict[str, Any]:
-    totp_record = (
-        (await db.execute(select(TOTP).where(TOTP.user_id == user_id)))
-        .scalars()
-        .first()
-    )
+    totp_record = await get_totp(db, user_id)
     if not totp_record or not totp_record.enabled:
         raise BizError(AuthErr.TOTP_NOT_ENABLED)
 

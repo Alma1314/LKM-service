@@ -13,6 +13,7 @@ from app.db.repo import consume_once, get_or_raise
 from app.modules.auth import security
 from app.modules.auth.channels import CHANNELS, channel_for
 from app.modules.auth.errors import AuthErr
+from app.modules.auth.limits import RECOVER_ADMIN_BEGIN_MAX, RECOVER_ADMIN_BEGIN_WINDOW
 from app.modules.auth.models import MagicLink, RecoveryTransaction, TempTokenUsage
 from app.modules.auth.security import (
     create_temp_token,
@@ -206,7 +207,9 @@ async def recover_admin_begin(
 
         channel = channel_for(contact)
         await check_code_rate_limit(
-            f"recover:admin:{contact}", max_count=3, window=3600
+            f"recover:admin:{contact}",
+            max_count=RECOVER_ADMIN_BEGIN_MAX,
+            window=RECOVER_ADMIN_BEGIN_WINDOW,
         )
         code, _ = await channel.create_verification(db, contact, "reset")
         if background_tasks is not None:
@@ -217,7 +220,11 @@ async def recover_admin_begin(
             "txn_id": txn_id,
         }
 
-    await check_code_rate_limit(f"recover:admin:{contact}", max_count=3, window=3600)
+    await check_code_rate_limit(
+        f"recover:admin:{contact}",
+        max_count=RECOVER_ADMIN_BEGIN_MAX,
+        window=RECOVER_ADMIN_BEGIN_WINDOW,
+    )
     return {
         "message": "If the account is eligible, recovery instructions will be sent to the registered contact."
     }

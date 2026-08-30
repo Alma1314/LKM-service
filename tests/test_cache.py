@@ -45,9 +45,18 @@ async def _enable_fake_redis(monkeypatch: Any) -> Any:
 
 
 def test_make_key() -> None:
-    """键规范：None 归并空段，分段用 | 连接。"""
-    assert make_key("columns:list", None, 1, None) == "lkm:columns:list:|1|"
-    assert make_key("articles:by_slug", "hello") == "lkm:articles:by_slug:hello"
+    """键规范：env 命名空间 + None 归并空段，分段用 | 连接。"""
+    # 默认 env=dev → 前缀含命名空间，隔离 dev/prod 共用 Redis
+    assert make_key("columns:list", None, 1, None) == "lkm:dev:columns:list:|1|"
+    assert make_key("articles:by_slug", "hello") == "lkm:dev:articles:by_slug:hello"
+
+
+def test_make_key_honors_env(monkeypatch) -> None:
+    """env 变化 → key 命名空间变化，producion 不污染 dev 缓存。"""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "env", "production")
+    assert make_key("columns:list", 1) == "lkm:production:columns:list:1"
 
 
 async def test_cache_fail_open_when_disabled(monkeypatch) -> None:
@@ -129,3 +138,26 @@ async def test_cached_read_single_flight_on_concurrent_miss(monkeypatch) -> None
     assert all(r == {"done": True} for r in results)
     assert loader_calls == 1  # 并发 miss 只加载一次
     assert peak == 1  # 任意时刻最多一个 loader 在跑
+
+
+async def test_cached_read_caches_null_with_null_ttl(monkeypatch) -> None:
+    """loader 返回 None 且传 null_ttl → 写入空值标记；窗口内不再调 loader。"""
+    await _enable_fake_redis(monkeypatch)
+    loader_calls = 0
+
+    async def _null_loader():
+        nonlocal loader_calls
+        loader_calls += 1
+        return None
+
+    key = make_key("null", "cache")
+    # 未传 null_ttl：loader 返回 None 不缓存 → 每次都会再次调用 loader
+    assert await cached_read(key, 60, _null_loader) is None
+    assert await cached_read(key, 60, _null_loader) is None
+    assert loader_calls == 2
+
+    # 传入 null_ttl：第一次 None 后写标记，第二次直接命中标记返回 None，不再调 loader
+    loader_calls = 0
+    assert await cached_read(key, 60, _null_loader, null_ttl=30) is None
+    assert await cached_read(key, 60, _null_loader, null_ttl=30) is None
+    assert loader_calls == 1

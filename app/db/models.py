@@ -299,6 +299,8 @@ class ContentItem(Base):
         ),
         Index("ix_content_board_pinned", "board_id", "is_pinned", "id"),
         Index("ix_content_status_pinned", "status", "is_pinned", "id"),
+        # 时间线按体裁扫描：content_type+status 过滤，created_at,id 排序，命中索引免 filesort
+        Index("ix_content_type_status_created", "content_type", "status", "created_at", "id"),
         Index("ix_content_published", "published_at"),
         Index("ix_content_slug", "slug"),
     )
@@ -713,6 +715,8 @@ class PointsLedger(Base):
     # (user_id, ref_type, ref_id) 唯一：幂等——同一事件对同一用户不重复发分
     __table_args__: tuple[Any, ...] = (
         UniqueConstraint("user_id", "ref_type", "ref_id", name="uq_points_ledger_ref"),
+        # 排行榜日/周窗口聚合：`created_at >= since AND delta > 0`，命中索引免全表扫
+        Index("ix_ledger_created_delta", "created_at", "delta"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

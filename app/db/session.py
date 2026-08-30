@@ -89,13 +89,16 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 async def get_read_session() -> AsyncIterator[AsyncSession]:
     """FastAPI 依赖：只读会话，供公开只读接口使用，避免每读请求一次空 BEGIN/COMMIT。
 
-    不做 commit（读路径本无写入）；异常回滚 + close，与 get_session 一致但更轻。
+    不做 commit（读路径本无写入）；正常退出也显式 rollback 丢弃解析器误写/残留的
+    未提交改动（防御某解析器意外 flush），异常同样回滚，最后 close。
     """
     factory = _get_async_session_local()
     assert factory is not None
     db = factory()
     try:
         yield db
+        # 正常路径：只读，无提交意图；显式回滚以防解析器意外写入被残留到下一次
+        await db.rollback()
     except Exception:
         await db.rollback()
         raise

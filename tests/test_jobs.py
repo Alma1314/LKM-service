@@ -2,8 +2,20 @@
 
 from typing import Any
 
+import pytest
+
 from app.core import jobs
 from app.core import redis as redis_core
+
+
+@pytest.fixture(autouse=True)
+async def reset_jobs_pool() -> Any:
+    """每用例前复位共享入队 pool，避免跨测试复用同一 fake/broken pool。"""
+    await jobs.close_jobs_pool()
+    jobs._pool = None
+    yield
+    await jobs.close_jobs_pool()
+    jobs._pool = None
 
 
 class _FakeJob:

@@ -1,6 +1,6 @@
 import hashlib
-import io
 import json
+import tempfile
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import suppress
@@ -39,6 +39,14 @@ class _Readable(Protocol):
     """可同步分块读取的 file-like 对象最小协议。"""
 
     def read(self, size: int = -1, /) -> bytes: ...
+
+
+class _Spool(_Readable, Protocol):
+    """``_buffer_and_hash`` 返回的 spool 流：除 read 外还需能 seek 与 close（释放临时文件）。"""
+
+    def seek(self, offset: int, whence: int = 0, /) -> int: ...
+
+    def close(self) -> None: ...
 
 
 def get_files_plan() -> dict[str, Any]:
@@ -130,29 +138,36 @@ async def get_file(db: AsyncSession, file_id: int, bump_view: bool = False) -> F
 _CHUNK = 1024 * 1024  # 分块读写，避免整文件载入内存
 
 
-def _buffer_and_hash(stream: _Readable, limit: int) -> tuple[int, str, io.BytesIO]:
-    """同步分块读 ``stream`` 并流式计算 SHA3-256，返回 ``(总字节数, 哈希 hex, 内存缓冲)``。
+def _buffer_and_hash(stream: _Readable, limit: int) -> tuple[int, str, _Spool]:
+    """单遍读 ``stream``：一边算 SHA3-256、一边把内容 spool 到临时文件，返回可重读流。
 
-    仅做内存运算（无磁盘/网络 I/O），不阻塞事件循环。超过 ``limit`` 立即抛 ``TOO_LARGE``。
-    缓冲供后续 ``storage.save`` 复用，因为哈希必须在落盘前算出（去重策略），单遍流不能读两次。
+    相比原 ``io.BytesIO``（整文件驻留内存，上限=整个上传大小，大文件有 OOM 风险）
+    改为 ``tempfile.TemporaryFile``：小文件落在内衬缓冲区（快），大文件自动 spill 到
+    磁盘，内存峰值钉在分块大小。因为哈希必须在落盘前算出（去重策略），单遍流不能读
+    两次，故在此缓冲供 ``storage.save`` 复用。超过 ``limit`` 立即抛 ``TOO_LARGE``。
+    调用方用完须 ``close()``（TemporaryFile 关闭即自动删除）。
     """
     hasher = hashlib.sha3_256()
-    buf = io.BytesIO()
+    buf = tempfile.TemporaryFile()  # noqa: SIM115  # 需跨函数返回给 storage.save 复用，不能用 with
     total = 0
-    while True:
-        chunk = stream.read(_CHUNK)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > limit:
-            raise BizError(
-                FileErr.TOO_LARGE,
-                detail=f"Upload exceeds {limit} byte limit",
-            )
-        hasher.update(chunk)
-        buf.write(chunk)
-    buf.seek(0)
-    return total, hasher.hexdigest(), buf
+    try:
+        while True:
+            chunk = stream.read(_CHUNK)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > limit:
+                raise BizError(
+                    FileErr.TOO_LARGE,
+                    detail=f"Upload exceeds {limit} byte limit",
+                )
+            hasher.update(chunk)
+            buf.write(chunk)
+        buf.seek(0)
+        return total, hasher.hexdigest(), buf
+    except BaseException:
+        buf.close()
+        raise
 
 
 def _content_path(sha3_hash: str) -> Path:
@@ -278,13 +293,17 @@ async def create_file(
     # 落盘（写字节的细节交给 storage 层）；dedup 语义：已存在则复用、不重写。
     saved: dict[str, object] | None = None
     try:
-        storage = _get_storage()
-        if not await storage.exists(bucket_key):
-            saved = dict(
-                await storage.save(buf, max_bytes=limit, bucket_key=bucket_key)
-            )
-    except BizError as exc:
-        _raise_storage_as_file(exc)
+        try:
+            storage = _get_storage()
+            if not await storage.exists(bucket_key):
+                saved = dict(
+                    await storage.save(buf, max_bytes=limit, bucket_key=bucket_key)
+                )
+        except BizError as exc:
+            _raise_storage_as_file(exc)
+    finally:
+        # buf 是 _buffer_and_hash 的 spool 临时文件，用完即关（关闭自动删除，释放磁盘）。
+        buf.close()
 
     if saved is not None:
         storage_path = str(saved["storage_path"])
@@ -343,9 +362,21 @@ async def review_file(
     if target_status not in (FileStatus.APPROVED, FileStatus.REJECTED):
         raise BizError(FileErr.INVALID_STATUS, detail="Invalid review status")
 
-    f = await get_or_raise(
-        db, LibraryFile, FileErr.NOT_FOUND, LibraryFile.id == file_id
+    # 行锁读取：两个管理员并发审核同一 PENDING 文件时，串行化「读 PENDING → 改 status」
+    # 的读改写，避免都通过 PENDING 检查后 last-write-wins 造成状态/加分不确定。
+    f = (
+        (
+            await db.execute(
+                select(LibraryFile)
+                .where(LibraryFile.id == file_id)
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .first()
     )
+    if f is None:
+        raise BizError(FileErr.NOT_FOUND, detail="File not found")
     if f.status != FileStatus.PENDING:
         raise BizError(FileErr.NOT_PENDING, detail="File is not pending")
 

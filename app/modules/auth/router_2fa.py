@@ -22,6 +22,10 @@ from app.db.session import get_session
 from app.modules.auth import security, service_2fa
 from app.modules.auth.deps import CurrentUser, RequireLevel, get_current_user
 from app.modules.auth.errors import AuthErr
+from app.modules.auth.limits import (
+    GLOBAL_VERIFY_MAX_PER_WINDOW,
+    GLOBAL_VERIFY_WINDOW_SECONDS,
+)
 from app.modules.auth.models import SetupTransaction
 from app.modules.auth.schemas import (
     TOTPConfirmResponse,
@@ -171,7 +175,11 @@ async def verify_2fa(
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """在登录时使用临时令牌和 TOTP / 恢复码验证 2FA。"""
-    await check_code_rate_limit("2fa:verify:global", max_count=10, window=3600)
+    await check_code_rate_limit(
+        "2fa:verify:global",
+        max_count=GLOBAL_VERIFY_MAX_PER_WINDOW,
+        window=GLOBAL_VERIFY_WINDOW_SECONDS,
+    )
     result = await service_2fa.verify_2fa(
         db,
         temp_token=body.temp_token,
@@ -220,7 +228,11 @@ async def step_up_2fa(
     （require_2fa）不再重复要求。未通过则不更新信任，仅抛 TOTP/RECOVERY 相关错误。
     返回新 access/refresh token（`mfa`/`mfa_at` 标记已编入 access token）。
     """
-    await check_code_rate_limit("2fa:stepup", max_count=10, window=3600)
+    await check_code_rate_limit(
+        "2fa:stepup",
+        max_count=GLOBAL_VERIFY_MAX_PER_WINDOW,
+        window=GLOBAL_VERIFY_WINDOW_SECONDS,
+    )
     await service_2fa.verify_second_factor(
         db, cur.id, code=body.code, recovery_code=body.recovery_code
     )

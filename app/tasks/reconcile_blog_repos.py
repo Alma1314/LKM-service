@@ -66,7 +66,7 @@ async def reconcile_blog_repos(ctx: dict[str, object]) -> None:
         }
         now = datetime.now(UTC)
 
-        for name in _iter_repo_dirs():
+        for name in await asyncio.to_thread(_iter_repo_dirs):
             repo_name = name[:-4]  # 去掉 .git
             if repo_name in live:
                 continue

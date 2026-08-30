@@ -101,7 +101,9 @@ async def _fetch_discussion(
         )
     if before_time is not None:
         conditions.extend(
-            _before_conds(ContentItem.created_at, ContentItem.id, before_time, before_id)
+            _before_conds(
+                ContentItem.created_at, ContentItem.id, before_time, before_id
+            )
         )
     stmt = (
         select(ContentItem)
@@ -110,13 +112,14 @@ async def _fetch_discussion(
         .limit(limit)
     )
     rows = (await db.execute(stmt)).scalars().all()
-    names = await _author_map(db, {r.author_id for r in rows if r.author_id})
+    # author_name 由 service 合流后统一批量填充（见 service.get_timeline 的 _fill_authors），
+    # 避免同一作者在多源各查一次；此源只返回 author_id。
     return [
         FeedItem(
             item_type="discussion",
             id=r.id,
             author_id=r.author_id,
-            author_name=names.get(r.author_id or -1, ""),
+            author_name="",
             title=r.title,
             content_preview=_preview_of(r.excerpt or r.content),
             created_at=r.created_at,
@@ -208,13 +211,12 @@ async def _fetch_column(
         .limit(limit)
     )
     rows = (await db.execute(stmt)).scalars().all()
-    names = await _author_map(db, {r.author_id for r in rows})
     return [
         FeedItem(
             item_type="column",
             id=r.id,
             author_id=r.author_id,
-            author_name=names.get(r.author_id, ""),
+            author_name="",  # service 合流统一填充
             title=r.title,
             content_preview=_preview_of(r.summary or r.content),
             created_at=r.created_at,
@@ -257,13 +259,12 @@ async def _fetch_qa(
         .limit(limit)
     )
     rows = (await db.execute(stmt)).scalars().all()
-    names = await _author_map(db, {r.author_id for r in rows})
     return [
         FeedItem(
             item_type="qa",
             id=r.id,
             author_id=r.author_id,
-            author_name=names.get(r.author_id, ""),
+            author_name="",  # service 合流统一填充
             title=r.title,
             content_preview=_preview_of(r.content or r.situation),
             created_at=r.created_at,
@@ -302,13 +303,12 @@ async def _fetch_project(
         .limit(limit)
     )
     rows = (await db.execute(stmt)).scalars().all()
-    names = await _author_map(db, {r.applicant_id for r in rows})
     return [
         FeedItem(
             item_type="project",
             id=r.id,
             author_id=r.applicant_id,
-            author_name=names.get(r.applicant_id, ""),
+            author_name="",  # service 合流统一填充
             title=r.title,
             content_preview=_preview_of(r.summary or r.description),
             created_at=r.created_at,
@@ -341,7 +341,9 @@ async def _fetch_blog(
         conditions.append(ContentItem.author_id.in_(author_ids))
     if before_time is not None:
         conditions.extend(
-            _before_conds(ContentItem.created_at, ContentItem.id, before_time, before_id)
+            _before_conds(
+                ContentItem.created_at, ContentItem.id, before_time, before_id
+            )
         )
     stmt = (
         select(ContentItem)

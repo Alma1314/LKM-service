@@ -23,6 +23,12 @@ from app.core.err import respond
 from app.db.session import get_session
 from app.modules.auth import service_recovery
 from app.modules.auth.deps import get_email_provider
+from app.modules.auth.limits import (
+    GLOBAL_VERIFY_MAX_PER_WINDOW,
+    GLOBAL_VERIFY_WINDOW_SECONDS,
+    RECOVER_ADMIN_VERIFY_MAX,
+    RECOVER_ADMIN_VERIFY_WINDOW,
+)
 from app.modules.auth.providers.base import EmailProvider
 from app.modules.auth.schemas import (
     AdminRecoverBeginResponse,
@@ -168,7 +174,9 @@ async def recover_magic_link_verify(
     info: RecoverMagicLinkVerifyRequest, db: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
     await check_code_rate_limit(
-        "recover:magic-link:verify:global", max_count=10, window=3600
+        "recover:magic-link:verify:global",
+        max_count=GLOBAL_VERIFY_MAX_PER_WINDOW,
+        window=GLOBAL_VERIFY_WINDOW_SECONDS,
     )
     return await service_recovery.recover_by_magic_link(
         db, info.token, info.new_password
@@ -248,7 +256,9 @@ async def recover_admin_verify_contact(
 ) -> dict[str, Any]:
     """第2步：验证联系方式验证码。返回用于 2FA 的 temp_token。"""
     await check_code_rate_limit(
-        f"recover:admin:verify-contact:{info.txn_id}", max_count=3, window=600
+        f"recover:admin:verify-contact:{info.txn_id}",
+        max_count=RECOVER_ADMIN_VERIFY_MAX,
+        window=RECOVER_ADMIN_VERIFY_WINDOW,
     )
     return await service_recovery.recover_admin_verify_contact(
         db, info.txn_id, info.code

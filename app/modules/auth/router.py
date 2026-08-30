@@ -28,6 +28,12 @@ from app.modules.auth.deps import (
     get_current_user,
     get_email_provider,
 )
+from app.modules.auth.limits import (
+    GLOBAL_VERIFY_MAX_PER_WINDOW,
+    GLOBAL_VERIFY_WINDOW_SECONDS,
+    REFRESH_MAX_PER_WINDOW,
+    REFRESH_WINDOW_SECONDS,
+)
 from app.modules.auth.providers.base import EmailProvider
 from app.modules.auth.schemas import (
     AuthTokenData,
@@ -307,7 +313,9 @@ async def refresh_access_token_route(
     # 刷新签发新 token 属安全敏感路径，Redis 故障时 fail-close（拒绝）。
     client_ip = request.client.host if request.client else ""
     await check_code_rate_limit(
-        f"token:refresh:ip:{client_ip}", max_count=30, window=60
+        f"token:refresh:ip:{client_ip}",
+        max_count=REFRESH_MAX_PER_WINDOW,
+        window=REFRESH_WINDOW_SECONDS,
     )
     return await service_auth.refresh_access_token(db, info.refresh_token)
 
@@ -347,5 +355,9 @@ async def magic_link_verify(
     token: str,
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    await check_code_rate_limit("magic-link:verify:global", max_count=10, window=3600)
+    await check_code_rate_limit(
+        "magic-link:verify:global",
+        max_count=GLOBAL_VERIFY_MAX_PER_WINDOW,
+        window=GLOBAL_VERIFY_WINDOW_SECONDS,
+    )
     return await service_auth.verify_magic_link(db, token, purpose="login")

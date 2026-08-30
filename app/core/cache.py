@@ -1,6 +1,7 @@
 """读热点缓存 Redis（模块4）：columns/articles 公开只读接口键缓存。
 
-- **键规范**：`lkm:{prefix}:{parts...}`；parts 逐一 str，None 归并为空段。
+- **键规范**：`lkm:{env}:{prefix}:{parts...}`；parts 逐一 str，None 归并为空段。
+  env 命名空间隔离 dev/prod 共用同一 Redis 时的互相污染。
 - **TTL 分级**：明细长、列表短，平衡一致性与命中。
 - **失效**：写路径显式失效（集合用版本号、单条目删键），TTL 仅兜底。
 - **fail-open**：Redis 未启用/不可用 → 一律返回 None/直接落库，服务不挂。
@@ -15,6 +16,7 @@ from typing import Any
 
 import app.core.redis as redis_client
 from app.core import logging as lkm_logging
+from app.core.config import settings
 
 logger = logging.getLogger("lkm.cache")
 
@@ -23,10 +25,15 @@ TTL_ITEM_S = 300  # 5 min：单条目（如 get_by_slug / get）
 TTL_LIST_S = 60  # 1 min：列表/分页
 
 
+def _cache_env() -> str:
+    """当前 env 命名空间：读到即缓存，避免同一 Redis 不同环境互相污染。"""
+    return settings.env or "dev"
+
+
 def make_key(prefix: str, *parts: Any) -> str:
-    """键规范：`lkm:{prefix}:{parts...}`。parts 的 None 归并为空段。"""
+    """键规范：`lkm:{env}:{prefix}:{parts...}`。parts 的 None 归并为空段。"""
     seg = [str(p) if p is not None else "" for p in parts]
-    return f"lkm:{prefix}:{'|'.join(seg)}"
+    return f"lkm:{_cache_env()}:{prefix}:{'|'.join(seg)}"
 
 
 async def cache_get(key: str) -> Any | None:
@@ -106,18 +113,28 @@ async def bump_collection_version(name: str) -> None:
 # 清理——若动态增删锁，释放与移除之间会产生窗口让后到者拿到新锁、并发挤进 loader。
 _flight_locks: dict[str, asyncio.Lock] = {}
 
+# 空值缓存标记：loader 返回 None（业务上不存在）时写入该标记 + 短 TTL，读取端据此
+# 在窗口内直接返回 None 而不反复调 loader，防御无效 slug/id 的缓存穿透。
+_NULL_MARKER = "\x00__CACHE_NULL__"
+
 
 async def cached_read[T](
     key: str,
     ttl_seconds: int,
     loader: Callable[[], Awaitable[T]],
+    null_ttl: int | None = None,
 ) -> T:
     """读缓存命中直接返回；未命中执行 loader 并回填。loader 输出需 JSON 可序列化。
 
-    并发 miss 走单飞：同一 key 同时仅有一个 loader 在执行。
+    - 并发 miss 走单飞：同一 key 同时仅有一个 loader 在执行。
+    - 传 ``null_ttl`` 时，loader 返回 None 会以该短 TTL 写入空值标记缓存，
+      在窗口内让无效查询（如不存在的 slug/id）命中缓存而不再穿透到 DB。
+      未命中缓存时返回 None，语义与不缓存一致。
     """
     cached = await cache_get(key)
     if cached is not None:
+        if cached == _NULL_MARKER:  # 空值标记：视为不存在，短窗口内不调 loader
+            return None  # type: ignore[return-value]
         return cached  # type: ignore[return-value]
 
     lock = _flight_locks.get(key)
@@ -128,8 +145,12 @@ async def cached_read[T](
         # 已持有锁：可能之前协程已回填，先重读；仍 miss 才执行 loader
         cached2 = await cache_get(key)
         if cached2 is not None:
+            if cached2 == _NULL_MARKER:
+                return None  # type: ignore[return-value]
             return cached2  # type: ignore[return-value]
         value = await loader()
         if value is not None:
             await cache_set(key, value, ttl_seconds)
+        elif null_ttl is not None:
+            await cache_set(key, _NULL_MARKER, null_ttl)
         return value

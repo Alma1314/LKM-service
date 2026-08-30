@@ -10,16 +10,44 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import datetime
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.follow import service as follow_service
+from app.db.models import Profile, User
 from app.modules.admin.moderation.engine import evaluate, load_active_rules
+from app.modules.follow import service as follow_service
 from app.modules.timeline import feed as feed_src
 from app.modules.timeline.schemas import FeedItem, FeedResponse
+
+
+async def _fill_authors(db: AsyncSession, items: list[FeedItem]) -> None:
+    """把各源返回的 ``author_id`` 去重后批量查询一次并回填 ``author_name``。
+
+    feed 各源不再各自查作者（除 blog 保留 publisher 兜底），避免同一作者在多源被
+    重复 IN 查询。仅回填 ``author_name`` 仍为空者（blog 已填充/兜底的不触碰）。
+    解析语义与 feed 一致：优先 profile.nickname，否则 username。
+    """
+    author_ids = {it.author_id for it in items if it.author_id and not it.author_name}
+    if not author_ids:
+        return
+    rows = (
+        await db.execute(
+            select(User.id, User.username, Profile.nickname)
+            .outerjoin(Profile, Profile.user_id == User.id)
+            .where(User.id.in_(author_ids))
+        )
+    ).all()
+    name_of: dict[int, str] = {}
+    for uid, username, nickname in rows:
+        name_of[int(uid)] = nickname or username or ""
+    for it in items:
+        if it.author_id in name_of and not it.author_name:
+            it.author_name = name_of[it.author_id]
 
 
 def _encode_cursor(created_at: datetime.datetime, item_id: int) -> str:
@@ -94,8 +122,8 @@ async def get_timeline(
     # 选源：follow 用 FOLLOW_SOURCES（article 无作者外键不进个性化），hot 全含
     source_names = feed_src.FOLLOW_SOURCES if mode == "follow" else feed_src.HOT_SOURCES
 
-    candidates: list[FeedItem] = []
-    for name in source_names:
+    # 各内容源互不依赖，gather 并行拉取，而非串行 await（时间线多源往返叠加）。
+    async def _fetch_one(name: str) -> list[FeedItem]:
         fetch = feed_src.SOURCES[name]
         if mode == "follow":
             # discussion 额外按关注版块过滤；其余按关注作者过滤
@@ -103,8 +131,15 @@ async def get_timeline(
             a_ids = following_ids
         else:
             a_ids, b_ids = None, None
-        items = await fetch(db, a_ids, b_ids, before_time, before_id, limit)
-        candidates.extend(items)
+        return await fetch(db, a_ids, b_ids, before_time, before_id, limit)
+
+    fetched: list[list[FeedItem]] = await asyncio.gather(
+        *(_fetch_one(n) for n in source_names)
+    )
+    candidates: list[FeedItem] = [it for group in fetched for it in group]
+
+    # 合并回填作者名：各源只返回 author_id，此处一次性批量查询（抵消每源各查一次）
+    await _fill_authors(db, candidates)
 
     # 审校隐藏剔除 + 排序分计算
     rules = await load_active_rules(db)

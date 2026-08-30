@@ -20,6 +20,7 @@ from app.core import redis as redis_client
 from app.core.apm import init_sentry
 from app.core.config import settings
 from app.core.err import BizError, map_err, resp_json
+from app.core.jobs import close_jobs_pool
 from app.db.init_db import init_db
 from app.db.session import (
     AsyncSession,
@@ -31,6 +32,7 @@ from app.db.session import (
 from app.modules.auth.deps import CurrentUser, get_optional_user
 from app.modules.auth.service_passkey import cleanup_expired_challenges
 from app.ws.manager import manager
+
 
 @dataclass
 class GraphQLContext(BaseContext):
@@ -86,6 +88,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     # 收尾 WebSocket 事件的 Redis 订阅 task，避免泄漏连接
     await manager.close()
 
+    # 收尾 ARQ 入队共享 pool（若曾入队过），避免 Redis/连接泄漏
+    await close_jobs_pool()
     await redis_client.close_redis()
     await dispose_engine()
 
