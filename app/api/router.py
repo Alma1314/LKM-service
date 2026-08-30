@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.modules.admin.auth_router import router as admin_router
 from app.modules.admin.content_router import router as admin_content_router
+from app.modules.admin.dlq_router import router as admin_dlq_router
 from app.modules.admin.moderation.admin_router import router as moderation_admin_router
 from app.modules.admin.reports_router import router as admin_reports_router
 from app.modules.admin.users_router import router as admin_data_router
@@ -33,6 +34,7 @@ api_router.include_router(admin_router)
 api_router.include_router(admin_content_router)
 api_router.include_router(admin_data_router)
 api_router.include_router(admin_reports_router)
+api_router.include_router(admin_dlq_router)
 api_router.include_router(auth_router)
 api_router.include_router(auth_2fa_router)
 api_router.include_router(auth_oauth_router)

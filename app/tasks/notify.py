@@ -7,12 +7,11 @@
 worker 无请求上下文，数据库会话经 ``app.db.session.new_session()`` 自建，独立事务
 （与 FastAPI 请求的 get_session 依赖引擎一致，但本任务结束时显式 commit + close）。
 Redis 标记用 ``getdel`` 原子取走：取到即处理、取不到即视为已登记或已清扫，
-天然幂等（同 upload_id 仅处理一次）。真正处理中失败抛异常 → arq 按 max_tries 重试。
+天然幂等（同 upload_id 仅处理一次）。真正处理中失败抛异常 → 死信 DLQ（不重试）。
 """
 
 import json
 from contextlib import suppress
-from typing import Any
 
 from app.core.redis import get_redis
 from app.db.session import new_session
@@ -20,13 +19,13 @@ from app.modules.files.service import _get_storage, _register_from_upload, _uplo
 from app.ws.broker import publish_upload_bound
 
 
-async def notify_upload(ctx: Any, upload_id: str) -> None:
-    """arq 任务：登记直传上传。*ctx* 为 ARQ 注入的 TaskContext(仅重试用，无需展开)。
+async def notify_upload(upload_id: str) -> None:
+    """任务：登记直传上传。
 
     流程：GETDEL 标记（幂等）→ 解析 meta → ``_register_from_upload`` 登记 PENDING。
-    标记缺失 = 已登记或已被清扫，静默返回（幂等 soft-return，不触发重试）；
-    标记在而登记抛错 → 先按原值恢复标记（保 created_at），再向上抛给 arq 重试，
-    使重试时仍能从标记重新登记（避免标记被 GETDEL 取走后重试被幂等静默吞掉）。
+    标记缺失 = 已登记或已被清扫，静默返回（幂等 soft-return，不触发死信）；
+    标记在而登记抛错 → 先按原值恢复标记（保 created_at），再向上抛进死信 DLQ
+    （登记未完成，死信后由前端/重投流程处理，避免标记缺失被测为已登记而丢失）。
     """
     redis = await get_redis()
     if redis is None:
@@ -47,7 +46,7 @@ async def notify_upload(ctx: Any, upload_id: str) -> None:
         )
         await db.commit()
         # 登记成功后广播给 uploader 的 WebSocket(仅成功路径；失败走下方恢复标记+重试)。
-        # 广播自身 fail-open(见 broker),异常被吞,不影响 arq 成功语义。
+        # 广播自身 fail-open(见 broker),异常被吞,不影响任务成功语义。
         await publish_upload_bound(
             int(meta["uploader_id"]),
             {
@@ -59,9 +58,9 @@ async def notify_upload(ctx: Any, upload_id: str) -> None:
             },
         )
     except Exception:
-        # 登记失败（存储/DB 错误）：GETDEL 已把标记取走，若不恢复，arq 重试时标记缺失
-        # 会被当成幂等 no-op 而静默吞掉本次上传。恢复原标记（保留原始 created_at，孤儿
-        # 清扫年龄逻辑不变）后重新抛出，让 arq 按 max_tries 重试。恢复本身尽力而为：
+        # 登记失败（存储/DB 错误）：GETDEL 已把标记取走，若不恢复，后续处理会因标记缺失
+        # 被当成幂等 no-op 而静默吞掉本次上传。恢复原标记（保留原始 created_at，孤儿
+        # 清扫年龄逻辑不变）后重新抛出进死信。恢复本身尽力而为：
         # redis 恰好不可用也不覆盖原始异常（suppress 保证不 double-fail）。
         with suppress(Exception):
             await redis.set(_upload_key(upload_id), meta_raw)

@@ -1,10 +1,10 @@
 """孤儿博客 git 仓库周对账：隔离/回收无 blog_series 记录的裸仓库。
 
-arq cron 每周四 04:00 执行。Redis 锁防自相竞争，删前复查 blog_series 存在性防误删。
+每周四 04:00 执行。Redis 锁防自相竞争，删前复查 blog_series 存在性防误删。
 隔离 = 仅入库(不移动目录)；超龄(quarantined_at > _QUARANTINE_DAYS 天)才物理删除。
 
-ARQ 任务 ctx 无 db 会话，任务自建独立会话（模块级 ``_session_factory`` seam，
-测试可替换为 conftest 的内存会话）。
+任务无请求上下文，自建独立会话（模块级 ``_session_factory`` seam，测试可替换
+为 conftest 的内存会话）。
 
 会话关闭约定：任务只 commit/rollback，不 close。生产端 new_session 返回的会话交由
 GC/连接池回收（周任务频率极低，可接受）；测试注入的 conftest 会话由 conftest 自身
@@ -49,7 +49,7 @@ async def _should_lock() -> bool:
     return bool(got)
 
 
-async def reconcile_blog_repos(ctx: dict[str, object]) -> None:
+async def reconcile_blog_repos() -> None:
     if not await _should_lock():
         logger.info("blog 对账已被其他实例执行, 本次跳过")
         return

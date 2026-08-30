@@ -663,7 +663,7 @@ async def _register_from_upload(
     """把已直传的随机对象登记为 PENDING 的 LibraryFile（Phase 2-C 可复用核心）。
 
     无请求上下文的纯函数式登记：显式接收 ``uploader_id``（事件回调里没有 user 上下文），
-    后续 arq worker 可直接调用。流程：读随机 key→SHA3→copy/dedup 到内容寻址 key→删随机
+    后续队列 worker 可直接调用。流程：读随机 key→SHA3→copy/dedup 到内容寻址 key→删随机
     key→建行（PENDING, uploader_id, ref_count, storage_path 按 backend 对齐 create_file）→
     同步 ref_count。哈希/去重/拷贝逻辑与 ``confirm_upload`` 保持一致，未重写。
     """

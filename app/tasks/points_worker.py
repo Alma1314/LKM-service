@@ -1,18 +1,16 @@
 """积分事件消费任务：reward 入账 + 更新行为计数 + 解锁成就 + 推进任务并达标另发奖励分。
 
 worker 无请求上下文，用 app.db.session.new_session() 自建会话，独立事务。
-入账用 reward()（幂等，ref 唯一约束防重复发分）。失败向上抛 → arq 按 max_tries 重试。
+入账用 reward()（幂等，ref 唯一约束防重复发分）。失败向上抛 → 死信 DLQ（不重试）。
 """
-
-from typing import Any
 
 from app.db.session import new_session
 from app.modules.points.rules import RULE_DELTAS
 from app.modules.points.service import reward
 
 
-async def apply_point_event(ctx: Any, user_id: int, event: str, ref_id: str) -> None:
-    """arq 任务：消费一个积分事件。*ctx* 为 ARQ TaskContext(仅重试注入，无需展开)。"""
+async def apply_point_event(user_id: int, event: str, ref_id: str) -> None:
+    """积分事件任务：消费一个积分事件。"""
     from app.modules.points.engine import apply_event_side_effects  # Task 3 提供
 
     db = await new_session()

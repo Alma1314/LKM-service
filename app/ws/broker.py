@@ -24,7 +24,7 @@ async def publish_upload_bound(uploader_id: int, payload: dict[str, Any]) -> Non
 
     Redis 不可用或发布异常一律静默 no-op（fail-open，与 ``app.core.redis`` 语义一致）：
     广播只是体验增强，缺失时前端回退到「稍后刷新列表」即可，不该阻塞/影响登记流程
-    与 arq 成功语义。
+    与任务成功语义。
     """
     redis = await get_redis()
     if redis is None:

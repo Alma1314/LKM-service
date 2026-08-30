@@ -15,10 +15,12 @@ RULE_DELTAS: dict[str, int] = {
 async def enqueue_points_event(user_id: int, event: str, ref_id: str) -> None:
     """把用户行为事件入队给 points worker 异步入账（fire-and-forget，不阻塞主流程）。
 
-    Redis 不可用/入队失败静默 no-op（对齐 enqueue_upload_notify 的 fail-open 语义）：
+    Rabbit 不可用/入队失败静默 no-op（对齐 enqueue_upload_notify 的 fail-open 语义）：
     事件侧可经确认/重建恢复，宁可丢弃也不阻塞业务动作的 200 时序。
     """
-    from app.core.jobs import _enqueue
-    from app.core.worker import POINTS_QUEUE
+    from app.core import amqp
+    from app.core.jobs import RKEY_POINTS
 
-    await _enqueue("apply_point_event", user_id, event, ref_id, queue=POINTS_QUEUE)
+    await amqp._publish(
+        RKEY_POINTS, {"fn": "apply_point_event", "args": [user_id, event, ref_id]}
+    )

@@ -43,7 +43,7 @@ def _mk_repo(repo_dir, name):
 async def test_quarantine_new_orphan(db, repo_dir, inject_session):
     _mk_repo(repo_dir, "orphan1")  # 无 blog_series 记录
 
-    await reconcile_blog_repos.reconcile_blog_repos({})
+    await reconcile_blog_repos.reconcile_blog_repos()
 
     rows = (await db.execute(select(BlogRepoQuarantine))).scalars().all()
     assert len(rows) == 1
@@ -63,7 +63,7 @@ async def test_delete_quarantined_after_grace(db, repo_dir, inject_session):
     )
     await db.flush()
 
-    await reconcile_blog_repos.reconcile_blog_repos({})
+    await reconcile_blog_repos.reconcile_blog_repos()
 
     # 已物理删除
     assert not os.path.exists(f"{repo_dir}/orphan2.git")  # noqa: ASYNC240
@@ -78,7 +78,7 @@ async def test_skip_when_series_exists(db, repo_dir, inject_session):
     db.add(BlogSeries(owner_id=1, title="t", repo_name="live"))
     await db.flush()
 
-    await reconcile_blog_repos.reconcile_blog_repos({})
+    await reconcile_blog_repos.reconcile_blog_repos()
 
     assert (await db.execute(select(BlogRepoQuarantine))).scalars().all() == []
     assert os.path.isdir(f"{repo_dir}/live.git")  # noqa: ASYNC240

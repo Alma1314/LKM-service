@@ -1,143 +1,165 @@
-"""ARQ worker 配置与入口：发送队列与默认队列各一个 worker。"""
+"""RabbitMQ worker 配置与入口：拓扑声明 + 四队列消费者。
 
-import urllib.parse
+四个独立 worker 进程（send/notify/points/jobs）各自 consume 一个队列，
+保留故障隔离。业务队列配 x-dead-letter-exchange → 统一 DLQ，死信由
+worker_dlq 落库（见 scheduler/dlq 任务）。cron 由独立 APScheduler 进程
+发布 cron.* 消息到 DEFAULT_QUEUE 消费（run_default_worker 消费 cron key）。
+"""
 
-from arq import cron
-from arq.connections import RedisSettings
-from arq.worker import Worker
+import asyncio
+import json
+import logging
+from collections.abc import Callable
+from typing import Any
 
-from app.core.config import settings
-from app.tasks import cleanup, notify, points_worker, reconcile_blog_repos, send
+import aio_pika
+
+from app.core import amqp
+
+logger = logging.getLogger("lkm.worker")
+
+JOB_TIMEOUT_S = 120  # 单任务执行上限，超时→死信重投
 
 
 def _ensure_models() -> None:
-    """预注册全部 ORM 模型，保证 worker 进程的 SQLAlchemy mapper 可完整解析。
-
-    主进程经 ``app.main``→``app.api.router`` 全量加载各模块，连带注册其 ORM 模型；
-    独立 arq worker（send/notify/default）只 import 用得到的任务链，不会进入那条路径。
-    一旦 worker 首次实例化实体（如 ``LibraryFile``）触发 on-init 的 ``_check_configure``，
-    会级联配置整个 registry，此时 ``User`` 上经 TYPE_CHECKING 引用的 relationship 目标
-    （RefreshToken/ForumPost/BlogSeries/Column* 等）若未注册即抛 InvalidRequestError。
-    这里在 worker 启动时预 import 各模型模块，复现主进程的全量注册。
-    """
-
-    # 各模块 ORM 模型（新增模块模型时必须在此登记，与 app.main 的 _register_all_errors 同理）
+    """预注册全部 ORM 模型（同旧实现，防 worker 进程 SQLAlchemy mapper 缺失）。"""
     import app.modules.auth.models
     import app.modules.blog.models
     import app.modules.content.column_models  # 预 import Column StrEnum 常量
-    import app.modules.files.models  # noqa: F401  # 副作用导入：预注册 ORM 模型（LibraryFile）
-
-    # 确保 User.profile 等本文件内定义的 relationship target 也完成解析
+    import app.modules.files.models  # noqa: F401  # 副作用导入
     from app.db.models import Base
 
-    # 触发一次 mapper 配置（幂等），把任何缺失提前暴露
     Base.registry.configure()
 
 
 _ensure_models()
 
-SEND_QUEUE = "arq:queue:send"  # 高优发送队列
-NOTIFY_QUEUE = "arq:queue:notify"  # 对象事件通知队列
-DEFAULT_QUEUE = "arq:queue"  # 默认队列，预留重活
-POINTS_QUEUE = "arq:queue:points"  # 积分事件队列
+# 拓扑常量
+EXCHANGE = amqp.EXCHANGE  # lkm.events (topic)
+SEND_QUEUE = "lkm.send"
+NOTIFY_QUEUE = "lkm.notify"
+POINTS_QUEUE = "lkm.points"
+DEFAULT_QUEUE = "lkm.jobs"
+DLX = "lkm.dlx"  # dead-letter exchange (fanout)
+DLQ = "lkm.dlq"  # 统一死信队列
 
-# 单个任务的上限时长：超时即由 arq 判失败并按 max_tries 重试，防止 hung 任务
-# 无限占用 worker 槽位。发送/通知/积分任务正常都远低于此。
-_JOB_TIMEOUT_S = 120
-# 超时后额外延长任务的"结束"宽限，给 cleanup/finish 留时间，避免被误收割。
-_EXPIRES_EXTRA_MS = 5_000
+# routing key 常量（与 jobs.py 对齐）
+RKEY_SEND_CODE = "event.send_code"
+RKEY_SEND_MAGIC = "event.send_magic_link"
+RKEY_NOTIFY = "event.notify_upload"
+RKEY_POINTS = "event.apply_point"
+RKEY_CLEANUP = "cron.cleanup"
+RKEY_RECONCILE = "cron.reconcile"
 
 
-def _base_worker_kwargs() -> dict[str, object]:
-    """各 worker 共享的 ARQ 加固参数（超时 + 崩溃清理宽限）。
+async def _declare_topology(ch: Any) -> None:
+    """幂等声明：exchange + 四业务队列(含各自的 x-dead-letter) + DLX + DLQ。
 
-    ``**kwargs`` 展开 dict 时，ty 无法把不同 key 匹配到 Worker 的各自形参类型——
-    展开后每个未显式传的形参都被推断成 keys 的统一值类型而误报。这是 ty 对运行时
-    kwargs 展开的已知限制：即使把值类型收敛成 int，其他形参（bool/str/时区等）仍会被
-    推断成 int 而报 invalid-argument-type。故调用侧逐个加 ``# ty: ignore`` 视为受控边界。
+    注意 DLX 用 **FANOUT**：Rabbit 死信会把消息以【原始 routing key】republish 到
+    x-dead-letter-exchange。若 DLX 是 DIRECT 且有零绑定，死信因 unroutable 被静默丢弃，
+    进不到 DLQ。FANOUT 忽略 routing key、投递到所有绑定队列 → 绑定 DLQ 后任何死信都落库。
     """
-    return {
-        "job_timeout": _JOB_TIMEOUT_S,
-        "expires_extra_ms": _EXPIRES_EXTRA_MS,
-    }
+    await ch.declare_exchange(EXCHANGE, aio_pika.ExchangeType.TOPIC, durable=True)
+    await ch.declare_exchange(DLX, aio_pika.ExchangeType.FANOUT, durable=True)
+    dlq = await ch.declare_queue(DLQ, durable=True)
+    # 绑定 DLQ → DLX（fanout 忽略 key，"" 即通配全量）。缺这步死信会丢。
+    await ch.bind_queue(dlq, DLX, "")
+    for qname, rks in (
+        (SEND_QUEUE, [RKEY_SEND_CODE, RKEY_SEND_MAGIC]),
+        (NOTIFY_QUEUE, [RKEY_NOTIFY]),
+        (POINTS_QUEUE, [RKEY_POINTS]),
+        (DEFAULT_QUEUE, [RKEY_CLEANUP, RKEY_RECONCILE]),
+    ):
+        q = await ch.declare_queue(
+            qname,
+            durable=True,
+            arguments={"x-dead-letter-exchange": DLX},
+        )
+        for rk in rks:
+            await ch.bind_queue(q, EXCHANGE, rk)
 
 
-SEND_FUNCTIONS = [send.send_code, send.send_magic_link]
-NOTIFY_FUNCTIONS = [notify.notify_upload]
-POINTS_FUNCTIONS = [points_worker.apply_point_event]
+async def _consume(
+    queue_name: str,
+    handlers: dict[str, Callable[..., Any]],
+) -> None:
+    """消费指定队列，按 rk 分发 handler。任务执行包 120s 超时。
+
+    handler 成功 → ack；异常/超时 → nack(requeue=False) → 死信 DLQ。
+    拓扑（exchange/四队列/DLX/DLQ/绑定）由 _declare_topology 统一幂等声明，此处只取句柄：
+    用不同 arguments 重声明同一队列会让 Rabbit 406 PRECONDITION_FAILED 关 channel。
+    """
+    ch = await amqp.get_amqp()
+    if ch is None:
+        logger.error("rabbitmq 未配置/不可用，block=%s 无法消费", queue_name)
+        return  # worker 进程空转退出由外层处理
+    await _declare_topology(ch)
+    queue = await ch.get_queue(queue_name)
+
+    async def _on_msg(msg: Any) -> None:
+        payload: dict[str, Any] = {}
+        async with msg.process(requeue=False):
+            try:
+                try:
+                    payload = json.loads(msg.body)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    logger.warning("队列入队消息非法 JSON, 丢弃 queue=%s body=%r", queue_name, msg.body)
+                    return  # ack 丢弃坏消息, 避免死信风暴
+                fn = payload.get("fn")
+                args = payload.get("args", [])
+                handler = handlers.get(fn) if isinstance(fn, str) else None
+                if handler is None:
+                    logger.warning("未知任务 %s, 丢弃", fn)
+                    return  # ack 丢弃
+                await asyncio.wait_for(handler(*args), timeout=JOB_TIMEOUT_S)
+            except Exception:
+                logger.exception(
+                    "任务失败入死信 queue=%s fn=%s", queue_name, payload.get("fn")
+                )
+                raise  # nack(requeue=False) → 死信。注意：不可 suppress TimeoutError，
+                # 否则超时被当成功 ack，违背"超时→死信重投"语义。
+
+    await queue.consume(_on_msg, no_ack=False)
+    await asyncio.sleep(0)  # 让 consume 注册完成
+    # 保持事件循环存活，消费循环由 aio-pika 内部 task 驱动
+    try:
+        await asyncio.Event().wait()
+    except asyncio.CancelledError:
+        raise
 
 
-def _redis_settings() -> RedisSettings:
-    """把 settings.redis_url(redis://[u:p@]host:port[/db]) 解析为 RedisSettings。"""
-    p = urllib.parse.urlparse(settings.redis_url)
-    db = int((p.path or "/0").lstrip("/") or 0)
-    return RedisSettings(
-        host=p.hostname or "localhost",
-        port=p.port or 6379,
-        database=db,
-        username=p.username,
-        password=p.password,
-    )
+# ---- 四个 run_*_worker 入口（worker_*.py 调用）----
 
 
 async def run_send_worker() -> None:
-    """发送队列专属 worker（compose worker-send 入口）。"""
-    w = Worker(
-        SEND_FUNCTIONS,
-        queue_name=SEND_QUEUE,
-        redis_settings=_redis_settings(),
-        max_tries=5,
-        max_jobs=10,
-        **_base_worker_kwargs(),  # ty: ignore[invalid-argument-type]  # kwargs 展开受限控边界，见 _base_worker_kwargs 注释
+    from app.tasks import send
+
+    await _consume(
+        SEND_QUEUE,
+        {"send_code": send.send_code, "send_magic_link": send.send_magic_link},
     )
-    await w.async_run()
 
 
 async def run_notify_worker() -> None:
-    """对象事件通知队列专属 worker（compose worker-notify 入口，后续 Task 4 加入）。"""
-    w = Worker(
-        NOTIFY_FUNCTIONS,
-        queue_name=NOTIFY_QUEUE,
-        redis_settings=_redis_settings(),
-        max_tries=5,
-        max_jobs=10,
-        **_base_worker_kwargs(),  # ty: ignore[invalid-argument-type]  # kwargs 展开受限控边界，见 _base_worker_kwargs 注释
-    )
-    await w.async_run()
+    from app.tasks import notify
 
-
-async def run_default_worker() -> None:
-    """默认队列 worker（预留重活 + 孤儿清扫周期任务；compose worker 入口）。"""
-    w = Worker(
-        [],
-        queue_name=DEFAULT_QUEUE,
-        redis_settings=_redis_settings(),
-        max_tries=5,
-        max_jobs=10,
-        **_base_worker_kwargs(),  # ty: ignore[invalid-argument-type]  # kwargs 展开受限控边界，见 _base_worker_kwargs 注释
-        cron_jobs=[
-            cron(
-                cleanup.cleanup_expired_uploads, hour=set(range(24)), minute=0
-            ),  # 每小时整点清扫
-            cron(
-                reconcile_blog_repos.reconcile_blog_repos,
-                weekday="thurs",
-                hour=4,
-                minute=0,
-            ),  # 每周四 04:00 对账孤儿博客仓库
-        ],
-    )
-    await w.async_run()
+    await _consume(NOTIFY_QUEUE, {"notify_upload": notify.notify_upload})
 
 
 async def run_points_worker() -> None:
-    """积分事件队列专属 worker（compose worker-points 入口）。"""
-    w = Worker(
-        POINTS_FUNCTIONS,
-        queue_name=POINTS_QUEUE,
-        redis_settings=_redis_settings(),
-        max_tries=5,
-        max_jobs=10,
-        **_base_worker_kwargs(),  # ty: ignore[invalid-argument-type]  # kwargs 展开受限控边界，见 _base_worker_kwargs 注释
+    from app.tasks import points_worker as pw
+
+    await _consume(POINTS_QUEUE, {"apply_point_event": pw.apply_point_event})
+
+
+async def run_default_worker() -> None:
+    """jobs 队列 worker：消费 cron.cleanup / cron.reconcile（由调度进程发布）。"""
+    from app.tasks import cleanup, reconcile_blog_repos
+
+    await _consume(
+        DEFAULT_QUEUE,
+        {
+            "cleanup_expired_uploads": cleanup.cleanup_expired_uploads,
+            "reconcile_blog_repos": reconcile_blog_repos.reconcile_blog_repos,
+        },
     )
-    await w.async_run()

@@ -1,30 +1,59 @@
-"""worker 配置测试：RedisSettings 由 redis_url 正确解析、发送 worker 用发送队列。"""
+"""worker 配置测试：队列命名、拓扑声明幂等、消费者装配。"""
 
 from typing import Any
 
 from app.core import worker
 
 
-def test_redis_settings_parses_url(monkeypatch: Any) -> None:
-    monkeypatch.setattr(worker.settings, "redis_url", "redis://u:p@h1:7000/3")
-    rs = worker._redis_settings()
-    assert rs.host == "h1"
-    assert rs.port == 7000
-    assert rs.database == 3
-    assert rs.username == "u"
-    assert rs.password == "p"
+def test_queue_naming() -> None:
+    assert worker.SEND_QUEUE == "lkm.send"
+    assert worker.NOTIFY_QUEUE == "lkm.notify"
+    assert worker.POINTS_QUEUE == "lkm.points"
+    assert worker.DEFAULT_QUEUE == "lkm.jobs"
+    assert worker.EXCHANGE == "lkm.events"
 
 
-def test_redis_settings_defaults(monkeypatch: Any) -> None:
-    monkeypatch.setattr(worker.settings, "redis_url", "redis://localhost:6379/0")
-    rs = worker._redis_settings()
-    assert rs.host == "localhost"
-    assert rs.port == 6379
-    assert rs.database == 0
-    assert rs.password is None
+async def test_declare_topology_declares_queues_and_dlx() -> None:
+    declared_exchanges: list[str] = []
+    declared_queues: list[tuple[str, dict]] = []
+    bound: list[tuple[str, str, str]] = []
 
+    class _FakeQueue:
+        def __init__(self, name: str) -> None:
+            self.name = name
 
-def test_send_worker_uses_send_queue() -> None:
-    assert worker.SEND_QUEUE == "arq:queue:send"
-    assert worker.SEND_FUNCTIONS[0].__name__ == "send_code"
-    assert worker.SEND_FUNCTIONS[1].__name__ == "send_magic_link"
+    class _FakeChan:
+        async def declare_exchange(self, name: str, typ: Any, **kw: Any) -> Any:
+            declared_exchanges.append(name)
+            return None
+
+        async def declare_queue(self, name: str, **kw: Any) -> _FakeQueue:
+            declared_queues.append((name, dict(kw)))
+            return _FakeQueue(name)
+
+        async def bind_queue(self, q: Any, exchange: str, routing_key: str) -> None:
+            bound.append((q.name, exchange, routing_key))
+
+    fake = _FakeChan()
+    await worker._declare_topology(fake)  # type: ignore[arg-type]
+    assert worker.EXCHANGE in declared_exchanges
+    assert worker.DLX in declared_exchanges
+    names = [n for n, _ in declared_queues]
+    assert worker.SEND_QUEUE in names
+    assert worker.NOTIFY_QUEUE in names
+    assert worker.POINTS_QUEUE in names
+    assert worker.DEFAULT_QUEUE in names
+    assert worker.DLQ in names
+    send_args = dict(declared_queues)[worker.SEND_QUEUE]
+    assert send_args["arguments"]["x-dead-letter-exchange"] == worker.DLX
+    # DLQ 是直连死信队列, 不设 x-dead-letter（避免死信再死信）
+    dlq_args = dict(declared_queues)[worker.DLQ]
+    assert "x-dead-letter-exchange" not in dlq_args.get("arguments", {})
+    # 每条业务队列都绑定到 exchange（send(2) notify(1) points(1) jobs(2)）+ DLQ→DLX(1)
+    assert len(bound) == 2 + 1 + 1 + 2 + 1
+    # DLQ 必须绑定到 DLX（fanout，死信消息按原始 rk republish 到 DLX → 落 DLQ；
+    # 缺这步死信会因 unroutable 被静默丢弃）。显式断言这一关键路由存在。
+    dlq_binds = [b for b in bound if b[0] == worker.DLQ]
+    assert len(dlq_binds) == 1
+    assert dlq_binds[0][1] == worker.DLX  # exchange 是 DLX
+

@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     redis_url: str = (
         ""  # 空串 = 未启用 Redis；非空走 redis://[user:pass@]host:port[/db]
     )
+    rabbit_url: str = (
+        ""  # 空串 = 未启用 RabbitMQ；非空走 amqp://[user:pass@]host[:port][/vhost]
+    )
 
     # MinIO/S3 对象事件回调共享令牌：空串 = 未启用（回调端点一律 401）。
     # 生产必须设置固定随机值，供桶通知 webhook 的 Authorization: Bearer 头校验。

@@ -141,8 +141,8 @@ async def apply_event_side_effects(
 ) -> None:
     """事件副作用主入口。today 可注入，便于测试对齐日期。
 
-    幂等：以 ``UserBehaviorStat`` 行锁内的 ``processed_events`` 标记去重。ARQ 可能
-    在「commit 成功但 ack 前崩溃」后重投：此时 reward() 靠 ledger 唯一约束跳过，
+    幂等：以 ``UserBehaviorStat`` 行锁内的 ``processed_events`` 标记去重。消息可能
+    在「commit 成功但 ack 前崩溃/断连」后重投：此时 reward() 靠 ledger 唯一约束跳过，
     但此处若不幂等，行为计数/成就/任务进度会重复累计。副作用与该标记同一事务
     提交，故重投读到已提交标记即整体跳过；部分失败回滚则重投干净重做。
     """

@@ -77,7 +77,7 @@ async def test_cleanup_deletes_expired_upload(monkeypatch: Any) -> None:
     monkeypatch.setattr(cleanup, "get_redis", _fake_redis)
     monkeypatch.setattr(cleanup, "_get_storage", lambda: storage)
 
-    await cleanup.cleanup_expired_uploads({})
+    await cleanup.cleanup_expired_uploads()
 
     assert "up/aaa" in deleted_keys  # 过期 → 删随机 key
     assert "up/bbb" not in deleted_keys  # 年轻 → 不删
@@ -103,7 +103,7 @@ async def test_cleanup_keeps_fresh_uploads(monkeypatch: Any) -> None:
     monkeypatch.setattr(cleanup, "get_redis", _fake_redis)
     monkeypatch.setattr(cleanup, "_get_storage", lambda: storage)
 
-    await cleanup.cleanup_expired_uploads({})
+    await cleanup.cleanup_expired_uploads()
 
     assert deleted_keys == []
     assert set(redis.store) == {"upload:aaa", "upload:bbb"}
@@ -125,7 +125,7 @@ async def test_cleanup_skips_malformed_marker(monkeypatch: Any) -> None:
     monkeypatch.setattr(cleanup, "get_redis", _fake_redis)
     monkeypatch.setattr(cleanup, "_get_storage", lambda: storage)
 
-    await cleanup.cleanup_expired_uploads({})
+    await cleanup.cleanup_expired_uploads()
 
     assert deleted_keys == []
     assert set(redis.store) == {"upload:garbage", "upload:nodate"}
@@ -137,4 +137,4 @@ async def test_cleanup_noop_when_redis_disabled(monkeypatch: Any) -> None:
 
     monkeypatch.setattr(cleanup, "get_redis", _none)
 
-    await cleanup.cleanup_expired_uploads({})  # 不抛错
+    await cleanup.cleanup_expired_uploads()  # 不抛错

@@ -242,7 +242,7 @@ class TestNotifyTask:
                 ),
             )
 
-            await notify_task.notify_upload(None, upload_id)
+            await notify_task.notify_upload(upload_id)
 
             rows = (await db.execute(select(LibraryFile))).scalars().all()
             assert len(rows) == 1
@@ -297,11 +297,11 @@ class TestNotifyTask:
 
         # 首次调用：登记抛出 → 异常上抛，且标记被恢复（保留原始 meta 与 created_at）。
         with pytest.raises(RuntimeError, match="storage boom"):
-            await notify_task.notify_upload(None, "retry")
+            await notify_task.notify_upload("retry")
         assert fake._data[key] == meta_raw
 
-        # 第二次调用（模拟 arq 重试）：登记成功 → 标记被 GETDEL 取走，不再恢复。
-        await notify_task.notify_upload(None, "retry")
+        # 第二次调用（模拟重试）：登记成功 → 标记被 GETDEL 取走，不再恢复。
+        await notify_task.notify_upload("retry")
         assert state["call"] == 2
         assert key not in fake._data
 
@@ -325,7 +325,7 @@ class TestNotifyTask:
         monkeypatch.setattr(notify_task, "new_session", _new_session_for(db))
         monkeypatch.setattr(notify_task, "_register_from_upload", _register)
 
-        await notify_task.notify_upload(None, "gone")
+        await notify_task.notify_upload("gone")
 
         assert called is False  # 标记缺失 → 幂等 no-op，未触发登记
 
@@ -347,7 +347,7 @@ class TestNotifyTask:
         monkeypatch.setattr(notify_task, "new_session", _new_session_for(db))
         monkeypatch.setattr(notify_task, "_register_from_upload", _register)
 
-        await notify_task.notify_upload(None, "no-redis")
+        await notify_task.notify_upload("no-redis")
 
         assert called is False
 

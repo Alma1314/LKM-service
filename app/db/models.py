@@ -1438,3 +1438,27 @@ class ModerationRule(Base):
     updated_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
     )
+
+
+class DlqMessage(Base):
+    """死信消息落库：worker_dlq 消费 lkm.dlq 队列持久化，供人工重投/审计。
+
+    时间列遵循本文件既有约定：用 UTCDateTime 类型 + ``now_iso()`` 默认值
+    （参考 LibraryFile.created_at）。勿用裸 ``DateTime`` / ``datetime.now(UTC)``。
+    """
+
+    __tablename__: str = "dlq_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    routing_key: Mapped[str] = mapped_column(String(255), index=True)
+    payload_json: Mapped[str] = mapped_column(Text)
+    exchange: Mapped[str] = mapped_column(String(255), default="lkm.events")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    reason: Mapped[str] = mapped_column(String(255), default="")
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    requeued_at: Mapped[datetime.datetime | None] = mapped_column(
+        UTCDateTime, nullable=True
+    )

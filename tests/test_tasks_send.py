@@ -31,7 +31,7 @@ async def test_send_code_delegates_to_channel(monkeypatch: Any) -> None:
         send_code=fake.send_code,
     )
     monkeypatch.setattr(ch, "CHANNELS", {"email": channel})
-    await send.send_code(None, "email", "a@b.com", "123456")
+    await send.send_code("email", "a@b.com", "123456")
     assert fake.codes == [("a@b.com", "123456")]
 
 
@@ -40,5 +40,5 @@ async def test_send_magic_link_delegates(monkeypatch: Any) -> None:
 
     fake = _Fake()
     monkeypatch.setattr(deps, "get_email_provider", lambda: fake)
-    await send.send_magic_link(None, "e@x.com", "https://link")
+    await send.send_magic_link("e@x.com", "https://link")
     assert fake.links == [("e@x.com", "https://link")]

@@ -1,6 +1,6 @@
 """孤儿随机 key 清扫：扫描过期的 upload:* Redis 标记，删除其对应随机对象 key 及标记。
 
-arq cron 周期任务，每小时整点执行。Redis 未启用时静默降级（fail-open，不报错）。
+cron 周期任务由 APScheduler 进程发布到 jobs 队列，每小时整点执行。Redis 未启用时静默降级（fail-open，不报错）。
 
 过期判定按"年龄"而非 Redis TTL（R1）：标记持久化落 Redis，靠 ``created_at`` 记录写入时刻；
 年龄超过 ``_UPLOAD_TTL`` 窗口即视为过期。这样清扫的 scan_iter 每次都能看到标记（含已过期
@@ -33,11 +33,9 @@ def _parse_created_at(meta_raw: str) -> datetime | None:
         return None
 
 
-async def cleanup_expired_uploads(ctx: dict) -> None:
-    """arq 周期任务：清掉已过期(created_at 早于 _UPLOAD_TTL 窗口)但未确认的直传随机 key 及标记。
+async def cleanup_expired_uploads() -> None:
+    """周期任务：清掉已过期(created_at 早于 _UPLOAD_TTL 窗口)但未确认的直传随机 key 及标记。
 
-    *ctx* 为 ARQ 注入的 TaskContext（含 ctx["redis"]）；本项目 tasks 统一起
-    ``get_redis()`` 获取客户端（与 send 系列一致），故忽略 ctx 内容。
     Redis 未启用（get_redis 返回 None）直接 return，不报错。
     """
     redis = await get_redis()

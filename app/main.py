@@ -15,12 +15,12 @@ from strawberry.fastapi import BaseContext, GraphQLRouter
 from strawberry.tools import merge_types
 
 from app.api.router import api_router
+from app.core import amqp as _amqp
 from app.core import logging as logger
 from app.core import redis as redis_client
 from app.core.apm import init_sentry
 from app.core.config import settings
 from app.core.err import BizError, map_err, resp_json
-from app.core.jobs import close_jobs_pool
 from app.db.init_db import init_db
 from app.db.session import (
     AsyncSession,
@@ -88,8 +88,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     # 收尾 WebSocket 事件的 Redis 订阅 task，避免泄漏连接
     await manager.close()
 
-    # 收尾 ARQ 入队共享 pool（若曾入队过），避免 Redis/连接泄漏
-    await close_jobs_pool()
+    # 收尾 AMQP 入队共享 channel（若曾发布过），避免连接泄漏
+    await _amqp.close_amqp()
     await redis_client.close_redis()
     await dispose_engine()
 
