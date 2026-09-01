@@ -9,8 +9,9 @@
 
 import io
 
-from app.db.models import Profile, RolePermission, User
 from app.modules.admin.deps import COOKIE_NAME, COOKIE_PATH, create_admin_access_token
+from app.modules.admin.models import RolePermission
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import create_access_token
 from tests.conftest import DB, Client
 

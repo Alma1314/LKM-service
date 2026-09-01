@@ -1,8 +1,10 @@
 """columns 迁移 RBAC：申请/审核/发布属主。"""
 
-from app.db.models import Column, Profile, RolePermission, User
 from app.modules.admin.deps import COOKIE_NAME, COOKIE_PATH, create_admin_access_token
+from app.modules.admin.models import RolePermission
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import create_access_token
+from app.modules.content.models import Column
 from tests.conftest import DB, Client
 
 
@@ -107,7 +109,7 @@ def _set_admin_mfa_cookie(client: Client, user: User) -> None:
 
 
 async def test_super_admin_can_review_application(db: DB, client: Client) -> None:
-    from app.db.models import ColumnApplication
+    from app.modules.content.models import ColumnApplication
 
     # 申请人普通，super_admin 审核（2FA 门槛 + columns.application_review 权限点）。
     applicant = await _mk_user(db, "app_owner", level="normal", role="member")
@@ -143,7 +145,7 @@ async def test_org_member_cannot_review_application(db: DB, client: Client) -> N
     # 旧 review 仅 RequireLevel("admin")，org_member(level=admin) 会被放行 200；
     # 迁移后叠加 columns.application_review，org_member 无此权限 → 403。
     # 该用例验证 super_admin 与 org_member 的真实能力差异（此回归由迁移引入）。
-    from app.db.models import ColumnApplication
+    from app.modules.content.models import ColumnApplication
 
     applicant = await _mk_user(db, "org_rev_app", level="normal", role="member")
     db.add(

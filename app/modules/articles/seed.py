@@ -7,8 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.modules.auth.models  # noqa: F401  注册剩余 ORM 映射类（同 alembic/env.py）
-from app.db.models import Article, ArticleCategory, now_iso
+from app.db.base import now_iso
 from app.db.session import new_session
+from app.modules.articles.models import Article, ArticleCategory
 
 # 文章分类种子：slug 幂等；engineering 是 blog produce 默认分类，必须存在
 _CATEGORIES: list[dict[str, int | str]] = [

@@ -1,4 +1,4 @@
-"""专栏示例数据。用法：uv run python -m app.modules.content.columns_seed
+"""专栏示例数据。用法：uv run python -m app.modules.content.columns.seed
 
 为 columns / column_posts 填充社区「专栏」页展示所需的示例数据（幂等）。
 复刻前端原 mock-columns 的结构，字段以中文原文落库（本期仅中文站场景）。
@@ -12,17 +12,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.modules.auth.models  # noqa: F401
-from app.db.models import (
+from app.db.base import now_iso
+from app.db.session import new_session
+from app.modules.auth.models import Profile, User
+from app.modules.content.column_models import ColumnPostStatus, ColumnStatus
+from app.modules.content.models import (
     Board,
     Column,
     ColumnApplication,
     ColumnPost,
-    Profile,
-    User,
-    now_iso,
 )
-from app.db.session import new_session
-from app.modules.content.column_models import ColumnPostStatus, ColumnStatus
 
 # 种子专栏归属的演示作者用户名（避免依赖具体本地用户）
 _SEED_AUTHOR_USERNAME = "column_seed_author"

@@ -9,10 +9,11 @@
 import pytest
 from httpx import AsyncClient
 
-from app.db.models import Profile, RolePermission, User
 from app.modules.admin.deps import COOKIE_NAME, COOKIE_PATH, create_admin_access_token
+from app.modules.admin.models import RolePermission
 from app.modules.admin.moderation import service as mod_service
 from app.modules.admin.moderation.schemas import RuleCreate
+from app.modules.auth.models import Profile, User
 from tests.conftest import DB
 
 

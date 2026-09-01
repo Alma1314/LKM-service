@@ -5,8 +5,8 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from app.modules.files import tasks as cleanup
 from app.modules.files.service import _UPLOAD_TTL
-from app.tasks import cleanup
 
 
 def _marker(key: str, age_seconds: int) -> str:

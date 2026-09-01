@@ -3,9 +3,9 @@ from pydantic import BaseModel
 from sqlalchemy import text
 
 from app.core import redis as redis_client
+from app.core.common import ApiResp
 from app.core.err import respond
 from app.db.session import get_async_engine
-from app.modules.common import ApiResp
 
 router = APIRouter(tags=["health"])
 

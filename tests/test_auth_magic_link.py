@@ -10,9 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
-from app.db.models import User
 from app.modules.auth.errors import AuthErr
-from app.modules.auth.models import TOTP, MagicLink
+from app.modules.auth.models import TOTP, MagicLink, User
 from app.modules.auth.providers.console import ConsoleEmailProvider
 
 
@@ -30,7 +29,7 @@ async def _create_user(
     account_level: str = "normal",
 ) -> User:
     """Create a user with the given parameters and return it."""
-    from app.db.models import Profile
+    from app.modules.auth.models import Profile
     from app.modules.auth.security import hashpwd
 
     user = User(

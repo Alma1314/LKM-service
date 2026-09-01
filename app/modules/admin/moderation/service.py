@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import bump_collection_version
 from app.core.err import BizError
-from app.db.models import ModerationRule
+from app.modules.admin.models import ModerationRule
 from app.modules.admin.moderation import engine as mod_engine
 from app.modules.admin.moderation.errors import ModerationErr
 from app.modules.admin.moderation.schemas import (

@@ -10,8 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.modules.auth.models  # noqa: F401  注册 auth 表（RefreshToken/UserOAuth/TOTP 等关系目标）
-from app.db.models import Achievement, ExchangeItem, Task
 from app.db.session import new_session
+from app.modules.points.models import Achievement, ExchangeItem, Task
 
 # ------------------------------- 成就 12 -----------------------------------
 _ACHIEVEMENTS: list[dict] = [

@@ -16,9 +16,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr
-from app.db.models import Article, Profile, RolePermission, User
-from app.db.models import ArticleCategory as ArticleCategoryORM
+from app.modules.admin.models import RolePermission
 from app.modules.articles.errors import ArticleErr
+from app.modules.articles.models import Article
+from app.modules.articles.models import ArticleCategory as ArticleCategoryORM
 from app.modules.articles.schemas import (
     ArticleCreate,
     ArticleUpdate,
@@ -36,6 +37,7 @@ from app.modules.articles.service import (
     update_article_ex,
     update_category_ex,
 )
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import create_access_token, hashpwd
 
 

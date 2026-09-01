@@ -17,10 +17,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
-from app.db.models import User
 from app.modules.auth.deps import CurrentUser
 from app.modules.auth.errors import AuthErr
-from app.modules.auth.models import TOTP, RecoveryCode
+from app.modules.auth.models import TOTP, RecoveryCode, User
 from app.modules.auth.security import (
     create_access_token,
     create_temp_token,
@@ -55,7 +54,7 @@ async def _create_user(
     email: str | None = "test@example.com",
 ) -> User:
     """Create a minimal user (with profile) and return it."""
-    from app.db.models import Profile
+    from app.modules.auth.models import Profile
 
     user = User(
         username=username,
@@ -387,7 +386,7 @@ class TestGet2FAStatus:
 
 class TestIssueAdminSetupTokens:
     async def should_read_role_from_profile(self, db: AsyncSession):
-        from app.db.models import Profile
+        from app.modules.auth.models import Profile
         from app.modules.auth.security import decode_access_token
         from app.modules.auth.service_auth import issue_session_tokens
 

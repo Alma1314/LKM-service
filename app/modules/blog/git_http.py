@@ -11,10 +11,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.models import BlogSeries, User
 from app.db.session import get_read_session, new_session
+from app.modules.auth.models import User
 from app.modules.auth.security import verifypwd
 from app.modules.blog import backfill, git_svc
+from app.modules.blog.models import BlogSeries
 
 logger = logging.getLogger(__name__)
 

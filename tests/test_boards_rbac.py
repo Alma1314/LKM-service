@@ -7,9 +7,11 @@
 
 from sqlalchemy import select
 
-from app.db.models import BoardApplication, Profile, RolePermission, User
 from app.modules.admin.deps import COOKIE_NAME, COOKIE_PATH, create_admin_access_token
+from app.modules.admin.models import RolePermission
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import create_access_token
+from app.modules.content.models import BoardApplication
 from tests.conftest import DB, Client
 
 
@@ -115,9 +117,9 @@ async def test_super_admin_can_review_application(db: DB, client: Client) -> Non
 
 
 async def test_owner_can_update_board(db: DB, client: Client) -> None:
-    from app.db.models import Board
-    from app.modules.content.boards_schemas import BoardCreate
-    from app.modules.content.boards_service import create_board_ex
+    from app.modules.content.boards.schemas import BoardCreate
+    from app.modules.content.boards.service import create_board_ex
+    from app.modules.content.models import Board
 
     owner = await _mk_user(db, "ow1")
     await create_board_ex(db, BoardCreate(slug="ob1", title="原题"), owner.id)
@@ -132,9 +134,9 @@ async def test_owner_can_update_board(db: DB, client: Client) -> None:
 
 
 async def test_non_owner_update_forbidden(db: DB, client: Client) -> None:
-    from app.db.models import Board
-    from app.modules.content.boards_schemas import BoardCreate
-    from app.modules.content.boards_service import create_board_ex
+    from app.modules.content.boards.schemas import BoardCreate
+    from app.modules.content.boards.service import create_board_ex
+    from app.modules.content.models import Board
 
     owner = await _mk_user(db, "ow2")
     loser = await _mk_user(db, "loser")

@@ -15,8 +15,7 @@ from moto import mock_aws
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import LibraryFile
-from app.modules.files.models import FileStatus
+from app.modules.files.models import FileStatus, LibraryFile
 
 
 class _FakeRedis:
@@ -204,7 +203,7 @@ class TestNotifyTask:
     async def test_notify_upload_registers_pending(
         self, db: AsyncSession, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import app.tasks.notify as notify_task
+        import app.modules.files.tasks as notify_task
         from app.core.config import settings
 
         monkeypatch.setattr(settings, "storage_backend", "s3")
@@ -262,7 +261,7 @@ class TestNotifyTask:
         self, db: AsyncSession, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """登记失败 → 恢复原标记（保 created_at）并抛异常；重试时可重新登记。"""
-        import app.tasks.notify as notify_task
+        import app.modules.files.tasks as notify_task
 
         fake = _FakeRedis()
         key = notify_task._upload_key("retry")
@@ -308,7 +307,7 @@ class TestNotifyTask:
     async def test_notify_upload_idempotent_when_marker_gone(
         self, db: AsyncSession, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import app.tasks.notify as notify_task
+        import app.modules.files.tasks as notify_task
 
         fake = _FakeRedis()  # 空：标记已消失
 
@@ -332,7 +331,7 @@ class TestNotifyTask:
     async def test_notify_upload_redis_none_noop(
         self, db: AsyncSession, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import app.tasks.notify as notify_task
+        import app.modules.files.tasks as notify_task
 
         async def _none() -> None:
             return None

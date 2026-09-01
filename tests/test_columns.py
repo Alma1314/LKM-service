@@ -9,14 +9,15 @@ from app.core.err import BizError, CommonErr
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.content.column_models import ColumnApplicationStatus
-from app.modules.content.columns_schemas import (
+from app.modules.content.columns.errors import ColumnErr
+from app.modules.content.columns.schemas import (
     ColumnApplicationCreate,
     ColumnApplicationInfo,
     ColumnApplicationReview,
     ColumnPostCreate,
     ColumnPostInfo,
 )
-from app.modules.content.columns_service import (
+from app.modules.content.columns.service import (
     create_application,
     create_post,
     get_application,
@@ -27,7 +28,6 @@ from app.modules.content.columns_service import (
     list_posts,
     review_application,
 )
-from app.modules.content.errors import ColumnErr
 
 # db 与 client fixture 均由 tests/conftest.py 提供（内存 sqlite 会话 + httpx.AsyncClient）
 
@@ -35,7 +35,7 @@ from app.modules.content.errors import ColumnErr
 async def _user(
     db: AsyncSession, username: str = "alice", email: str = "alice@example.com"
 ) -> int:
-    from app.db.models import Profile, User
+    from app.modules.auth.models import Profile, User
 
     user = User(
         username=username,
@@ -255,7 +255,7 @@ class TestColumnPosts:
 class TestColumnRoutes:
     async def _setup_user(self, db: AsyncSession) -> tuple[int, str]:
         """Create a user in DB and return (user_id, bearer_token)."""
-        from app.db.models import RolePermission
+        from app.modules.admin.models import RolePermission
 
         # RBAC 迁移后写操作需权限点：为 normal:member 授 columns.application_create，
         # 与生产 DEFAULT_GRANTS seed 一致，确保「本人可申请」类用例在权限校验下通过。

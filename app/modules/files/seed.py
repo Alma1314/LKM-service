@@ -14,9 +14,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.modules.auth.models  # noqa: F401
-from app.db.models import LibraryFile, Profile, User
 from app.db.session import new_session
-from app.modules.files.models import FileStatus
+from app.modules.auth.models import Profile, User
+from app.modules.files.models import FileStatus, LibraryFile
 
 # 种子文件归属的演示上传者用户名（避免依赖具体本地用户）
 _SEED_UPLOADER_USERNAME = "file_library_seed_uploader"

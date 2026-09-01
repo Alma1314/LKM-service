@@ -7,7 +7,7 @@ from typing import Any, cast
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.modules.common import ApiResp, PageData
+from app.core.common import ApiResp, PageData
 
 logger = logging.getLogger(__name__)
 

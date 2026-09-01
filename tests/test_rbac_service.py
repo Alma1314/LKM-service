@@ -1,6 +1,6 @@
 """user_has_permission：按复合角色在 role_permissions 表查权限。"""
 
-from app.db.models import RolePermission
+from app.modules.admin.models import RolePermission
 from app.modules.rbac.permissions import Permission
 from app.modules.rbac.service import role_has_permission
 from tests.conftest import DB

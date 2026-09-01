@@ -13,8 +13,12 @@ from app.core.cache import (
     collection_version,
     make_key,
 )
+from app.core.common import PageData, paginate_offset, paginate_pages
 from app.core.err import BizError
-from app.db.models import (
+from app.db.repo import get_or_raise
+from app.modules.auth.models import User
+from app.modules.content.errors import ContentErr
+from app.modules.content.models import (
     Board,
     Column,
     ContentComment,
@@ -22,11 +26,7 @@ from app.db.models import (
     ContentLike,
     ContentStatus,
     ContentType,
-    User,
 )
-from app.db.repo import get_or_raise
-from app.modules.common import PageData, paginate_offset, paginate_pages
-from app.modules.content.errors import ContentErr
 from app.modules.content.schemas import (
     ContentCommentCreate,
     ContentCommentInfo,
@@ -251,7 +251,7 @@ async def create_item(
         ContentType.BLOG_POST,
         ContentType.QA,
     ):
-        from app.modules.content.boards_service import check_post_allowed
+        from app.modules.content.boards.service import check_post_allowed
 
         await check_post_allowed(db, info.board_id, author_id)
 

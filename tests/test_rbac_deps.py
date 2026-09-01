@@ -3,8 +3,9 @@
 import pytest
 
 from app.core.err import BizError, CommonErr
-from app.db.models import ContentItem, RolePermission
+from app.modules.admin.models import RolePermission
 from app.modules.auth.deps import CurrentUser
+from app.modules.content.models import ContentItem
 from app.modules.rbac.permissions import DEFAULT_GRANTS, Permission
 from app.modules.rbac.service import check_owner
 from tests.conftest import DB

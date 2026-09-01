@@ -13,8 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import User
 from app.modules.auth.deps import get_email_provider, get_sms_provider
+from app.modules.auth.models import User
 from app.modules.auth.service_verify import (
     consume_email_code,
     consume_phone_code,

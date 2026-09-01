@@ -5,15 +5,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
-from app.db.models import Board, User
-from app.modules.content.boards_schemas import (
+from app.modules.auth.models import User
+from app.modules.content.boards.errors import BoardErr
+from app.modules.content.boards.schemas import (
     BanRequest,
     BoardApplicationCreate,
     BoardCreate,
     BoardUpdate,
     ReviewBoardApplicationRequest,
 )
-from app.modules.content.boards_service import (
+from app.modules.content.boards.service import (
     ban_user,
     check_post_allowed,
     create_board_ex,
@@ -25,13 +26,13 @@ from app.modules.content.boards_service import (
     unban_user,
     update_board_ex,
 )
-from app.modules.content.errors import BoardErr
+from app.modules.content.models import Board
 
 
 async def _user(
     db: AsyncSession, username: str = "alice", level: str = "normal"
 ) -> int:
-    from app.db.models import Profile
+    from app.modules.auth.models import Profile
     from app.modules.auth.security import hashpwd
 
     u = User(

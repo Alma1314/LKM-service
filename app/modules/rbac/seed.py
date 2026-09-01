@@ -12,11 +12,11 @@ import asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.modules.auth.models  # noqa: F401  （确保 User/Profile 等模型可见）
-from app.db.models import (  # noqa: F401  （随 auth.models 一起确保模型元数据可见）
-    Base,
+from app.db.base import Base  # noqa: F401  （随 auth.models 一起确保模型元数据可见）
+from app.db.session import new_session
+from app.modules.admin.models import (
     RolePermission,
 )
-from app.db.session import new_session
 from app.modules.rbac.permissions import DEFAULT_GRANTS
 
 

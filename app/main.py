@@ -6,14 +6,13 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 
-import strawberry
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
 from strawberry.fastapi import BaseContext, GraphQLRouter
-from strawberry.tools import merge_types
 
+from app.api.graphql import build_schema
 from app.api.router import api_router
 from app.core import amqp as _amqp
 from app.core import logging as logger
@@ -29,6 +28,7 @@ from app.db.session import (
 from app.db.session import (
     get_read_session as get_graphql_session,  # GraphQL 仅 Query(纯读)，避免空提交
 )
+from app.modules import registry
 from app.modules.auth.deps import CurrentUser, get_optional_user
 from app.modules.auth.service_passkey import cleanup_expired_challenges
 from app.ws.manager import manager
@@ -47,23 +47,6 @@ class GraphQLContext(BaseContext):
 
 
 request_logger = logging.getLogger("lkm.http")
-
-
-def _register_all_errors() -> None:
-    """错误码注册收敛：集中 import 各模块 errors 使 `register()` 副作用必达。
-    防止漏配错误码导致 map_err 转 500。新增模块的 ErrCode 必须在此登记。导入放函数内
-    （非模块顶层 `import app.x`），避免在 main 模块命名空间绑定 `app` 包名，与
-    模块级 `app = create_app()` 冲突。
-    """
-    import app.modules.articles.errors
-    import app.modules.auth.errors
-    import app.modules.blog.errors
-    import app.modules.content.errors  # 内容域统一错误码（Content/Board/Column/QA）
-    import app.modules.exam.errors
-    import app.modules.files.errors
-    import app.modules.points.errors
-    import app.modules.projects.errors
-    import app.modules.starhope.errors
 
 
 @asynccontextmanager
@@ -95,8 +78,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
 
 
 def create_app() -> FastAPI:
-    # 确保所有错误码已注册（防漏配导致 500）
-    _register_all_errors()
+    # 聚合装配：registry.load_all() 触发各模块错误码注册（防漏配导致 500）
+    registry.load_all()
 
     application = FastAPI(
         title=settings.app_name,
@@ -145,27 +128,7 @@ def create_app() -> FastAPI:
         # cur 可选（带 Bearer 则解析出 user_id，供关注流/时间线等按登录态个性化）。
         return GraphQLContext(db=db, user_id=cur.id if cur is not None else None)
 
-    from app.modules.articles.graphql import ArticlesQuery
-    from app.modules.blog.graphql import BlogQuery
-    from app.modules.content.columns_graphql import ColumnsQuery
-    from app.modules.content.graphql import ContentQuery
-    from app.modules.follow.graphql import FollowQuery
-    from app.modules.projects.graphql import ProjectsQuery
-    from app.modules.timeline.graphql import TimelineQuery
-
-    merged_query = merge_types(
-        "Query",
-        (
-            ContentQuery,
-            ArticlesQuery,
-            BlogQuery,
-            ColumnsQuery,
-            ProjectsQuery,
-            TimelineQuery,
-            FollowQuery,
-        ),
-    )
-    merged_schema = strawberry.Schema(query=merged_query)
+    merged_schema = build_schema()  # §7：registry 聚合全部模块 GraphQL Query
     graphql_router = GraphQLRouter(
         merged_schema,
         path="/graphql",

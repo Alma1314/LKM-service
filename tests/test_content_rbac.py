@@ -14,9 +14,12 @@ content 端点（/api/v1/content/items）与 content schema（discussion 发帖�
 from sqlalchemy import select
 
 from app.core.err import CommonErr
-from app.db.models import Board, Exam, ExamCertificate, Profile, RolePermission, User
+from app.modules.admin.models import RolePermission
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import create_access_token
-from app.modules.content.errors import BoardErr
+from app.modules.content.boards.errors import BoardErr
+from app.modules.content.models import Board
+from app.modules.exam.models import Exam, ExamCertificate
 from tests.conftest import DB, Client
 
 

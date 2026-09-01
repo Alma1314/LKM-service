@@ -6,14 +6,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr
-from app.db.models import (
+from app.db.base import now_iso
+from app.modules.starhope.errors import StarHopeErr
+from app.modules.starhope.models import (
     StarHopeAiAgent,
     StarHopeFolder,
     StarHopePracticeSession,
     StarHopeQuestion,
-    now_iso,
 )
-from app.modules.starhope.errors import StarHopeErr
 from app.modules.starhope.schemas import (
     StarHopeAgentIn,
     StarHopeAgentOut,

@@ -17,8 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.common import ApiResp
 from app.core.err import BizError, CommonErr, respond
-from app.db.models import User
 from app.db.repo import get_or_raise
 from app.db.session import get_session
 from app.modules.auth import service_2fa, service_auth
@@ -29,7 +29,7 @@ from app.modules.auth.deps import (
     get_sms_provider,
 )
 from app.modules.auth.errors import AuthErr
-from app.modules.auth.models import UserOAuth
+from app.modules.auth.models import User, UserOAuth
 from app.modules.auth.providers.base import EmailProvider, SmsProvider
 from app.modules.auth.schemas import (
     BindCodeRequestResponse,
@@ -46,7 +46,6 @@ from app.modules.auth.service_verify import (
     create_email_verification,
     create_phone_verification,
 )
-from app.modules.common import ApiResp
 
 router = APIRouter(prefix="/auth/settings", tags=["auth-settings"])
 

@@ -1,4 +1,16 @@
+from __future__ import annotations
+
+import datetime
 from enum import StrEnum
+from typing import TYPE_CHECKING
+
+from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.base import Base, UTCDateTime, now_iso
+
+if TYPE_CHECKING:
+    from app.modules.auth.models import User
 
 
 class FileStatus(StrEnum):
@@ -30,3 +42,35 @@ FILES_TABLE_PLAN = {
         "created_at",
     ],
 }
+
+
+class LibraryFile(Base):
+    __tablename__: str = "library_files"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    uploader_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    stored_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    # 内容寻址哈希（SHA3-256，16 进制 64 字符）
+    sha3_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 引用计数：同一物理文件被多少条目引用，归零时清理磁盘文件。DB 持久化，替代内存 cache。
+    ref_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # 物理文件落盘路径（内容寻址：``files_store_dir/<hash[:2]>/<hash>``）。同一内容条目共享同一
+    # ``storage_path``（不唯一），去重共享物理文件的关键；``stored_name`` 保持唯一作展示/定位。
+    storage_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    mime_type: Mapped[str] = mapped_column(
+        String(100), nullable=False, default="application/octet-stream"
+    )
+    size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    category_id: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    description: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    tags: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    review_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    view_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+
+    uploader: Mapped[User] = relationship(back_populates="uploaded_files")

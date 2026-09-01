@@ -3,18 +3,18 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.err import respond
-from app.db.models import ContentItem
-from app.db.session import get_session
-from app.modules.auth.deps import CurrentUser, get_current_user
-from app.modules.common import (
+from app.core.common import (
     ApiResp,
 )
+from app.core.err import respond
+from app.db.session import get_session
+from app.modules.auth.deps import CurrentUser, get_current_user
 
 # 内容域子路由：版块 / 专栏 / 问答 统一挂到 /content 前缀下（逐域子前缀）。
-from app.modules.content.boards_router import router as _boards_router
-from app.modules.content.columns_router import router as _columns_router
-from app.modules.content.qa_router import router as _qa_router
+from app.modules.content.boards.router import router as _boards_router
+from app.modules.content.columns.router import router as _columns_router
+from app.modules.content.models import ContentItem
+from app.modules.content.qa.router import router as _qa_router
 from app.modules.content.schemas import (
     ContentCommentCreate,
     ContentCommentInfo,

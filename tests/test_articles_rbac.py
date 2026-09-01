@@ -7,15 +7,11 @@
 - 删评论 → check_owner(ArticleComment.user_id) + article_owner_comment_delete
 """
 
-from app.db.models import (
-    Article,
-    ArticleComment,
-    Profile,
-    RolePermission,
-    User,
-)
+from app.modules.admin.models import RolePermission
+from app.modules.articles.models import Article, ArticleComment
 from app.modules.articles.schemas import CategoryCreate
 from app.modules.articles.service import create_category_ex
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import create_access_token
 from tests.conftest import DB, Client
 

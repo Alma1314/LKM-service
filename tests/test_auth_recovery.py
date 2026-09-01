@@ -9,9 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
-from app.db.models import Profile, User
 from app.modules.auth.errors import AuthErr
-from app.modules.auth.models import MagicLink, RefreshToken
+from app.modules.auth.models import MagicLink, Profile, RefreshToken, User
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -134,7 +133,7 @@ async def _create_magic_link(
     import datetime as dt
     import secrets
 
-    from app.db.models import now_iso as _now
+    from app.db.base import now_iso as _now
 
     raw = secrets.token_hex(32)
     token_hash = hashlib.sha256(raw.encode()).hexdigest()

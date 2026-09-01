@@ -74,7 +74,7 @@ def _service():
 
 async def _reg_local(db, username="alice", password="secret123456"):
     """用 ORM 直接造一个 local 用户（本文件不走 async 注册服务）。"""
-    from app.db.models import User
+    from app.modules.auth.models import User
 
     user = User(username=username, hashed_password=password, account_level="local")
     db.add(user)
@@ -86,7 +86,7 @@ async def _reg_normal(
     db, username="bob", email="bob@test.com", password="secret123456"
 ):
     """用 ORM 直接造一个带邮箱的 normal 用户。"""
-    from app.db.models import User
+    from app.modules.auth.models import User
 
     user = User(
         username=username,
@@ -442,7 +442,7 @@ class TestCompletePasskeyLogin:
 
     async def should_reject_local_user_passkey_login(self, db):
         """A local user with a passkey should be rejected at login (completed manually)."""
-        from app.db.models import User
+        from app.modules.auth.models import User
 
         await _reg_local(db, username="localuser")
         user = (

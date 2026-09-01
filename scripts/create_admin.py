@@ -11,9 +11,8 @@ import sys
 
 from sqlalchemy import select
 
-from app.db.models import Profile, User
 from app.db.session import dispose_engine, get_async_engine, new_session
-from app.modules.auth import models as _auth_models  # noqa: F401  预注册关联模型
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import hashpwd
 
 

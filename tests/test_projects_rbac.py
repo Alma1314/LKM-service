@@ -8,9 +8,11 @@ require_admin_2fa（危险操作 2FA，读 cookie），故审核用例需以 cre
 
 from sqlalchemy import select
 
-from app.db.models import Profile, ProjectApplication, RolePermission, User
 from app.modules.admin.deps import COOKIE_NAME, COOKIE_PATH, create_admin_access_token
+from app.modules.admin.models import RolePermission
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import create_access_token
+from app.modules.projects.models import ProjectApplication
 from tests.conftest import DB, Client
 
 

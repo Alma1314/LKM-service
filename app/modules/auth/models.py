@@ -15,10 +15,21 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.models import Base, UTCDateTime, now_iso
+from app.db.base import Base, UTCDateTime, now_iso
 
 if TYPE_CHECKING:
-    from app.db.models import User
+    # 跨模块字符串 relationship 目标类型（运行时由 registry 解析，仅类型注解用）
+    from app.modules.blog.models import BlogSeries
+    from app.modules.content.models import (
+        Column,
+        ColumnApplication,
+        ColumnPost,
+        ContentComment,
+        ContentItem,
+    )
+    from app.modules.exam.models import ExamAttempt, ExamCertificate
+    from app.modules.files.models import LibraryFile
+    from app.modules.follow.models import BoardFollow, UserFollow
 
 
 class RefreshToken(Base):
@@ -347,3 +358,83 @@ class OnboardingProgress(Base):
     updated_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
     )
+
+
+class User(Base):
+    __tablename__: str = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    email: Mapped[str | None] = mapped_column(String(200), unique=True, nullable=True)
+    hashed_password: Mapped[str] = mapped_column(Text, nullable=False)
+    phone: Mapped[str | None] = mapped_column(String(20), unique=True, nullable=True)
+    account_level: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="local"
+    )
+    is_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    locked_until: Mapped[datetime.datetime | None] = mapped_column(
+        UTCDateTime, nullable=True
+    )
+    failed_login_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
+    )
+
+    profile: Mapped[Profile] = relationship(
+        back_populates="user", uselist=False, cascade="all, delete-orphan"
+    )
+    column_applications: Mapped[list[ColumnApplication]] = relationship(
+        back_populates="user", foreign_keys="ColumnApplication.user_id"
+    )
+    owned_columns: Mapped[list[Column]] = relationship(back_populates="owner")
+    posts: Mapped[list[ColumnPost]] = relationship(back_populates="author")
+    refresh_tokens: Mapped[list[RefreshToken]] = relationship(back_populates="user")
+    oauth_bindings: Mapped[list[UserOAuth]] = relationship(back_populates="user")
+    totp: Mapped[TOTP | None] = relationship(back_populates="user", uselist=False)
+    recovery_codes: Mapped[list[RecoveryCode]] = relationship(back_populates="user")
+    passkey_credentials: Mapped[list[PasskeyCredential]] = relationship(
+        back_populates="user"
+    )
+    blog_series: Mapped[list[BlogSeries]] = relationship(back_populates="owner")
+    content_items: Mapped[list[ContentItem]] = relationship(
+        back_populates="author", foreign_keys="ContentItem.author_id"
+    )
+    content_comments: Mapped[list[ContentComment]] = relationship(back_populates="user")
+    uploaded_files: Mapped[list[LibraryFile]] = relationship(back_populates="uploader")
+    exam_attempts: Mapped[list[ExamAttempt]] = relationship(back_populates="user")
+    exam_certificates: Mapped[list[ExamCertificate]] = relationship(
+        back_populates="user"
+    )
+    following: Mapped[list[UserFollow]] = relationship(
+        back_populates="follower",
+        foreign_keys="UserFollow.follower_id",
+        cascade="all, delete-orphan",
+    )
+    followers: Mapped[list[UserFollow]] = relationship(
+        back_populates="following",
+        foreign_keys="UserFollow.following_id",
+        cascade="all, delete-orphan",
+    )
+    board_follows: Mapped[list[BoardFollow]] = relationship(
+        back_populates="follower",
+        foreign_keys="BoardFollow.follower_id",
+        cascade="all, delete-orphan",
+    )
+
+
+class Profile(Base):
+    __tablename__: str = "profiles"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    nickname: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    avatar: Mapped[str | None] = mapped_column(Text, nullable=True)
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default="member")
+    bio: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    user: Mapped[User] = relationship(back_populates="profile")

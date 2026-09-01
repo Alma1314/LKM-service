@@ -12,10 +12,9 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.err import BizError
-from app.db.models import User
 from app.db.repo import consume_once, get_or_raise, isolated_update
 from app.modules.auth.errors import AuthErr
-from app.modules.auth.models import TOTP, RecoveryCode, TempTokenUsage
+from app.modules.auth.models import TOTP, RecoveryCode, TempTokenUsage, User
 from app.modules.auth.security import (
     decode_temp_token,
     decrypt_secret,

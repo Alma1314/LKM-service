@@ -11,8 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import CommonErr
-from app.db.models import Profile, User
 from app.modules.auth.errors import AuthErr
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import create_access_token, hashpwd
 
 _KEY_RE = re.compile(r"^avatars/\d+/v\d+\.webp$")
@@ -28,7 +28,7 @@ async def db() -> AsyncGenerator[AsyncSession]:
     )
     from sqlalchemy.pool import StaticPool
 
-    from app.db.models import Base
+    from app.db.base import Base
     from app.db.session import get_read_session, get_session
     from app.main import app as fastapi_app
 

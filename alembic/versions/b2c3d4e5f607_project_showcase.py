@@ -8,11 +8,11 @@ Create Date: 2026-08-30 00:01:00
 background/goals/requirements/team_intro（长文本）及 recruiting_roles/tags/reports（JSON）。
 已有存量行用 server_default 兜底，保证 upgrade 不依赖代码。
 """
-from typing import Sequence
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 revision: str = 'b2c3d4e5f607'
 down_revision: str | Sequence[str] | None = 'a1b2c3d4e5f6'

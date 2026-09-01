@@ -12,8 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.modules.auth.models  # noqa: F401  注册 auth 表，避免 User mapper 引用的 RefreshToken 无法定位（同 files seed 范式）
-from app.db.models import Exam, ExamQuestion
 from app.db.session import new_session
+from app.modules.exam.models import Exam, ExamQuestion
 
 
 class _QuestionSpec(TypedDict):

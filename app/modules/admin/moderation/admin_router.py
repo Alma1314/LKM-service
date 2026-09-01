@@ -9,6 +9,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.common import ApiResp, ListData
 from app.core.err import respond
 from app.db.session import get_session
 from app.modules.admin.deps import require_admin, require_admin_2fa
@@ -22,7 +23,6 @@ from app.modules.admin.moderation.schemas import (
 )
 from app.modules.admin.permissions import require_permission
 from app.modules.auth.deps import CurrentUser
-from app.modules.common import ApiResp, ListData
 from app.modules.rbac.permissions import Permission
 
 router = APIRouter(prefix="/admin/moderation", tags=["admin-moderation"])

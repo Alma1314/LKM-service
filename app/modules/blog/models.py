@@ -1,4 +1,16 @@
+from __future__ import annotations
+
+import datetime
 from enum import StrEnum
+from typing import TYPE_CHECKING, Any
+
+from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.base import Base, UTCDateTime, now_iso
+
+if TYPE_CHECKING:
+    from app.modules.auth.models import User
 
 
 class BlogSeriesStatus(StrEnum):
@@ -51,3 +63,133 @@ BLOG_TABLE_PLAN = {
         "updated_at",
     ],
 }
+
+
+class BlogSeries(Base):
+    __tablename__: str = "blog_series"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cover_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    repo_name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    status: Mapped[BlogSeriesStatus] = mapped_column(
+        String(20), nullable=False, default=BlogSeriesStatus.ACTIVE
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
+    )
+
+    owner: Mapped[User] = relationship(back_populates="blog_series")
+    comments: Mapped[list[BlogComment]] = relationship(
+        back_populates="series", cascade="all, delete-orphan"
+    )
+    stars: Mapped[list[BlogStar]] = relationship(
+        back_populates="series", cascade="all, delete-orphan"
+    )
+    contents: Mapped[list[BlogContent]] = relationship(
+        back_populates="series", cascade="all, delete-orphan"
+    )
+
+
+class BlogStar(Base):
+    __tablename__: str = "blog_stars"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    series_id: Mapped[int] = mapped_column(
+        ForeignKey("blog_series.id"), primary_key=True
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+
+    user: Mapped[User] = relationship()
+    series: Mapped[BlogSeries] = relationship(back_populates="stars")
+
+
+class BlogComment(Base):
+    __tablename__: str = "blog_comments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    series_id: Mapped[int] = mapped_column(ForeignKey("blog_series.id"), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("blog_comments.id"), nullable=True
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
+    )
+
+    user: Mapped[User] = relationship()
+    series: Mapped[BlogSeries] = relationship(back_populates="comments")
+    parent: Mapped[BlogComment | None] = relationship(
+        remote_side=[id], back_populates="replies"
+    )
+    replies: Mapped[list[BlogComment]] = relationship(
+        back_populates="parent", cascade="all, delete-orphan"
+    )
+
+
+class BlogContent(Base):
+    """系列仓库内单个文件的正文（DB 为主存储）。
+
+    每 series 下每个 path 一行（UniqueConstraint(series_id, path)），保存当前内容。
+    git 裸仓库降级为版本快照层，文本内容的事实源在此表。``sha3`` 记录内容指纹，
+    供将来 git 快照经 ``git http-backend`` push 时做变更检测/懒回填。
+    """
+
+    __tablename__: str = "blog_content"
+    __table_args__: tuple[Any, ...] = (
+        UniqueConstraint("series_id", "path", name="uq_blog_content_series_path"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    series_id: Mapped[int] = mapped_column(
+        ForeignKey("blog_series.id"), nullable=False, index=True
+    )
+    path: Mapped[str] = mapped_column(String(500), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    sha3: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
+    )
+
+    series: Mapped[BlogSeries] = relationship()
+
+
+class BlogRepoQuarantine(Base):
+    """被周对账隔离的孤儿 git 仓库台账（隔离=仅入库不移动目录）。
+
+    repo_name 对应 ``<repo_name>.git``；src_dir 记录隔离前绝对路径便于恢复。
+    对账按 quarantined_at 年龄超阈值才物理删除目录。delete_series 正常删仓库时同步清行。
+    """
+
+    __tablename__: str = "blog_repo_quarantine"
+    __table_args__: tuple[Any, ...] = (
+        UniqueConstraint("repo_name", name="uq_blog_repo_quarantine_repo_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    repo_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    src_dir: Mapped[str] = mapped_column(String(500), nullable=False)
+    quarantined_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
+    )

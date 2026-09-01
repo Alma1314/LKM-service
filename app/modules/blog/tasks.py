@@ -1,14 +1,10 @@
-"""孤儿博客 git 仓库周对账：隔离/回收无 blog_series 记录的裸仓库。
+"""blog 模块队列任务：孤儿博客 git 仓库周对账。
 
-每周四 04:00 执行。Redis 锁防自相竞争，删前复查 blog_series 存在性防误删。
-隔离 = 仅入库(不移动目录)；超龄(quarantined_at > _QUARANTINE_DAYS 天)才物理删除。
+隔离/回收无 blog_series 记录的裸仓库。每周四 04:00 由 scheduler 发布 cron.reconcile
+到 jobs 队列，本任务消费执行（§6.2 注册）。
 
 任务无请求上下文，自建独立会话（模块级 ``_session_factory`` seam，测试可替换
-为 conftest 的内存会话）。
-
-会话关闭约定：任务只 commit/rollback，不 close。生产端 new_session 返回的会话交由
-GC/连接池回收（周任务频率极低，可接受）；测试注入的 conftest 会话由 conftest 自身
-teardown 关闭，任务若 close 会破坏测试内对绑定会话的后续断言。
+为 conftest 的内存会话）。Redis 锁防自相竞争，删前复查 blog_series 存在性防误删。
 """
 
 import asyncio
@@ -21,10 +17,16 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.redis import get_redis
-from app.db.models import BlogRepoQuarantine, BlogSeries
+from app.core.task_registry import register_cron_job, register_queue, register_task
 from app.db.session import new_session
+from app.modules.blog.models import BlogRepoQuarantine, BlogSeries
 
 logger = logging.getLogger(__name__)
+
+QUEUE = "lkm.jobs"  # jobs 队列（cron 发布），与 files 的 cron.cleanup 同队列
+ROUTING_KEYS = ["cron.reconcile"]
+
+register_queue(QUEUE, ROUTING_KEYS)
 
 _QUARANTINE_DAYS = 7  # 隔离保留天数，之后才物理删除
 _LOCK_KEY = "blog:reconcile:lock"
@@ -102,3 +104,12 @@ async def reconcile_blog_repos() -> None:
         redis = await get_redis()
         if redis is not None:
             await redis.delete(_LOCK_KEY)
+
+
+register_task(QUEUE, "reconcile_blog_repos", reconcile_blog_repos)
+register_cron_job(
+    job_id="reconcile_blog_repos",
+    cron="0 4 * * 4",  # 每周四 04:00
+    routing_key="cron.reconcile",
+    fn="reconcile_blog_repos",
+)

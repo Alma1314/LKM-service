@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.common import ApiResp, ListData
 from app.core.err import respond
 from app.db.session import get_session
 from app.modules.auth.deps import (
@@ -10,7 +11,6 @@ from app.modules.auth.deps import (
     get_current_user,
     get_optional_user,
 )
-from app.modules.common import ApiResp, ListData
 from app.modules.follow import service as follow_service
 from app.modules.follow.schemas import (
     FollowBoard,

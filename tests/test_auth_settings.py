@@ -14,9 +14,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr
-from app.db.models import User
 from app.modules.auth.deps import CurrentUser
 from app.modules.auth.errors import AuthErr
+from app.modules.auth.models import User
 from app.modules.auth.router_settings import BindEmailVerify, BindPhoneVerify
 from app.modules.auth.schemas import UnbindRequest
 
@@ -55,7 +55,7 @@ async def _reg_local(
 
 
 async def _get_user(db: AsyncSession, user_id: int) -> User:
-    from app.db.models import User
+    from app.modules.auth.models import User
 
     # 测试均为“先建后查”，必然命中，返回类型直接按 User 处理
     return cast(
@@ -253,7 +253,7 @@ class TestBindEmailUpgrade:
 
     async def should_not_downgrade_normal_user(self, db: AsyncSession):
         """Binding email to an already-normal user: should stay normal."""
-        from app.db.models import Profile, User
+        from app.modules.auth.models import Profile, User
 
         # Create an already-normal user
         user = User(
@@ -293,7 +293,7 @@ class TestGetSettings:
         return json.loads(response.body.decode())
 
     async def should_return_binding_state(self, db: AsyncSession):
-        from app.db.models import Profile, User
+        from app.modules.auth.models import Profile, User
 
         user = User(
             username="bindstate",
@@ -331,7 +331,7 @@ class TestUnbind:
     async def _reg_with_bindings(
         self, db: AsyncSession, email: str = "a@b.com", phone: str = "13800001111"
     ) -> User:
-        from app.db.models import Profile, User
+        from app.modules.auth.models import Profile, User
 
         user = User(
             username="unbind",
@@ -347,7 +347,7 @@ class TestUnbind:
         return user
 
     async def should_unbind_email_without_2fa(self, db: AsyncSession):
-        from app.db.models import User
+        from app.modules.auth.models import User
 
         user = await self._reg_with_bindings(db)
         from app.modules.auth.router_settings import unbind
@@ -366,7 +366,7 @@ class TestUnbind:
 
     async def should_reject_unbind_when_only_one_way_left(self, db: AsyncSession):
         # 只有 phone，没有 email/github → 解绑 email 会触发“保留一种”守卫（虽然 email 本来就空，走 phone 侧测试更贴）
-        from app.db.models import Profile, User
+        from app.modules.auth.models import Profile, User
 
         user = User(
             username="onlyphone",

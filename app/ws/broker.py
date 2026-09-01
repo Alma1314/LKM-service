@@ -1,7 +1,7 @@
 """事件发布侧：worker 进程把登记结果发布到 Redis pub/sub，供 API 进程转发给 WebSocket。
 
 通道命名约定集中在业务侧语义 —— ``ws:upload:<uploader_id>``（按用户订阅粒度）。
-worker（如 ``app.tasks.notify``）只 import 本模块的 ``publish_upload_bound`` 发布；
+worker（如 ``app.modules.files.tasks``）只 import 本模块的 ``publish_upload_bound`` 发布；
 不持有任何 WebSocket 连接（连接只存在于 API 进程的 ``manager``）。
 """
 

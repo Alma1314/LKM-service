@@ -8,16 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.err import BizError
-from app.db.models import (
-    Profile,
-    Project,
-    ProjectApplication,
-    ProjectMember,
-    User,
-    now_iso,
-)
+from app.db.base import now_iso
 from app.db.repo import get_or_raise
+from app.modules.auth.models import Profile, User
 from app.modules.projects.errors import ProjectErr
+from app.modules.projects.models import Project, ProjectApplication, ProjectMember
 from app.modules.projects.schemas import (
     ProjectApplicationCreate,
     ProjectApplicationOut,

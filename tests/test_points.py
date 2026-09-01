@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.err import BizError
-from app.db.models import Base, Profile, User
+from app.db.base import Base
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import hashpwd
 from app.modules.points.errors import PointsErr
 from app.modules.points.service import (

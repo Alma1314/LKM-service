@@ -18,8 +18,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Profile, User
 from app.modules.admin.moderation.engine import evaluate, load_active_rules
+from app.modules.auth.models import Profile, User
 from app.modules.follow import service as follow_service
 from app.modules.timeline import feed as feed_src
 from app.modules.timeline.schemas import FeedItem, FeedResponse

@@ -1,5 +1,5 @@
 from app.core.err import CommonErr
-from app.db.models import Profile, User
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import create_access_token, hashpwd
 
 

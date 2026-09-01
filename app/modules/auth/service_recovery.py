@@ -8,13 +8,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr
-from app.db.models import User, expires_at, now_iso
+from app.db.base import expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise
 from app.modules.auth import security
 from app.modules.auth.channels import CHANNELS, channel_for
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.limits import RECOVER_ADMIN_BEGIN_MAX, RECOVER_ADMIN_BEGIN_WINDOW
-from app.modules.auth.models import MagicLink, RecoveryTransaction, TempTokenUsage
+from app.modules.auth.models import MagicLink, RecoveryTransaction, TempTokenUsage, User
 from app.modules.auth.security import (
     create_temp_token,
     dummy_verify,

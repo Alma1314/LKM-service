@@ -4,7 +4,7 @@ from typing import Any
 from sqlalchemy import select
 
 from app.core import worker_dlq
-from app.db.models import DlqMessage
+from app.modules.admin.models import DlqMessage
 
 
 def test_make_model_maps_json_body() -> None:

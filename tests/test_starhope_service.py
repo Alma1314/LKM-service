@@ -4,9 +4,10 @@ import pytest
 from sqlalchemy import select
 
 from app.core.err import BizError
-from app.db.models import Profile, StarHopeQuestion, User
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import hashpwd
 from app.modules.starhope.errors import StarHopeErr
+from app.modules.starhope.models import StarHopeQuestion
 from app.modules.starhope.schemas import StarHopeTombstone
 from app.modules.starhope.service import pull_entity, push_entity
 

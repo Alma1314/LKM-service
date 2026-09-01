@@ -18,15 +18,11 @@ from app.core.cache import (
     make_key,
 )
 from app.core.err import BizError
-from app.db.models import (
-    Board,
-    BoardFollow,
-    Profile,
-    User,
-    UserFollow,
-    now_iso,
-)
+from app.db.base import now_iso
+from app.modules.auth.models import Profile, User
+from app.modules.content.models import Board
 from app.modules.follow.errors import FollowErr
+from app.modules.follow.models import BoardFollow, UserFollow
 
 
 def _following_key(user_id: int) -> str:

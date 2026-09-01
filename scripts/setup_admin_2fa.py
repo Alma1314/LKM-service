@@ -10,9 +10,9 @@ import sys
 
 from sqlalchemy import select
 
-from app.db.models import User
 from app.db.session import dispose_engine, get_async_engine, new_session
 from app.modules.auth import service_2fa
+from app.modules.auth.models import User
 from app.modules.auth.security import _totp_code, _totp_now
 
 

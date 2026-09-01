@@ -1,4 +1,4 @@
-"""幂等 seed：基础板块（含父/子层级，供论坛板块广场嵌套展示）。用法 python -m app.modules.content.boards_seed。"""
+"""幂等 seed：基础板块（含父/子层级，供论坛板块广场嵌套展示）。用法 python -m app.modules.content.boards.seed。"""
 
 import asyncio
 
@@ -6,8 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.modules.auth.models  # noqa: F401
-from app.db.models import Board
 from app.db.session import new_session
+from app.modules.content.models import Board
 
 # 父分类 → 子板块。parent_id 为空者为一级大类，子板块挂到对应父板块 slug。
 _BOARDS_SPEC = {

@@ -8,13 +8,15 @@ from app.core.cache import (
     cache_invalidate,
     make_key,
 )
+from app.core.common import ApiResp, ModuleStatus
 from app.core.err import BizError, CommonErr, respond
-from app.db.models import Board
 from app.db.session import get_session
 from app.modules.admin.deps import require_admin_2fa
 from app.modules.auth.deps import CurrentUser, get_current_user
-from app.modules.common import ApiResp, ModuleStatus
-from app.modules.content.boards_schemas import (
+from app.modules.content.boards.errors import (
+    BoardErr,  # noqa: F401  (副作用注册已由 main 统一)
+)
+from app.modules.content.boards.schemas import (
     BanRequest,
     BoardApplicationCreate,
     BoardApplicationOut,
@@ -23,7 +25,7 @@ from app.modules.content.boards_schemas import (
     BoardUpdate,
     ReviewBoardApplicationRequest,
 )
-from app.modules.content.boards_service import (
+from app.modules.content.boards.service import (
     ban_user,
     create_board_ex,
     get_board_ex,
@@ -32,9 +34,7 @@ from app.modules.content.boards_service import (
     unban_user,
     update_board_ex,
 )
-from app.modules.content.errors import (
-    BoardErr,  # noqa: F401  (副作用注册已由 main 统一)
-)
+from app.modules.content.models import Board
 from app.modules.rbac.deps import RequirePermission
 from app.modules.rbac.permissions import Permission, composible_role
 from app.modules.rbac.service import check_owner, role_has_permission

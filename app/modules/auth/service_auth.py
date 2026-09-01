@@ -16,7 +16,7 @@ from app.core import jobs
 from app.core.config import settings
 from app.core.err import BizError, CommonErr
 from app.core.throttle import check_password_login_rate_limit
-from app.db.models import Profile, User, expires_at, now_iso
+from app.db.base import expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise, isolated_update
 from app.modules.auth.channels import CHANNELS, channel_for
 from app.modules.auth.errors import AuthErr
@@ -25,7 +25,9 @@ from app.modules.auth.models import (
     AuditLog,
     MagicLink,
     PendingRegistration,
+    Profile,
     RefreshToken,
+    User,
 )
 from app.modules.auth.providers.base import EmailProvider
 from app.modules.auth.schemas import (

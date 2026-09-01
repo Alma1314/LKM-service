@@ -16,9 +16,10 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr
-from app.db.models import Exam, ExamCertificate, ExamQuestion, Profile, User
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.exam.errors import ExamErr
+from app.modules.exam.models import Exam, ExamCertificate, ExamQuestion
 from app.modules.exam.schemas import ExamCreate, QuestionCreate, SubmitAnswersRequest
 from app.modules.exam.service import (
     create_exam_ex,

@@ -6,11 +6,11 @@ Create Date: 2026-08-30 00:00:00
 
 给 QA 提问表加 category 列（help|volunteer），驱动前端 Help/Volunteer 两个 tab 分类。
 """
-from typing import Sequence
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 revision: str = 'a1b2c3d4e5f6'
 down_revision: str | Sequence[str] | None = '9d8da69dd4c2'

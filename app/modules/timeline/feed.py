@@ -22,16 +22,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import (
-    Article,
+from app.modules.articles.models import Article
+from app.modules.auth.models import User
+from app.modules.content.models import (
     ColumnPost,
     ColumnPostStatus,
     ContentItem,
     ContentStatus,
-    Project,
     QAQuestion,
-    User,
 )
+from app.modules.projects.models import Project
 from app.modules.timeline.schemas import FeedItem
 
 _PREVIEW_LEN = 150

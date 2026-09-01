@@ -15,8 +15,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.common import ApiResp
 from app.core.err import BizError, respond
-from app.db.models import User, expires_at, now_iso
+from app.db.base import expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise
 from app.db.session import get_session
 from app.modules.auth import security, service_2fa
@@ -26,7 +27,7 @@ from app.modules.auth.limits import (
     GLOBAL_VERIFY_MAX_PER_WINDOW,
     GLOBAL_VERIFY_WINDOW_SECONDS,
 )
-from app.modules.auth.models import SetupTransaction
+from app.modules.auth.models import SetupTransaction, User
 from app.modules.auth.schemas import (
     TOTPConfirmResponse,
     TOTPDisableRequest,
@@ -41,7 +42,6 @@ from app.modules.auth.schemas import (
 )
 from app.modules.auth.service_auth import issue_session_tokens
 from app.modules.auth.service_verify import check_code_rate_limit
-from app.modules.common import ApiResp
 
 router = APIRouter(prefix="/auth/2fa", tags=["auth-2fa"])
 

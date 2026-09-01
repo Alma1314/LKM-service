@@ -1,4 +1,5 @@
-from app.db.models import Board, ContentItem, ContentStatus, ContentType, User
+from app.modules.auth.models import User
+from app.modules.content.models import Board, ContentItem, ContentStatus, ContentType
 from app.modules.timeline import feed as feed_src
 
 

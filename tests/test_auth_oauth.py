@@ -197,8 +197,8 @@ class TestOAuthEmailAutoBind:
         from unittest.mock import AsyncMock, patch
 
         from app.core.err import BizError
-        from app.db.models import User
         from app.modules.auth.errors import AuthErr
+        from app.modules.auth.models import User
         from app.modules.auth.providers.github import GithubOAuth
         from app.modules.auth.providers.oauth import OAuthUserInfo
         from app.modules.auth.security import hashpwd

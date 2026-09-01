@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.err import BizError
 from app.core.redis_limiter import RedisRateLimiter
-from app.db.models import now_iso
+from app.db.base import now_iso
 from app.db.repo import consume_once, isolated_update
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import EmailVerification, PhoneVerification

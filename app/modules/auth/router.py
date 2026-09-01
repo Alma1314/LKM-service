@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import jobs
+from app.core.common import ApiResp
 from app.core.config import settings
 from app.core.err import BizError, CommonErr, respond
 from app.db.session import get_session
@@ -63,7 +64,6 @@ from app.modules.auth.service_auth import (
     store_pending_normal_registration,
 )
 from app.modules.auth.service_verify import check_code_rate_limit
-from app.modules.common import ApiResp
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

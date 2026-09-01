@@ -109,7 +109,8 @@ async def test_invokes_rbac_seed(monkeypatch) -> None:
     from sqlalchemy.pool import StaticPool
 
     import app.db.session as db_session
-    from app.db.models import Base, RolePermission
+    from app.db.base import Base
+    from app.modules.admin.models import RolePermission
     from app.modules.rbac.permissions import DEFAULT_GRANTS
 
     engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)

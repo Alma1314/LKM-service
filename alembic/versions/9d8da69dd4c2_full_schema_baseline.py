@@ -9,11 +9,11 @@ columns/content_items 等全部表）。取代先前零散增量迁移（content
 加 parent_id），作为单一入口，down_revision=None 即独立 base。由 autogenerate 从
 Base.metadata 生成，与模型定义一致。
 """
-from typing import Sequence
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '9d8da69dd4c2'

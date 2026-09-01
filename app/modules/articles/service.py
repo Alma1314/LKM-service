@@ -16,21 +16,22 @@ from app.core.cache import (
     collection_version,
     make_key,
 )
+from app.core.common import PageData, paginate_pages, tag_names_sequence
 from app.core.config import settings
 from app.core.err import BizError, CommonErr
-from app.db.models import (
+from app.db.base import now_iso
+from app.db.repo import get_or_raise, get_profiles_by_user_ids
+from app.modules.articles.errors import ArticleErr
+from app.modules.articles.models import (
     Article,
     ArticleComment,
     ArticleLike,
     ArticleTag,
     Tag,
-    now_iso,
 )
-from app.db.models import (
+from app.modules.articles.models import (
     ArticleCategory as ArticleCategoryORM,
 )
-from app.db.repo import get_or_raise, get_profiles_by_user_ids
-from app.modules.articles.errors import ArticleErr
 from app.modules.articles.schemas import (
     ArticleCategory,
     ArticleCommentOut,
@@ -42,7 +43,6 @@ from app.modules.articles.schemas import (
     CategoryOut,
 )
 from app.modules.auth.schemas import ProfileInfo
-from app.modules.common import PageData, paginate_pages, tag_names_sequence
 from app.modules.points.rules import enqueue_points_event
 
 # 默认阅读速度：中文约 300 字/分钟

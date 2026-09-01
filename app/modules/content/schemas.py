@@ -3,7 +3,7 @@ from typing import ClassVar, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.modules.common import parse_tags
+from app.core.common import parse_tags
 
 
 class ContentItemInfo(BaseModel):

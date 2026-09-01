@@ -67,6 +67,7 @@ dev = [
     "fakeredis>=2.22.0",
     "locust>=2.46.3",
     "moto>=5.0.0",
+    "import-linter>=2.0",
 ]
 
 [tool.ruff]
@@ -90,7 +91,7 @@ extend-immutable-calls = [
     "fastapi.Cookie", "fastapi.Body", "fastapi.Form", "fastapi.File",
     "app.modules.auth.deps.RequireLevel",
     "app.modules.rbac.deps.RequirePermission",
-    "app.modules.common.PaginateDep",
+    "app.core.common.PaginateDep",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -102,3 +103,55 @@ quote-style = "double"
 
 [tool.ty.environment]
 python-version = "3.13"
+
+# 架构边界门禁。
+# 允许依赖：modules/* → core/*（基础）、modules/A → modules/B（仅 B.__init__ 公共 API）、
+# api/main → modules（聚合层）。禁止：core/*→modules/*、db/*→modules/*。
+# 下发是"指令式理想边界"，对架构固有的注册/消费路径用 ignore_imports 精确豁免
+# （注册枢纽、worker 消费业务、调度的降级分支、共享 repo 辅助等），其余强制。
+[tool.importlinter]
+root_package = "app"
+
+[[tool.importlinter.contracts]]
+name = "边界: core 不依赖业务模块"
+type = "forbidden"
+source_modules = ["app.core"]
+forbidden_modules = ["app.modules"]
+# allow_indirect_imports=true：只检查**直接** core→modules import（杜绝新增业务直连），
+# 放行经桥接模块（db.model_registry/session 等在各自契约已豁免）的既有间接路径。
+allow_indirect_imports = "true"
+# 既定的跨切/注册耦合（见 P4-T3 审计），逐一精确允许，防止任意 core→modules：
+ignore_imports = [
+    "app.core.jobs -> app.modules.auth.channels",   # 发送降级同步分支
+    "app.core.jobs -> app.modules.auth.deps",       # 发送降级同步分支
+    "app.core.task_registry -> app.modules.auth.tasks",  # 任务注册枢纽
+    "app.core.task_registry -> app.modules.blog.tasks",  # 任务注册枢纽
+    "app.core.task_registry -> app.modules.files.tasks",  # 任务注册枢纽
+    "app.core.task_registry -> app.modules.points.tasks",  # 任务注册枢纽
+    "app.core.throttle -> app.modules.auth.errors",  # 限流复用账户锁定语义
+    "app.core.worker_dlq -> app.modules.admin.models",  # worker 消费业务模型(DlqMessage)
+]
+
+[[tool.importlinter.contracts]]
+name = "边界: db 层不反向依赖业务模块"
+type = "forbidden"
+source_modules = ["app.db"]
+forbidden_modules = ["app.modules"]
+# 模型注册枢纽 + 共享 repo/seed 辅助（见 P4-T3 审计）：
+ignore_imports = [
+    "app.db.init_db -> app.modules.rbac.seed",  # schema 就绪后种 RBAC 默认权限
+    "app.db.model_registry -> app.modules.admin.models",  # 模型预注册枢纽
+    "app.db.model_registry -> app.modules.articles.models",
+    "app.db.model_registry -> app.modules.auth.models",
+    "app.db.model_registry -> app.modules.blog.models",
+    "app.db.model_registry -> app.modules.exam.models",
+    "app.db.model_registry -> app.modules.files.models",
+    "app.db.model_registry -> app.modules.follow.models",
+    "app.db.model_registry -> app.modules.points.models",
+    "app.db.model_registry -> app.modules.projects.models",
+    "app.db.model_registry -> app.modules.starhope.models",
+    "app.db.repo -> app.modules.auth.models",  # 共享批量 Profile 查询
+    "app.db.repo -> app.modules.auth.schemas",  # ProfileInfo DTO
+    "app.db.session -> app.modules.auth.errors",  # 会话构造错误码
+]
+

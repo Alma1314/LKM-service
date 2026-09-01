@@ -7,17 +7,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
-from app.db.models import (
-    Board,
-    BoardApplication,
-    BoardBan,
-    Exam,
-    ExamCertificate,
-    User,
-    now_iso,
-)
+from app.db.base import now_iso
 from app.db.repo import get_or_raise
-from app.modules.content.boards_schemas import (
+from app.modules.auth.models import User
+from app.modules.content.boards.errors import BoardErr
+from app.modules.content.boards.schemas import (
     BanRequest,
     BoardApplicationCreate,
     BoardApplicationOut,
@@ -26,7 +20,12 @@ from app.modules.content.boards_schemas import (
     BoardUpdate,
     ReviewBoardApplicationRequest,
 )
-from app.modules.content.errors import BoardErr
+from app.modules.content.models import (
+    Board,
+    BoardApplication,
+    BoardBan,
+)
+from app.modules.exam.models import Exam, ExamCertificate
 
 
 def _board_to_schema(b: Board) -> BoardOut:
@@ -246,7 +245,7 @@ async def check_post_allowed(db: AsyncSession, board_id: int, user_id: int) -> N
         if passed is None:
             raise BizError(BoardErr.CERTIFICATION_REQUIRED)
     if board.daily_post_limit > 0:
-        from app.db.models import ContentItem, ContentType
+        from app.modules.content.models import ContentItem, ContentType
 
         today_start = now_iso().replace(hour=0, minute=0, second=0, microsecond=0)
         cnt = (

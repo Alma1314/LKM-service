@@ -4,7 +4,8 @@ from typing import Any
 from httpx import AsyncClient
 from sqlalchemy import select
 
-from app.db.models import Article, ArticleCategory, Profile, User
+from app.modules.articles.models import Article, ArticleCategory
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import create_access_token, hashpwd
 
 

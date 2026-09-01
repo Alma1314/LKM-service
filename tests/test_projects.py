@@ -7,15 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
-from app.db.models import (
-    Profile,
-    Project,
-    ProjectApplication,
-    ProjectMember,
-    User,
-)
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.projects.errors import ProjectErr
+from app.modules.projects.models import Project, ProjectApplication, ProjectMember
 from app.modules.projects.schemas import (
     ProjectApplicationCreate,
     ReviewProjectApplicationRequest,
@@ -388,7 +383,7 @@ class TestProjectRoute:
         assert resp.status_code == 403
 
         # normal 用户可提交（RBAC 需授 projects.application_create 权限点）
-        from app.db.models import RolePermission
+        from app.modules.admin.models import RolePermission
 
         db.add(
             RolePermission(

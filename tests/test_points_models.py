@@ -1,4 +1,9 @@
-from app.db.models import Achievement, ExchangeItem, UserBehaviorStat, UserTaskProgress
+from app.modules.points.models import (
+    Achievement,
+    ExchangeItem,
+    UserBehaviorStat,
+    UserTaskProgress,
+)
 
 
 def test_new_models_defined():

@@ -2,7 +2,7 @@ from typing import Any
 
 from httpx import AsyncClient
 
-from app.db.models import Board, ContentItem, ContentStatus, ContentType
+from app.modules.content.models import Board, ContentItem, ContentStatus, ContentType
 
 
 async def _run(client: AsyncClient, query: str, variables: dict[str, Any]) -> Any:

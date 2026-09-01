@@ -15,8 +15,8 @@ from sqlalchemy import select
 
 from app.core import amqp
 from app.core.worker import DLQ, DLX
-from app.db.models import DlqMessage
 from app.db.session import new_session
+from app.modules.admin.models import DlqMessage
 
 logger = logging.getLogger("lkm.worker_dlq")
 

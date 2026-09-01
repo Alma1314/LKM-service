@@ -12,10 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.err import BizError
-from app.db.models import User, expires_at, now_iso
+from app.db.base import expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise
 from app.modules.auth.errors import AuthErr
-from app.modules.auth.models import OAuthState, UserOAuth
+from app.modules.auth.models import OAuthState, User, UserOAuth
 from app.modules.auth.providers.github import GithubOAuth
 from app.modules.auth.providers.oauth import get_provider
 from app.modules.auth.service_auth import (

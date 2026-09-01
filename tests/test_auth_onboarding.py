@@ -32,7 +32,7 @@ def _unwrap(response: Any) -> dict[str, Any]:
 
 
 async def _make_user(db: AsyncSession, username: str = "onboarder") -> CurrentUser:
-    from app.db.models import Profile, User
+    from app.modules.auth.models import Profile, User
 
     user = User(
         username=username,

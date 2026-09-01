@@ -6,15 +6,11 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import (
-    ContentItem,
-    ContentType,
-    LibraryFile,
-    Profile,
-    RolePermission,
-    User,
-)
+from app.modules.admin.models import RolePermission
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import hashpwd
+from app.modules.content.models import ContentItem, ContentType
+from app.modules.files.models import LibraryFile
 from app.modules.rbac.permissions import Permission
 
 
@@ -135,9 +131,9 @@ async def _seed_stats(db: AsyncSession, n_users: int = 3) -> None:
     await _create_user(db, "root", account_level="admin")
     for i in range(n_users):
         await _create_user(db, f"u{i}", account_level="normal")
-    import app.db.models as _models
+    from app.modules.content.models import Board as _models
 
-    board = _models.Board(slug="stats", title="统计", description="", is_public=True)
+    board = _models(slug="stats", title="统计", description="", is_public=True)
     db.add(board)
     await db.flush()
     db.add(

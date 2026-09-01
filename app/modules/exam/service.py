@@ -9,17 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.err import BizError, CommonErr
-from app.db.models import (
+from app.db.base import now_iso
+from app.db.repo import get_or_raise
+from app.modules.auth.models import Profile, User
+from app.modules.exam.errors import ExamErr
+from app.modules.exam.models import (
     Exam,
     ExamAttempt,
     ExamCertificate,
     ExamQuestion,
-    Profile,
-    User,
-    now_iso,
 )
-from app.db.repo import get_or_raise
-from app.modules.exam.errors import ExamErr
 from app.modules.exam.schemas import (
     AttemptStartResp,
     CertificateOut,
@@ -308,7 +307,7 @@ async def _apply_unlock(db: AsyncSession, exam: Exam, user_id: int) -> None:
         return
     from sqlalchemy import update as sa_update
 
-    from app.db.models import User as U
+    from app.modules.auth.models import User as U
 
     current_level = await db.scalar(select(U.account_level).where(U.id == user_id))
     # 只单向提升（不降级）：目标等级/角色须严格高于当前值才会更新。

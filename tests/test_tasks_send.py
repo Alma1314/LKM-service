@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from app.tasks import send
+from app.modules.auth import tasks as send
 
 
 class _Fake:

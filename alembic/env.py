@@ -22,9 +22,10 @@ if config.config_file_name is not None:
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
 # Import all models so metadata is fully populated for autogenerate
-import app.modules.auth.models
-import app.modules.columns.models  # noqa: F401
-from app.db.models import Base
+from app.db.base import Base
+from app.db.model_registry import ensure_all_models
+
+ensure_all_models()
 
 target_metadata = Base.metadata
 

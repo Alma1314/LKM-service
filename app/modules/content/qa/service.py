@@ -12,19 +12,19 @@ from app.core.cache import (
     collection_version,
     make_key,
 )
+from app.core.common import PageData, paginate_offset, paginate_pages
 from app.core.err import BizError
-from app.db.models import (
+from app.db.repo import get_or_raise
+from app.modules.auth.models import User
+from app.modules.content.models import (
     Board,
     ContentItem,
     QAAnswer,
     QAQuestion,
     QAQuestionImage,
-    User,
 )
-from app.db.repo import get_or_raise
-from app.modules.common import PageData, paginate_offset, paginate_pages
-from app.modules.content.errors import QaErr
-from app.modules.content.qa_schemas import (
+from app.modules.content.qa.errors import QaErr
+from app.modules.content.qa.schemas import (
     AnswerCreate,
     AnswerOut,
     QuestionCreate,

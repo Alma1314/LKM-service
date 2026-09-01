@@ -9,9 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from strawberry.types.info import Info
 
 from app.core.err import BizError
-from app.db.models import ContentStatus
-from app.modules.content.boards_service import list_boards
+from app.modules.content.boards.service import list_boards
 from app.modules.content.errors import ContentErr
+from app.modules.content.models import ContentStatus
 from app.modules.content.schemas import ContentCommentInfo, ContentItemInfo
 from app.modules.content.service import (
     bump_item_view,

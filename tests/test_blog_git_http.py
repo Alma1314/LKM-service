@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import BlogContent, BlogSeries, User
+from app.modules.auth.models import User
 from app.modules.auth.security import hashpwd
 from app.modules.blog import backfill
 from app.modules.blog.git_http import (
@@ -23,6 +23,7 @@ from app.modules.blog.git_http import (
     _resolve_series_id,
     maybe_backfill_after_push,
 )
+from app.modules.blog.models import BlogContent, BlogSeries
 
 
 class TestDecodeBasicAuth:

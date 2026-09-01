@@ -82,12 +82,13 @@ async def _create_all() -> None:
 
     仅在 ``settings.use_alembic=False`` 时启用。多 worker 安全：create_all 对已存在的
     表是 no-op，无需 Redis 迁移锁。注意必须 import 所有模型模块，metadata 才会被填满；
-    auth 的表独立定义在其 models（未被 db/models import），故这里显式引入。
+    模型归位后由 ``model_registry.ensure_all_models`` 统一预注册各模块 models.py。
     """
-    import app.modules.auth.models  # noqa: F401  注册 auth 表（同 alembic/env.py 习惯）
-    from app.db.models import Base
+    from app.db.base import Base
+    from app.db.model_registry import ensure_all_models
     from app.db.session import get_async_engine
 
+    ensure_all_models()
     engine = get_async_engine()
     if engine is None:
         return

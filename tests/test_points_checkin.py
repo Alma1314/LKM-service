@@ -4,15 +4,15 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import (
+from app.modules.auth.models import User
+from app.modules.auth.security import hashpwd
+from app.modules.points.models import (
     Achievement,
     Task,
-    User,
     UserAchievement,
     UserBehaviorStat,
     UserTaskProgress,
 )
-from app.modules.auth.security import hashpwd
 from app.modules.points.service import do_checkin, get_balance
 
 

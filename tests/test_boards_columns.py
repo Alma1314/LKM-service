@@ -3,11 +3,11 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Board, Column
-from app.modules.content.boards_schemas import BoardCreate
-from app.modules.content.boards_service import create_board_ex
-from app.modules.content.columns_schemas import ColumnInfo
-from app.modules.content.columns_service import get_column
+from app.modules.content.boards.schemas import BoardCreate
+from app.modules.content.boards.service import create_board_ex
+from app.modules.content.columns.schemas import ColumnInfo
+from app.modules.content.columns.service import get_column
+from app.modules.content.models import Board, Column
 
 
 async def _board(db: AsyncSession, slug: str, title: str = "") -> int:
@@ -20,7 +20,7 @@ class TestColumnBoardRelation:
     async def should_attach_board_id_to_column(self, db: AsyncSession):
         board_id = await _board(db, "math", "数学")
         # 关联所属用户（满足 owner 非空 FK）
-        from app.db.models import Profile, User
+        from app.modules.auth.models import Profile, User
         from app.modules.auth.security import hashpwd
 
         u = User(
@@ -53,7 +53,7 @@ class TestColumnBoardRelation:
         # 只 seed physics 板块；computer 板块缺失，用于验证 board 缺失时兜底为 None
         await _board(db, "physics", "物理")
 
-        from app.modules.content.columns_seed import seed_columns
+        from app.modules.content.columns.seed import seed_columns
 
         seeded = await seed_columns(db)
 

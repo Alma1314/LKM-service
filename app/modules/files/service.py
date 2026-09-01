@@ -15,15 +15,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.common import PageData, paginate_offset, paginate_pages
 from app.core.config import settings
 from app.core.err import BizError
 from app.core.redis import get_redis
-from app.db.models import LibraryFile, User
 from app.db.repo import get_or_raise
 from app.modules.auth.deps import CurrentUser
-from app.modules.common import PageData, paginate_offset, paginate_pages
+from app.modules.auth.models import User
 from app.modules.files.errors import FileErr
-from app.modules.files.models import FILES_TABLE_PLAN, FileStatus
+from app.modules.files.models import FILES_TABLE_PLAN, FileStatus, LibraryFile
 from app.modules.files.schemas import (
     DownloadUrlInfo,
     FileCreate,

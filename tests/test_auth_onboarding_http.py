@@ -11,7 +11,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Profile, User
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import create_access_token
 
 

@@ -2,7 +2,7 @@
 
 from sqlalchemy import func, select
 
-from app.db.models import RolePermission
+from app.modules.admin.models import RolePermission
 from app.modules.rbac.permissions import DEFAULT_GRANTS
 from app.modules.rbac.seed import seed_rbac
 from tests.conftest import DB

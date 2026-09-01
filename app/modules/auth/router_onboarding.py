@@ -10,6 +10,7 @@ POST /auth/onboarding/skip             -> 整体跳过并视为完成
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.common import ApiResp
 from app.core.err import BizError, CommonErr, respond
 from app.db.session import get_session
 from app.modules.auth.deps import CurrentUser, get_current_user
@@ -19,7 +20,6 @@ from app.modules.auth.service_onboarding import (
     mark_onboarding_skipped,
     set_onboarding_step,
 )
-from app.modules.common import ApiResp
 
 router = APIRouter(prefix="/auth/onboarding", tags=["auth"])
 

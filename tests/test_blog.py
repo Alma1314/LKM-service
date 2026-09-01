@@ -55,7 +55,7 @@ def blog_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[str]:
 async def _user(
     db: AsyncSession, username: str = "alice", email: str = "alice@example.com"
 ) -> int:
-    from app.db.models import Profile, User
+    from app.modules.auth.models import Profile, User
 
     user = User(
         username=username,
@@ -232,7 +232,7 @@ class TestBlogSeries:
     async def should_clean_quarantine_on_delete(
         self, db: AsyncSession, blog_dir: str
     ) -> None:
-        from app.db.models import BlogRepoQuarantine
+        from app.modules.blog.models import BlogRepoQuarantine
 
         user_id = await _user(db)
         series = await _series(db, user_id=user_id)
@@ -1062,7 +1062,7 @@ class TestBlogContent:
     """DB 主存储下 blog_content 行的行为：upsert 幂等、版本递增、发布闭环。"""
 
     async def _get_row(self, db: AsyncSession, series_id: int, path: str) -> Any:
-        from app.db.models import BlogContent
+        from app.modules.blog.models import BlogContent
 
         return (
             (
@@ -1096,7 +1096,7 @@ class TestBlogContent:
         await write_series_file(db, series.id, user_id, "a.md", "v1")
         await write_series_file(db, series.id, user_id, "a.md", "v2")
 
-        from app.db.models import BlogContent
+        from app.modules.blog.models import BlogContent
 
         row = await self._get_row(db, series.id, "a.md")
         assert row is not None

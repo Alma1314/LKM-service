@@ -8,9 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.err import BizError
-from app.db.models import Profile, User
 from app.db.repo import get_or_raise
 from app.modules.auth.errors import AuthErr
+from app.modules.auth.models import Profile, User
 from app.modules.auth.schemas import ProfileInfo, ProfileUpdate
 from app.modules.storage.base import StorageBackend
 from app.modules.storage.errors import StorageErr

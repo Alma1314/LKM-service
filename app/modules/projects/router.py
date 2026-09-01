@@ -4,11 +4,11 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import bump_collection_version
+from app.core.common import ApiResp, ModuleStatus
 from app.core.err import BizError, CommonErr, respond
 from app.db.session import get_session
 from app.modules.admin.deps import require_admin_2fa
 from app.modules.auth.deps import CurrentUser
-from app.modules.common import ApiResp, ModuleStatus
 from app.modules.projects.schemas import (
     ProjectApplicationCreate,
     ProjectApplicationOut,

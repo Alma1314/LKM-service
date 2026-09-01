@@ -9,8 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.modules.auth.models  # noqa: F401  # type: ignore[reportUnusedImport]  注册全部 ORM 映射类（避免关系名无法解析）
-from app.db.models import Report
 from app.db.session import new_session
+from app.modules.admin.models import Report
 
 SEED_REPORTS: list[dict[str, str]] = [
     {

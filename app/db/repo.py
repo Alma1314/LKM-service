@@ -92,7 +92,7 @@ async def get_profiles_by_user_ids(
         return {}
     from sqlalchemy import select
 
-    from app.db.models import Profile
+    from app.modules.auth.models import Profile
 
     rows = (
         (await db.execute(select(Profile).where(Profile.user_id.in_(ids))))

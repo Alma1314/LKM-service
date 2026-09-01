@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import (
+from app.modules.points.models import (
     Achievement,
     Task,
     UserAchievement,

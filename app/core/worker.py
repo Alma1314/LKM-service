@@ -1,40 +1,28 @@
-"""RabbitMQ worker 配置与入口：拓扑声明 + 四队列消费者。
+"""RabbitMQ worker 配置与入口：注册表驱动的拓扑声明 + 通用消费者（计划 §6.2）。
 
-四个独立 worker 进程（send/notify/points/jobs）各自 consume 一个队列，
-保留故障隔离。业务队列配 x-dead-letter-exchange → 统一 DLQ，死信由
-worker_dlq 落库（见 scheduler/dlq 任务）。cron 由独立 APScheduler 进程
-发布 cron.* 消息到 DEFAULT_QUEUE 消费（run_default_worker 消费 cron key）。
+四个独立 worker 进程（send/notify/points/jobs）各自 consume 一个队列，保留故障隔离。
+业务队列配 x-dead-letter-exchange → 统一 DLQ，死信由 worker_dlq 落库。cron 由独立
+APScheduler 进程发布 cron.* 消息到 DEFAULT_QUEUE 消费（run_default_worker 消费 cron key）。
+
+任务归属由各模块 ``tasks.py`` 通过 ``task_registry.register_queue/register_task`` 声明；
+本模块加载时调用 ``task_registry.import_task_modules()`` 触发注册，随后拓扑声明与
+handler 分发都从注册表读取——**新增任务不再改本文件**。
 """
 
 import asyncio
 import json
 import logging
-from collections.abc import Callable
 from typing import Any
 
 import aio_pika
 
-from app.core import amqp
+from app.core import amqp, task_registry
 
 logger = logging.getLogger("lkm.worker")
 
 JOB_TIMEOUT_S = 120  # 单任务执行上限，超时→死信重投
 
-
-def _ensure_models() -> None:
-    """预注册全部 ORM 模型（同旧实现，防 worker 进程 SQLAlchemy mapper 缺失）。"""
-    import app.modules.auth.models
-    import app.modules.blog.models
-    import app.modules.content.column_models  # 预 import Column StrEnum 常量
-    import app.modules.files.models  # noqa: F401  # 副作用导入
-    from app.db.models import Base
-
-    Base.registry.configure()
-
-
-_ensure_models()
-
-# 拓扑常量
+# 队列/拓扑常量（稳定标识，供部署编排与测试引用）
 EXCHANGE = amqp.EXCHANGE  # lkm.events (topic)
 SEND_QUEUE = "lkm.send"
 NOTIFY_QUEUE = "lkm.notify"
@@ -43,7 +31,7 @@ DEFAULT_QUEUE = "lkm.jobs"
 DLX = "lkm.dlx"  # dead-letter exchange (fanout)
 DLQ = "lkm.dlq"  # 统一死信队列
 
-# routing key 常量（与 jobs.py 对齐）
+# routing key 常量（与 modules/*/tasks.py 的 ROUTING_KEYS 对齐，供发布侧引用）
 RKEY_SEND_CODE = "event.send_code"
 RKEY_SEND_MAGIC = "event.send_magic_link"
 RKEY_NOTIFY = "event.notify_upload"
@@ -52,8 +40,19 @@ RKEY_CLEANUP = "cron.cleanup"
 RKEY_RECONCILE = "cron.reconcile"
 
 
+def _ensure_models() -> None:
+    """预注册全部 ORM 模型（防 worker 进程 SQLAlchemy mapper 缺失）。"""
+    from app.db.model_registry import ensure_all_models
+
+    ensure_all_models()
+
+
+_ensure_models()
+task_registry.import_task_modules()
+
+
 async def _declare_topology(ch: Any) -> None:
-    """幂等声明：exchange + 四业务队列(含各自的 x-dead-letter) + DLX + DLQ。
+    """幂等声明：exchange + 各业务队列(含 x-dead-letter) + DLX + DLQ，均来自注册表。
 
     注意 DLX 用 **FANOUT**：Rabbit 死信会把消息以【原始 routing key】republish 到
     x-dead-letter-exchange。若 DLX 是 DIRECT 且有零绑定，死信因 unroutable 被静默丢弃，
@@ -64,12 +63,8 @@ async def _declare_topology(ch: Any) -> None:
     dlq = await ch.declare_queue(DLQ, durable=True)
     # 绑定 DLQ → DLX（fanout 忽略 key，"" 即通配全量）。缺这步死信会丢。
     await ch.bind_queue(dlq, DLX, "")
-    for qname, rks in (
-        (SEND_QUEUE, [RKEY_SEND_CODE, RKEY_SEND_MAGIC]),
-        (NOTIFY_QUEUE, [RKEY_NOTIFY]),
-        (POINTS_QUEUE, [RKEY_POINTS]),
-        (DEFAULT_QUEUE, [RKEY_CLEANUP, RKEY_RECONCILE]),
-    ):
+    # 业务队列与绑定由注册表驱动：queue -> routing keys
+    for qname, rks in task_registry.topology().items():
         q = await ch.declare_queue(
             qname,
             durable=True,
@@ -79,16 +74,13 @@ async def _declare_topology(ch: Any) -> None:
             await ch.bind_queue(q, EXCHANGE, rk)
 
 
-async def _consume(
-    queue_name: str,
-    handlers: dict[str, Callable[..., Any]],
-) -> None:
-    """消费指定队列，按 rk 分发 handler。任务执行包 120s 超时。
+async def _consume(queue_name: str) -> None:
+    """消费指定队列，按 payload.fn 从注册表分发 handler。任务执行包 120s 超时。
 
     handler 成功 → ack；异常/超时 → nack(requeue=False) → 死信 DLQ。
-    拓扑（exchange/四队列/DLX/DLQ/绑定）由 _declare_topology 统一幂等声明，此处只取句柄：
-    用不同 arguments 重声明同一队列会让 Rabbit 406 PRECONDITION_FAILED 关 channel。
+    拓扑由 _declare_topology 统一幂等声明；注销本队列的 handler 语义由注册表提供。
     """
+    handlers = task_registry.handlers_for(queue_name)
     ch = await amqp.get_amqp()
     if ch is None:
         logger.error("rabbitmq 未配置/不可用，block=%s 无法消费", queue_name)
@@ -129,37 +121,21 @@ async def _consume(
 
 
 # ---- 四个 run_*_worker 入口（worker_*.py 调用）----
+# 各 worker 仅需消费对应队列：handler 表与拓扑均由注册表提供。
 
 
 async def run_send_worker() -> None:
-    from app.tasks import send
-
-    await _consume(
-        SEND_QUEUE,
-        {"send_code": send.send_code, "send_magic_link": send.send_magic_link},
-    )
+    await _consume(SEND_QUEUE)
 
 
 async def run_notify_worker() -> None:
-    from app.tasks import notify
-
-    await _consume(NOTIFY_QUEUE, {"notify_upload": notify.notify_upload})
+    await _consume(NOTIFY_QUEUE)
 
 
 async def run_points_worker() -> None:
-    from app.tasks import points_worker as pw
-
-    await _consume(POINTS_QUEUE, {"apply_point_event": pw.apply_point_event})
+    await _consume(POINTS_QUEUE)
 
 
 async def run_default_worker() -> None:
     """jobs 队列 worker：消费 cron.cleanup / cron.reconcile（由调度进程发布）。"""
-    from app.tasks import cleanup, reconcile_blog_repos
-
-    await _consume(
-        DEFAULT_QUEUE,
-        {
-            "cleanup_expired_uploads": cleanup.cleanup_expired_uploads,
-            "reconcile_blog_repos": reconcile_blog_repos.reconcile_blog_repos,
-        },
-    )
+    await _consume(DEFAULT_QUEUE)

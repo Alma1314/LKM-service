@@ -32,10 +32,10 @@ from webauthn.helpers.structs import (
 
 from app.core.config import settings
 from app.core.err import BizError
-from app.db.models import User, expires_at, now_iso
+from app.db.base import expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise
 from app.modules.auth.errors import AuthErr
-from app.modules.auth.models import PasskeyChallenge, PasskeyCredential
+from app.modules.auth.models import PasskeyChallenge, PasskeyCredential, User
 
 _CHALLENGE_TTL_MINUTES = 5
 

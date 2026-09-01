@@ -14,9 +14,10 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.err import BizError, CommonErr
-from app.db.models import User, now_iso
+from app.db.base import now_iso
 from app.db.session import get_session
 from app.modules.auth.deps import CurrentUser  # 复用其字段契约
+from app.modules.auth.models import User
 
 COOKIE_NAME = "admin_session"
 REFRESH_NAME = "admin_refresh"

@@ -13,12 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.err import CommonErr, resp_json, respond
-from app.db.models import User, now_iso
+from app.db.base import now_iso
 from app.db.repo import consume_once, get_or_raise
 from app.db.session import get_session
 from app.modules.auth.deps import CurrentUser
 from app.modules.auth.errors import AuthErr
-from app.modules.auth.models import RefreshToken
+from app.modules.auth.models import RefreshToken, User
 from app.modules.auth.security import verifypwd
 from app.modules.auth.service_2fa import verify_user_totp
 from app.modules.auth.service_auth import generate_refresh_token, hash_refresh_token

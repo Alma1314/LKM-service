@@ -2,6 +2,13 @@
 
 不直接执行任务——只把触发作为普通消息发布，由 DEFAULT_QUEUE worker 消费。
 与消息系统解耦，Rabbit 不可用时发布 fail-open（日志+跳过），下次整点再触发。
+
+cron 任务清单由各模块 ``tasks.py`` 经 ``task_registry.register_cron_job`` 声明，
+本模块从注册表聚合构建调度器——**加 cron 任务不再改本文件**。
+
+*fn* 必须与对应模块 tasks.py 注册的 handler 键（register_task 的 fn）精确一致——
+否则 worker 按 fn 查表得 None 会当"未知任务"丢弃。注册表已免除两处的强耦合
+（fn/routing_key 都在同一条 register_cron_job 声明里成对给出）。
 """
 
 import logging
@@ -9,12 +16,9 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from app.core import amqp
+from app.core import amqp, task_registry
 
 logger = logging.getLogger("lkm.scheduler")
-
-RKEY_CLEANUP = "cron.cleanup"
-RKEY_RECONCILE = "cron.reconcile"
 
 
 async def _fire(routing_key: str, fn: str) -> None:
@@ -24,24 +28,18 @@ async def _fire(routing_key: str, fn: str) -> None:
 
 
 def build_scheduler() -> AsyncIOScheduler:
-    """构建含两个 cron job 的调度器（cleanup 每小时整点 / reconcile 每周四 04:00）。
+    """从 task_registry 聚合全部 cron 任务，构建调度器。
 
-    *fn* 必须与 worker.run_default_worker 的 handler 键精确一致：
-    ``cleanup_expired_uploads`` / ``reconcile_blog_repos``——否则 worker 按 fn 查表
-    得 None 会当"未知任务"丢弃，cron 永远不执行。故这里显式传 fn，不在调度器里
-    从 routing key 反推。
+    ``cron`` 为 crontab 表达式，经 CronTrigger.from_crontab 解析。
     """
+    task_registry.ensure_tasks_registered()
     s = AsyncIOScheduler()
-    s.add_job(
-        _fire,
-        CronTrigger(hour="*", minute=0),
-        kwargs={"routing_key": RKEY_CLEANUP, "fn": "cleanup_expired_uploads"},
-        id="cleanup_expired_uploads",
-    )
-    s.add_job(
-        _fire,
-        CronTrigger(day_of_week="thu", hour=4, minute=0),
-        kwargs={"routing_key": RKEY_RECONCILE, "fn": "reconcile_blog_repos"},
-        id="reconcile_blog_repos",
-    )
+    for job in task_registry.cron_jobs():
+        trigger = CronTrigger.from_crontab(job["cron"])
+        s.add_job(
+            _fire,
+            trigger,
+            kwargs={"routing_key": job["routing_key"], "fn": job["fn"]},
+            id=job["id"],
+        )
     return s

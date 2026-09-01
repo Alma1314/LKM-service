@@ -6,11 +6,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
-from app.db.models import QAQuestion, User
+from app.modules.auth.models import User
 from app.modules.auth.security import create_access_token
-from app.modules.content.errors import QaErr
-from app.modules.content.qa_schemas import AnswerCreate, QuestionCreate
-from app.modules.content.qa_service import (
+from app.modules.content.models import QAQuestion
+from app.modules.content.qa.errors import QaErr
+from app.modules.content.qa.schemas import AnswerCreate, QuestionCreate
+from app.modules.content.qa.service import (
     accept_answer,
     close_question,
     create_answer,
@@ -24,7 +25,7 @@ from app.modules.points.service import get_balance, reward
 async def _user(
     db: AsyncSession, username: str = "alice", level: str = "normal"
 ) -> int:
-    from app.db.models import Profile
+    from app.modules.auth.models import Profile
     from app.modules.auth.security import hashpwd
 
     u = User(
@@ -207,7 +208,7 @@ class TestQuestionForumSync:
     """QA 提问同步为论坛内容条目（content_items content_type='qa'）。"""
 
     async def test_create_question_syncs_content_item(self, db: AsyncSession) -> None:
-        from app.db.models import ContentItem
+        from app.modules.content.models import ContentItem
 
         asker = await _user(db, "syncasker")
         q = await create_question(

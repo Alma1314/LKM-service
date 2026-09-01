@@ -15,22 +15,21 @@ from app.core.cache import (
     collection_version,
     make_key,
 )
+from app.core.common import PageData, paginate_offset, paginate_pages
 from app.core.err import BizError
-from app.db.models import (
+from app.db.base import now_iso
+from app.modules.auth.models import Profile, User
+from app.modules.points.errors import PointsErr
+from app.modules.points.models import (
     Achievement,
     ExchangeItem,
     PointsLedger,
-    Profile,
     Task,
-    User,
     UserAchievement,
     UserBalance,
     UserBehaviorStat,
     UserTaskProgress,
-    now_iso,
 )
-from app.modules.common import PageData, paginate_offset, paginate_pages
-from app.modules.points.errors import PointsErr
 from app.modules.points.rules import RULE_DELTAS
 from app.modules.points.schemas import (
     AchievementOut,

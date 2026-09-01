@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import User
+from app.modules.auth.models import User
 from app.modules.auth.security import create_access_token
 from app.ws import broker as ws_broker
 from app.ws import router as ws_router

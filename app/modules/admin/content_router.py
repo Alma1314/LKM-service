@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.common import ApiResp, PageData, PaginateDep, PaginateParams
 from app.core.err import respond
 from app.db.session import get_session
 from app.modules.articles.service import (
@@ -23,7 +24,6 @@ from app.modules.blog.service import (
 from app.modules.blog.service import (
     delete_series as delete_blog_series_svc,
 )
-from app.modules.common import ApiResp, PageData, PaginateDep, PaginateParams
 from app.modules.content.schemas import ContentItemInfo
 from app.modules.content.service import (
     delete_item as delete_content_item_svc,

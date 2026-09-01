@@ -11,16 +11,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
-from app.db.models import (
+from app.modules.auth.models import Profile, User
+from app.modules.auth.security import create_access_token, hashpwd
+from app.modules.points.errors import PointsErr
+from app.modules.points.models import (
     Achievement,
     PointsLedger,
-    Profile,
-    User,
     UserAchievement,
     UserBalance,
 )
-from app.modules.auth.security import create_access_token, hashpwd
-from app.modules.points.errors import PointsErr
 from app.modules.points.schemas import (
     AchievementOut,
     ExchangeItemOut,

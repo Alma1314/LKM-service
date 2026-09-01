@@ -8,9 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import worker_dlq
-from app.db.models import DlqMessage
 from app.db.session import get_session
 from app.modules.admin.deps import require_admin
+from app.modules.admin.models import DlqMessage
 
 router = APIRouter(prefix="/admin/dlq", tags=["admin-dlq"])
 

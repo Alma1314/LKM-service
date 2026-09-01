@@ -12,10 +12,11 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import BlogContent, BlogSeries, now_iso
+from app.db.base import now_iso
 from app.db.repo import get_or_raise
 from app.modules.blog import git_svc
 from app.modules.blog.errors import BlogErr
+from app.modules.blog.models import BlogContent, BlogSeries
 
 
 @dataclass

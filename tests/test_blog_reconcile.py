@@ -4,9 +4,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select
 
-from app.db.models import BlogRepoQuarantine
 from app.modules.blog import git_svc
-from app.tasks import reconcile_blog_repos
+from app.modules.blog import tasks as reconcile_blog_repos
+from app.modules.blog.models import BlogRepoQuarantine
 
 
 @pytest.fixture
@@ -72,7 +72,7 @@ async def test_delete_quarantined_after_grace(db, repo_dir, inject_session):
 
 
 async def test_skip_when_series_exists(db, repo_dir, inject_session):
-    from app.db.models import BlogSeries
+    from app.modules.blog.models import BlogSeries
 
     _mk_repo(repo_dir, "live")
     db.add(BlogSeries(owner_id=1, title="t", repo_name="live"))

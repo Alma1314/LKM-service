@@ -22,12 +22,13 @@ from sqlalchemy.pool import StaticPool
 
 import app.modules.auth.models  # noqa: F401  副作用导入：注册 auth 表到 Base.metadata
 from app.core.err import BizError, CommonErr
-from app.db.models import Base, LibraryFile, Profile, User
+from app.db.base import Base
 from app.db.session import get_read_session, get_session
 from app.main import app as fastapi_app
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.files.errors import FileErr
-from app.modules.files.models import FileStatus
+from app.modules.files.models import FileStatus, LibraryFile
 from app.modules.files.schemas import DownloadUrlInfo, FileCreate, FileInfo
 from app.modules.files.service import (
     bump_download,
@@ -296,7 +297,7 @@ class TestFilesRoutes:
     ) -> tuple[int, str]:
         # RBAC 迁移后上传/下载需权限点：为 normal:member 授 files.upload/download，
         # 与生产 DEFAULT_GRANTS seed 一致（test_columns 迁移同款做法）。
-        from app.db.models import RolePermission
+        from app.modules.admin.models import RolePermission
 
         db.add(RolePermission(role_name="normal:member", permission="files.upload"))
         db.add(RolePermission(role_name="normal:member", permission="files.download"))
@@ -676,7 +677,7 @@ class TestFilesPhase2AEndpoints:
     # 端点需要登录 token；这里直接把 user/token 造好并给 client 用
     async def _authed(self, db: AsyncSession) -> tuple[int, str]:
         # 预览/下载端点需 files.download 权限点（test_columns 迁移同款做法）。
-        from app.db.models import RolePermission
+        from app.modules.admin.models import RolePermission
 
         db.add(RolePermission(role_name="normal:member", permission="files.download"))
         await db.flush()
@@ -859,7 +860,7 @@ class TestFilesPhase2BUploadInit:
 
     async def _authed(self, db: AsyncSession) -> tuple[int, str]:
         # upload-init/confirm 需 files.upload 权限点（test_columns 迁移同款做法）。
-        from app.db.models import RolePermission
+        from app.modules.admin.models import RolePermission
 
         db.add(RolePermission(role_name="normal:member", permission="files.upload"))
         await db.flush()

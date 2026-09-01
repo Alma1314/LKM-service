@@ -3,7 +3,7 @@
 import pytest
 from sqlalchemy import select
 
-from app.db.models import RolePermission
+from app.modules.admin.models import RolePermission
 from tests.conftest import DB
 
 

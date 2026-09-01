@@ -3,8 +3,7 @@
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.err import CommonErr, _wrap_result, resp_json
-from app.modules.common import (
+from app.core.common import (
     PageData,
     PaginateDep,
     PaginateParams,
@@ -13,6 +12,7 @@ from app.modules.common import (
     parse_tags,
     tag_names_sequence,
 )
+from app.core.err import CommonErr, _wrap_result, resp_json
 
 
 def test_parse_tags_list_passthrough() -> None:
@@ -47,8 +47,8 @@ async def test_get_profiles_by_user_ids_fills_none_for_missing(
     db: AsyncSession,
 ) -> None:
     """批量查询：已存在的 id 映射回 ProfileInfo，缺失 id 显式 None。"""
-    from app.db.models import Profile, User
     from app.db.repo import get_profiles_by_user_ids
+    from app.modules.auth.models import Profile, User
 
     u1 = User(
         username="prof1",

@@ -9,7 +9,7 @@
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Profile, User
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.follow import service as follow_service
 from app.modules.follow.service import (
@@ -41,8 +41,8 @@ def _hdr(u: User) -> dict[str, str]:
 
 
 async def _board(db: AsyncSession, slug: str) -> int:
-    from app.modules.content.boards_schemas import BoardCreate
-    from app.modules.content.boards_service import create_board_ex
+    from app.modules.content.boards.schemas import BoardCreate
+    from app.modules.content.boards.service import create_board_ex
 
     return (await create_board_ex(db, BoardCreate(slug=slug, title=slug), None)).id
 

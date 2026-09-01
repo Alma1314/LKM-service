@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_get, cache_set, make_key
 from app.core.err import BizError, CommonErr
-from app.db.models import RolePermission
+from app.modules.admin.models import RolePermission
 from app.modules.auth.deps import CurrentUser
 from app.modules.rbac.permissions import Permission, composible_role
 

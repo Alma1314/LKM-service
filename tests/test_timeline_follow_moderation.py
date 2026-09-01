@@ -12,21 +12,17 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import (
-    Article,
-    ArticleCategory,
-    ContentItem,
-    Profile,
-    User,
-    UserFollow,
-)
 from app.modules.admin.moderation import service as mod_service
 from app.modules.admin.moderation.engine import Rule, evaluate, load_active_rules
 from app.modules.admin.moderation.schemas import RuleCreate, RuleUpdate
+from app.modules.articles.models import Article, ArticleCategory
+from app.modules.auth.models import Profile, User
 from app.modules.auth.security import hashpwd
-from app.modules.content.boards_schemas import BoardCreate
-from app.modules.content.boards_service import create_board_ex
+from app.modules.content.boards.schemas import BoardCreate
+from app.modules.content.boards.service import create_board_ex
+from app.modules.content.models import ContentItem
 from app.modules.follow import service as follow_service
+from app.modules.follow.models import UserFollow
 from app.modules.timeline.service import get_timeline
 
 
