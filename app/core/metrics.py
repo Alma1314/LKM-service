@@ -12,7 +12,7 @@
 import logging
 
 from fastapi import FastAPI
-from prometheus_client import Counter
+from prometheus_client import Counter, Gauge
 
 from app.core.config import settings
 
@@ -27,12 +27,18 @@ post_created_total = Counter(
     "全内容产出：统一 content_items / 专栏原生发帖成功落库后 +1（label content_type）",
     ("content_type",),
 )
-# AMQP 实际投递失败（publish 抛错），供过渡期错误率看板；未配置 Rabbit（ch None）属
-# 缺省 fail-open 不计入。outbox_pending 等 outbox 积压项待 M1 relay 接线时接（M0 期无
-# outbox_events 表，不复刻占位 0 防假绿）。
+# AMQP 投递失败（publish 抛错 / 不可用），供过渡期错误率看板；未配置 Rabbit（ch None）
+# 属 fail-open 不计。由 amqp._publish 唯一计数：outbox relay 经同一 _publish 投递，其
+# 抛出路径已被此处捕获，relay 不再重复 inc（防同一异常 double-count）。
 notify_failed_total = Counter(
     "notify_failed_total",
-    "AMQP 投递失败次数（实际 publish 异常）",
+    "AMQP 投递失败次数（publish 抛错 / 不可用，unified at amqp._publish）",
+)
+# outbox 积压量：outbox relay 每轮 poll 结束后统计仍是 pending（含指数退避等待下一轮）的
+# 事件数 set 到此，供积压看板；未配置 Rabbit 时 relay 空转不调用，本 gauge 保持初始 0。
+outbox_pending_count = Gauge(
+    "outbox_pending_count",
+    "outbox_events 中 status=pending 的积压事件数（relay 每轮末尾上报）",
 )
 
 

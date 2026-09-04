@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import sqlalchemy as sa
+from prometheus_client import REGISTRY
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -202,5 +203,65 @@ async def test_relay_marks_failed_at_max_tries(fact, monkeypatch) -> None:
         row = (await db.execute(sa.select(OutboxMessage))).scalars().one()
         assert row.status == OUTBOX_FAILED
         assert row.attempt_count == MAX_TRIES
+    finally:
+        await db.close()
+
+
+def _pending_gauge() -> float:
+    """读 outbox_pending_count 现值；未 set 视为 0（series 未出现过时不抛错）。"""
+    val = REGISTRY.get_sample_value("outbox_pending_count")
+    return val if val is not None else 0.0
+
+
+async def test_relay_reports_zero_gauge_after_full_drain(fact, monkeypatch) -> None:
+    # 全部投递成功 → relay 末尾 gauge = 0（表无剩余 pending）：积压看板不误报。
+    async def _ok(_rk: str, _payload: dict) -> bool:
+        return True
+
+    monkeypatch.setattr(outbox_relay.amqp, "_publish", _ok)
+
+    await _seed_one(fact)
+    done = await outbox_relay.relay_poll(session_factory=fact)
+    assert done == 1
+    assert _pending_gauge() == 0
+
+
+async def test_relay_reports_backlog_when_event_remains_pending(
+    fact, monkeypatch
+) -> None:
+    # 持续失败（未达 MAX）→ 事件留 pending 待退避 → relay 末尾 gauge = 剩余积压件数。
+    async def _fail(_rk: str, _payload: dict) -> bool:
+        return False
+
+    monkeypatch.setattr(outbox_relay.amqp, "_publish", _fail)
+
+    await _seed_one(fact)
+    done = await outbox_relay.relay_poll(session_factory=fact)
+    assert done == 0
+    assert _pending_gauge() == 1
+
+
+async def test_relay_drops_backlogged_event_at_max_tries(fact, monkeypatch) -> None:
+    # 达 MAX 摘成 failed（不再 pending）→ 同批不再计入积压 gauge。
+    async def _fail(_rk: str, _payload: dict) -> bool:
+        return False
+
+    monkeypatch.setattr(outbox_relay.amqp, "_publish", _fail)
+
+    db = await fact()
+    m = OutboxMessage(
+        event_id="soon-failed",
+        routing_key=_RK,
+        payload_json=json.dumps(_PAYLOAD),
+        status=OUTBOX_PENDING,
+        attempt_count=MAX_TRIES - 1,
+    )
+    try:
+        db.add(m)
+        await db.commit()
+        await outbox_relay.relay_poll(session_factory=fact)
+        row = (await db.execute(sa.select(OutboxMessage))).scalars().one()
+        assert row.status == OUTBOX_FAILED
+        assert _pending_gauge() == 0
     finally:
         await db.close()

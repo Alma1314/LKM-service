@@ -16,11 +16,12 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import amqp
 from app.core.config import settings
+from app.core.metrics import outbox_pending_count
 from app.db.outbox import (
     _BACKOFF_CAP_S,
     MAX_TRIES,
@@ -48,6 +49,9 @@ async def relay_poll(
     - 失败/异常 → `attempt_count += 1`；达 `MAX_TRIES` 置 `failed`（不再投），否则指数退避
       `next_retry_at = now + 2**attempt s`（cap 1h）保持 pending 待下轮。
     - 每事件独立 flush/commit，单条失败不影响其余。
+    - 可观测（M0.5.2）：每轮末尾统计表内仍 `status=pending`（含退避等待下一轮）件数
+      set 到 `outbox_pending_count` gauge 供积压看板。投递失败计数不在此重复——提交经
+      `amqp._publish`，其抛出/不可用路径已由 amqp 层自身计 `notify_failed_total`。
     """
     factory = session_factory or new_session
     db = await factory()
@@ -101,6 +105,17 @@ async def relay_poll(
             logger.info("outbox relay 本轮成功 %s 条", succeeded)
         return succeeded
     finally:
+        # 积压 gauge：会话仍可分页前统计一遍仍 pending 的件数（含本轮退避、failed 摘除后的剩
+        # 余 pending）。统计失败仅记日志（gauge 保上次值），不扰动本应有的 relay 语义。
+        try:
+            pending_left = await db.scalar(
+                select(func.count())
+                .select_from(OutboxMessage)
+                .where(OutboxMessage.status == OUTBOX_PENDING)
+            )
+            outbox_pending_count.set(pending_left or 0)
+        except Exception:
+            logger.exception("outbox pending gauge 统计失败，保留上次值")
         await db.close()
 
 
