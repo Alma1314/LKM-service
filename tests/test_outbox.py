@@ -27,7 +27,6 @@ from app.db.event_processed import EventProcessed, already_processed, record_pro
 from app.db.model_registry import ensure_all_models
 from app.db.outbox import (
     MAX_TRIES,
-    OUTBOX_FAILED,
     OUTBOX_PENDING,
     OUTBOX_PUBLISHED,
     OutboxMessage,
@@ -183,13 +182,14 @@ async def test_relay_failure_backoff_then_recovery(fact, monkeypatch) -> None:
     assert row.attempt_count == 1  # 只投成功一次，无重复副作用
 
 
-async def test_relay_marks_failed_at_max_tries(fact, monkeypatch) -> None:
+async def test_relay_folds_to_event_failure_at_max_tries(fact, monkeypatch) -> None:
     async def _fail(_rk: str, _payload: dict) -> bool:
         return False
 
     monkeypatch.setattr(outbox_relay.amqp, "_publish", _fail)
 
-    # 预置 near-max（此刻即就绪）；一次失败后累到 MAX → failed 摘出，不再挤占后续轮
+    # 预置 near-max（此刻即就绪）；一次失败后累到 MAX → 折叠归档进 event_failures，
+    # 从 outbox_events 迁出（不再挤占后续轮 / pending 窗口 / 积压 gauge）。
     db = await fact()
     m = OutboxMessage(
         event_id="near-max",
@@ -201,15 +201,21 @@ async def test_relay_marks_failed_at_max_tries(fact, monkeypatch) -> None:
     try:
         db.add(m)
         await db.commit()
-        # 逐轮失败（拨回 next_retry 就地即可领），直到 reaching failed
+        # 逐轮失败（拨回 next_retry 就地即可领），直到 reaching max → fold
         for _ in range(2):
             row = (await db.execute(sa.select(OutboxMessage))).scalars().one()
             row.next_retry_at = datetime.now(UTC) - timedelta(seconds=1)
             await db.commit()
             await outbox_relay.relay_poll(session_factory=fact)
-        row = (await db.execute(sa.select(OutboxMessage))).scalars().one()
-        assert row.status == OUTBOX_FAILED
-        assert row.attempt_count == MAX_TRIES
+        # 原 outbox 行已迁出；归档表存一笔审计副本
+        outbox_left = (await db.execute(sa.select(OutboxMessage))).scalars().all()
+        assert outbox_left == []
+        from app.db.event_failure import EventFailure
+
+        ef = (await db.execute(sa.select(EventFailure))).scalars().one()
+        assert ef.event_id == "near-max"
+        assert ef.attempt_count == MAX_TRIES
+        assert "relay exhausted" in ef.reason
     finally:
         await db.close()
 
@@ -248,8 +254,8 @@ async def test_relay_reports_backlog_when_event_remains_pending(
     assert _pending_gauge() == 1
 
 
-async def test_relay_drops_backlogged_event_at_max_tries(fact, monkeypatch) -> None:
-    # 达 MAX 摘成 failed（不再 pending）→ 同批不再计入积压 gauge。
+async def test_relay_folds_backlogged_event_at_max_tries(fact, monkeypatch) -> None:
+    # 达 MAX fold 出 outbox（不再 pending）→ 同批不计入积压 gauge。
     async def _fail(_rk: str, _payload: dict) -> bool:
         return False
 
@@ -267,8 +273,11 @@ async def test_relay_drops_backlogged_event_at_max_tries(fact, monkeypatch) -> N
         db.add(m)
         await db.commit()
         await outbox_relay.relay_poll(session_factory=fact)
-        row = (await db.execute(sa.select(OutboxMessage))).scalars().one()
-        assert row.status == OUTBOX_FAILED
+        from app.db.event_failure import EventFailure
+
+        ef = (await db.execute(sa.select(EventFailure))).scalars().one()
+        assert ef.event_id == "soon-failed"
+        assert ef.attempt_count == MAX_TRIES
         assert _pending_gauge() == 0
     finally:
         await db.close()

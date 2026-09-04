@@ -28,10 +28,10 @@ from app.core import amqp
 from app.core import redis as redis_client
 from app.core.config import settings
 from app.core.metrics import outbox_pending_count
+from app.db.event_failure import EventFailure
 from app.db.outbox import (
     _BACKOFF_CAP_S,
     MAX_TRIES,
-    OUTBOX_FAILED,
     OUTBOX_PENDING,
     OUTBOX_PUBLISHED,
     OutboxMessage,
@@ -55,6 +55,11 @@ async def relay_poll(
     - 失败/异常 → `attempt_count += 1`；达 `MAX_TRIES` 置 `failed`（不再投），否则指数退避
       `next_retry_at = now + 2**attempt s`（cap 1h）保持 pending 待下轮。
     - 每事件独立 flush/commit，单条失败不影响其余。
+    - 多副本注（M1 gate review 收钝）：领取 `FOR UPDATE`（SQLite no-op、PG 生效）收窄
+      「同批 pending 被双 poller 各取走」窗；同刻唯一 poll 仍由 leader 租约(M1.2)保证。
+      因每事件独立 commit 周期放行锁，本锁非全串行兜底，最外正确性靠消费端 event_id 幂等
+      + handler 硬次级幂等(points ref 唯一 / notify GETDEL)；故不再叠加 claim-marker
+      （预留 locked_at/locked_by 列）。
     - 可观测（M0.5.2）：每轮末尾统计表内仍 `status=pending`（含退避等待下一轮）件数
       set 到 `outbox_pending_count` gauge 供积压看板。投递失败计数不在此重复——提交经
       `amqp._publish`，其抛出/不可用路径已由 amqp 层自身计 `notify_failed_total`。
@@ -74,6 +79,7 @@ async def relay_poll(
                     )
                     .order_by(OutboxMessage.attempt_count.asc(), OutboxMessage.id.asc())
                     .limit(batch)
+                    .with_for_update()
                 )
             )
             .scalars()
@@ -101,9 +107,18 @@ async def relay_poll(
 
             msg.attempt_count += 1
             if msg.attempt_count >= MAX_TRIES:
-                # 达上限不再投；status 摘成 failed，relay 不再扫（next_retry 已失去意义但须非空）
-                msg.status = OUTBOX_FAILED
-                msg.next_retry_at = datetime.now(UTC)
+                # 达上限不再投：把该行折叠归档（摘出 outbox，迁出事件失败表 audit），
+                # 不再滞留 pending/failed 挤占领取窗口与积压 gauge（M1 gate review 收口）。
+                db.add(
+                    EventFailure(
+                        event_id=msg.event_id,
+                        routing_key=msg.routing_key,
+                        payload_json=msg.payload_json,
+                        attempt_count=msg.attempt_count,
+                        reason="relay exhausted: max tries reached",
+                    )
+                )
+                await db.delete(msg)
             else:
                 # 指数退避（cap 1h）保持 pending 待下轮；幂等靠唯一 event_id，不重复入队
                 msg.next_retry_at = datetime.now(UTC) + timedelta(
