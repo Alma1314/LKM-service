@@ -84,6 +84,12 @@ class Settings(BaseSettings):
         ""  # 空串 = 未启用 RabbitMQ；非空走 amqp://[user:pass@]host[:port][/vhost]
     )
 
+    # outbox relay（app/core/outbox_relay.py run_outbox_loop）
+    outbox_relay_interval_s: float = 2.0  # relay 轮询周期（含 follower 重试等待间隔）
+    # Redis leader 租约 TTL：多副本部署下同一时刻仅持租约副本 poll；worker 失联后接管
+    # 延迟上界≈该 TTL。基值取「远大于单轮 poll 耗时 + 单 tick 周期」，防无故障抢主抖动。
+    outbox_leader_ttl_s: float = 60.0
+
     # MinIO/S3 对象事件回调共享令牌：空串 = 未启用（回调端点一律 401）。
     # 生产必须设置固定随机值，供桶通知 webhook 的 Authorization: Bearer 头校验。
     files_notify_token: str = ""

@@ -1,25 +1,31 @@
 """outbox relay：领取 pending 事件投递到消息总线并置 published（M1.1）。
 
-单 owner：relay 跑在单个独立进程（compose worker-outbox），本功能只作单进程串行 poller，
-无 Redis/DB 租约 —— 多副本接管属 M1.2。投递语义=`amqp._publish` 成功即 published（无
-broker publish-confirm，publisher-confirm 后续增强）。未配置 Rabbit → enqueue 已被
+多副本 leader 选举（M1.2）：`run_outbox_loop` 在 Redis 可用时，以租约键（SET NX EX）维护
+「同一时刻仅持租约副本 poll」，其余副本记录 `[follower] 不轮询` 并按周期重试；失联副本
+租约 TTL 到期即被接管、事件无缝续投。Redis 未启用（单 owner 开发）时退化为原始单进程
+串行 poller，与改动前一致。投递语义=`amqp._publish` 成功即 published（无 broker
+publish-confirm，publisher-confirm 后续增强）。未配置 Rabbit → enqueue 已被
 `app/db/outbox.enqueue_outbox` gate 掉不会入队，因此本 poll 也空转退出，与现有 worker
 "无 rabbit 降级空转返回" 一致。
 
 `relay_poll` 刻意收敛为**纯函数**（不启动任何循环/会话生命周期），单测经 monkeypatch /
-`new_session` seam 注入即可直接驱动。
+session_factory seam 注入即可直接驱动；租约判定只出现在 `run_outbox_loop` 运行层。
 """
 
 import asyncio
 import json
 import logging
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
+from redis import WatchError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import amqp
+from app.core import redis as redis_client
 from app.core.config import settings
 from app.core.metrics import outbox_pending_count
 from app.db.outbox import (
@@ -119,15 +125,128 @@ async def relay_poll(
         await db.close()
 
 
-async def run_outbox_loop(interval_s: float = 2.0) -> None:
-    """独立进程主循环：周期 poll outbox（未配置 rabbit 空转退出，语义同 worker）。"""
+# ---- λ leader 租约原语（M1.2，仿 cache.py make_key / _PING_TIMEOUT fail-open）----
+# 租约键采用 cache.py 的命名规范 `lkm:{env}:outbox:leader`，与其它 Redis 键共用 env 隔离。
+# 原语对命令异常一律 fail-open 返回「未取得/未续成」，由 run_outbox_loop 据此保守地不轮询
+# （宁可短暂积压也不多副本重复投），与限流器 fail 语义分场景定性一致。
+
+
+def _lease_key() -> str:
+    env = settings.env or "dev"
+    return f"lkm:{env}:outbox:leader"
+
+
+async def _acquire_lease(redis: Any, ttl_s: float) -> str | None:
+    """SET NX EX 抢占租约；成功返回 token，已占用/异常返回 None。"""
+    token = uuid.uuid4().hex
+    try:
+        ok = await redis.set(_lease_key(), token, nx=True, ex=int(ttl_s))
+        return token if ok else None
+    except Exception:
+        logger.exception("outbox leader 租约抢占失败，按未取得处理")
+        return None
+
+
+async def _renew_lease(redis: Any, token: str, ttl_s: float) -> bool:
+    """原子续约（值须仍为 token，防误续已让出而双活）；续不上/异常/WatchError→False。"""
+    try:
+        async with redis.pipeline(transaction=True) as pipe:
+            for _ in range(3):
+                try:
+                    await pipe.watch(_lease_key())
+                    if await pipe.get(_lease_key()) != token:
+                        await pipe.reset()
+                        return False  # 已让出/被接管：绝不续别人的租约
+                    pipe.multi()
+                    pipe.expire(_lease_key(), int(ttl_s))
+                    await pipe.execute()
+                    return True
+                except WatchError:
+                    await pipe.reset()  # 并发改写竞争，重试乐观锁
+    except Exception:
+        logger.exception("outbox leader 租约续约异常，按续约失败处理")
+    return False
+
+
+async def _release_lease(redis: Any, token: str) -> None:
+    """让出（仅当我们仍持 token 时删除）；异常忽略（TTL 兜底自清）。"""
+    try:
+        async with redis.pipeline(transaction=True) as pipe:
+            for _ in range(3):
+                try:
+                    await pipe.watch(_lease_key())
+                    if await pipe.get(_lease_key()) != token:
+                        await pipe.reset()
+                        return
+                    pipe.multi()
+                    pipe.delete(_lease_key())
+                    await pipe.execute()
+                    return
+                except WatchError:
+                    await pipe.reset()
+    except Exception:
+        logger.exception("outbox leader 租约释放异常，由 TTL 兜底")
+
+
+async def run_outbox_loop() -> None:
+    """独立进程主循环：周期 poll outbox（未配置 rabbit 空转退出，语义同 worker）。
+
+    - 未配置 Rabbit：空转退出（enqueue 已被 gate，无事件可 poll）。
+    - Redis 未启用/不可用（单 owner 开发）：直接串行 poll，等同改动前 M1.1 行为。
+    - Redis 可用：以租约维持 leader 权。每个 tick 先 reconcile：仍是 leader 则续约 poll；
+      已让出/未持有则尝试 NX 抢占——占不到说明被别的副本持有，记 `[follower] 不轮询`
+      并按 interval 重试，直到原 leader 失联 TTL 到期被接管为新 leader。失联接管延迟
+      上界 ≈`outbox_leader_ttl_s`。ttl(60s) 远大于 interval(2s)，故每 tick 续一次足额，
+      不会抖动抢主。
+    """
     if not settings.rabbit_url:
         logger.error("rabbitmq 不可用，outbox relay 空转退出")
         return
-    logger.info("outbox relay 启动（interval=%ss）", interval_s)
+    interval = settings.outbox_relay_interval_s
+    logger.info(
+        "outbox relay 启动（interval=%ss, leader_ttl=%ss）",
+        interval,
+        settings.outbox_leader_ttl_s,
+    )
+    token: str | None = None
     while True:
         try:
-            await relay_poll()
+            redis = await redis_client.get_redis()
+            if redis is None:
+                # 单 owner 开发态（未配 Redis）：无副本竞争，直接串行 poll，等同 M1.1。
+                token = None
+                try:
+                    await relay_poll()
+                except Exception:
+                    logger.exception("outbox relay_poll 异常，下轮重试")
+                await asyncio.sleep(interval)
+                continue
+
+            # 已是 leader → 续约；续不上（被接管/失联）回到未持有。
+            if token is not None:
+                if not await _renew_lease(redis, token, settings.outbox_leader_ttl_s):
+                    logger.info("租约续约失败/已让出，回到外层重抢")
+                    token = None
+                else:
+                    try:
+                        await relay_poll()
+                    except Exception:
+                        logger.exception("outbox relay_poll 异常，下轮重试")
+                    await asyncio.sleep(interval)
+                    continue
+
+            # 未持有 → 尝试抢占当选。
+            token = await _acquire_lease(redis, settings.outbox_leader_ttl_s)
+            if token is None:
+                logger.info("[follower] 不轮询, leader 由其它副本持有")
+                await asyncio.sleep(interval)
+                continue
+            logger.info("本副本当选 outbox relay leader")
+        except asyncio.CancelledError:
+            if token is not None:
+                r = await redis_client.get_redis()
+                if r is not None:
+                    await _release_lease(r, token)
+            raise
         except Exception:
-            logger.exception("outbox relay_poll 异常，下轮重试")
-        await asyncio.sleep(interval_s)
+            logger.exception("outbox relay 外层异常，重新进入领袖 reconcile")
