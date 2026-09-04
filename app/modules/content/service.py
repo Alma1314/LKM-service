@@ -303,7 +303,7 @@ async def create_item(
     await db.flush()
 
     # 积分事件（异步计分，不阻塞 200）
-    await enqueue_points_event(author_id, "post", f"item:{item.id}")
+    await enqueue_points_event(db, author_id, "post", f"item:{item.id}")
     await bump_collection_version("content")
 
     # M0.5.2 业务指标：本方法统一写 content_items（discussion/column_post/
@@ -357,7 +357,7 @@ async def like_item(db: AsyncSession, item_id: int, user_id: int) -> int:
     db.add(ContentLike(content_id=item_id, user_id=user_id))
     item.like_count += 1
     await db.flush()
-    await enqueue_points_event(user_id, "like", f"item:{item_id}")
+    await enqueue_points_event(db, user_id, "like", f"item:{item_id}")
     return item.like_count
 
 
@@ -474,7 +474,7 @@ async def create_comment(
     db.add(comment)
     item.comment_count += 1
     await db.flush()
-    await enqueue_points_event(user_id, "comment", f"comment:{comment.id}")
+    await enqueue_points_event(db, user_id, "comment", f"comment:{comment.id}")
 
     names = await _author_map(db, [comment.user_id])
     return _comment_to_schema(comment, names.get(comment.user_id, ""))
@@ -545,6 +545,6 @@ async def publish_blog_item(
     await db.flush()
     # M0.5.2：仅“新建”分支记入博客发布产出；同 slug 重发（上面 existing 更新早退）不复计。
     post_created_total.labels(ContentType.BLOG_POST).inc()
-    await enqueue_points_event(owner_id, "post", f"item:{item.id}")
+    await enqueue_points_event(db, owner_id, "post", f"item:{item.id}")
     await bump_collection_version("content")
     return item.id

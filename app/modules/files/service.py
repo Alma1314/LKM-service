@@ -460,7 +460,7 @@ async def review_file(
 
     # 仅审核通过时给归属者加分（f.status 已设为 target_status）
     if f.status == FileStatus.APPROVED:
-        await enqueue_points_event(f.uploader_id, "file_approved", f"file:{f.id}")
+        await enqueue_points_event(db, f.uploader_id, "file_approved", f"file:{f.id}")
 
     names = await _uploader_map(db, [f.uploader_id])
     return _file_to_schema(f, names.get(f.uploader_id, ""))

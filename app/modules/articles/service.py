@@ -349,7 +349,7 @@ async def toggle_article_like(
         await _bump_article_count(db, article.id, "likes", 1)
         liked = True
         # 仅新增点赞路径入队（取消点赞不重复计分）
-        await enqueue_points_event(user_id, "like", f"article:{article.id}")
+        await enqueue_points_event(db, user_id, "like", f"article:{article.id}")
     like_count = (
         await db.execute(
             select(func.count())

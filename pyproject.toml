@@ -145,6 +145,7 @@ ignore_imports = [
     "app.db.model_registry -> app.modules.articles.models",
     "app.db.model_registry -> app.modules.auth.models",
     "app.db.model_registry -> app.modules.blog.models",
+    "app.db.model_registry -> app.modules.content.models",
     "app.db.model_registry -> app.modules.exam.models",
     "app.db.model_registry -> app.modules.files.models",
     "app.db.model_registry -> app.modules.follow.models",

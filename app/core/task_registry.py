@@ -42,7 +42,9 @@ def register_cron_job(*, job_id: str, cron: str, routing_key: str, fn: str) -> N
             logger.warning("cron job %r 重复登记，覆盖", job_id)
             existing.update(id=job_id, cron=cron, routing_key=routing_key, fn=fn)
             return
-    _CRON_JOBS.append({"id": job_id, "cron": cron, "routing_key": routing_key, "fn": fn})
+    _CRON_JOBS.append(
+        {"id": job_id, "cron": cron, "routing_key": routing_key, "fn": fn}
+    )
 
 
 def cron_jobs() -> list[dict[str, Any]]:

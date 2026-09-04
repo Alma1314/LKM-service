@@ -1,5 +1,12 @@
 """积分规则表：事件类型 → 单次积分。事件属展示/计数 + 入账两用。"""
 
+from __future__ import annotations
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.jobs import RKEY_POINTS
+from app.db.outbox import enqueue_outbox
+
 # event → delta 奖励分（answer_accepted 不给分：QA 已按悬赏派发，见设计中说明）
 RULE_DELTAS: dict[str, int] = {
     "post": 10,
@@ -12,15 +19,14 @@ RULE_DELTAS: dict[str, int] = {
 }
 
 
-async def enqueue_points_event(user_id: int, event: str, ref_id: str) -> None:
-    """把用户行为事件入队给 points worker 异步入账（fire-and-forget，不阻塞主流程）。
+async def enqueue_points_event(
+    db: AsyncSession, user_id: int, event: str, ref_id: str
+) -> None:
+    """把用户行为事件排进 outbox（与业务同事务落库，relay 会投给 points worker 入账）。
 
-    Rabbit 不可用/入队失败静默 no-op（对齐 enqueue_upload_notify 的 fail-open 语义）：
-    事件侧可经确认/重建恢复，宁可丢弃也不阻塞业务动作的 200 时序。
+    未配置 Rabbit → outbox 门控直返（不落积压），维持 dev 下 fire-and-forget 的无害性；
+    配置生效后该事件关联业务自身 commit 一并持久，达「DB 成、事件必达」。
     """
-    from app.core import amqp
-    from app.core.jobs import RKEY_POINTS
-
-    await amqp._publish(
-        RKEY_POINTS, {"fn": "apply_point_event", "args": [user_id, event, ref_id]}
+    await enqueue_outbox(
+        db, RKEY_POINTS, {"fn": "apply_point_event", "args": [user_id, event, ref_id]}
     )

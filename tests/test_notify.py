@@ -69,7 +69,7 @@ class TestNotifyEndpoint:
         from app.modules.files import notify as notify_mod
 
         monkeypatch.setattr(settings, "files_notify_token", notify_token)
-        monkeypatch.setattr(notify_mod, "enqueue_upload_notify", _Recorder())
+        monkeypatch.setattr(notify_mod, "_enqueue_upload", _Recorder())
 
         resp = await client.post(
             "/api/v1/notify/object",
@@ -84,7 +84,7 @@ class TestNotifyEndpoint:
         from app.modules.files import notify as notify_mod
 
         monkeypatch.setattr(settings, "files_notify_token", notify_token)
-        monkeypatch.setattr(notify_mod, "enqueue_upload_notify", _Recorder())
+        monkeypatch.setattr(notify_mod, "_enqueue_upload", _Recorder())
 
         resp = await client.post(
             "/api/v1/notify/object",
@@ -100,7 +100,7 @@ class TestNotifyEndpoint:
         from app.modules.files import notify as notify_mod
 
         monkeypatch.setattr(settings, "files_notify_token", "")
-        monkeypatch.setattr(notify_mod, "enqueue_upload_notify", _Recorder())
+        monkeypatch.setattr(notify_mod, "_enqueue_upload", _Recorder())
 
         resp = await client.post(
             "/api/v1/notify/object",
@@ -117,7 +117,7 @@ class TestNotifyEndpoint:
 
         monkeypatch.setattr(settings, "files_notify_token", notify_token)
         recorder = _Recorder()
-        monkeypatch.setattr(notify_mod, "enqueue_upload_notify", recorder)
+        monkeypatch.setattr(notify_mod, "_enqueue_upload", recorder)
 
         resp = await client.post(
             "/api/v1/notify/object",
@@ -140,7 +140,7 @@ class TestNotifyEndpoint:
         monkeypatch.setattr(settings, "files_notify_token", notify_token)
         monkeypatch.setattr(settings, "s3_prefix", "files")
         recorder = _Recorder()
-        monkeypatch.setattr(notify_mod, "enqueue_upload_notify", recorder)
+        monkeypatch.setattr(notify_mod, "_enqueue_upload", recorder)
 
         resp = await client.post(
             "/api/v1/notify/object",
@@ -159,7 +159,7 @@ class TestNotifyEndpoint:
 
         monkeypatch.setattr(settings, "files_notify_token", notify_token)
         recorder = _Recorder()
-        monkeypatch.setattr(notify_mod, "enqueue_upload_notify", recorder)
+        monkeypatch.setattr(notify_mod, "_enqueue_upload", recorder)
 
         resp = await client.post(
             "/api/v1/notify/object",
@@ -178,7 +178,7 @@ class TestNotifyEndpoint:
 
         monkeypatch.setattr(settings, "files_notify_token", notify_token)
         recorder = _Recorder()
-        monkeypatch.setattr(notify_mod, "enqueue_upload_notify", recorder)
+        monkeypatch.setattr(notify_mod, "_enqueue_upload", recorder)
 
         resp = await client.post(
             "/api/v1/notify/object",

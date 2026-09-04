@@ -42,7 +42,9 @@ async def _degraded_send(coro_factory: Any, *, kind: str) -> None:
 
 
 async def send_code(channel_key: str, contact: str, code: str) -> None:
-    if await _enqueue("send_code", channel_key, contact, code, routing_key=RKEY_SEND_CODE):
+    if await _enqueue(
+        "send_code", channel_key, contact, code, routing_key=RKEY_SEND_CODE
+    ):
         return
     from app.modules.auth.channels import CHANNELS
 

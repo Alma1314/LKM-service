@@ -95,7 +95,11 @@ async def _consume(queue_name: str) -> None:
                 try:
                     payload = json.loads(msg.body)
                 except (json.JSONDecodeError, UnicodeDecodeError):
-                    logger.warning("队列入队消息非法 JSON, 丢弃 queue=%s body=%r", queue_name, msg.body)
+                    logger.warning(
+                        "队列入队消息非法 JSON, 丢弃 queue=%s body=%r",
+                        queue_name,
+                        msg.body,
+                    )
                     return  # ack 丢弃坏消息, 避免死信风暴
                 fn = payload.get("fn")
                 args = payload.get("args", [])

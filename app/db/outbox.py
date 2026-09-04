@@ -1,0 +1,111 @@
+"""事务发件箱(outbox)模型与入队辅助（M1.1）。
+
+业务把"想可靠投递到消息总线的异步事件"与自身写入放同一事务（将行加入当前会话 commit），
+relay（`app/core/outbox_relay.py`）另行新会话领取并投 RabbitMQ(`lkm.events`)后改
+`published`，达成「DB 成、事件必达」的一致性。仅当 ``settings.rabbit_url`` 非空（生产/有
+broker）才入队；未配置(dev/测试)直返 False，维持既有 fail-open 语义、不留积压。
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import uuid
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import Index, Integer, String, Text, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.core.config import settings
+from app.db.base import Base, UTCDateTime, now_iso
+
+logger = logging.getLogger(__name__)
+
+# outbox 状态机：入队即 pending → relay 投成功置 published；达上限摘出置 failed
+OUTBOX_PENDING = "pending"
+OUTBOX_PUBLISHED = "published"
+OUTBOX_FAILED = "failed"
+
+# 单事件最多尝试次数（达上限不再投，防无限重试污染总线）；指数退避秒(cap)
+MAX_TRIES = 5
+_BACKOFF_CAP_S = 3600
+
+
+class OutboxMessage(Base):
+    """待投递事件。payload 与业务同事务落库，relay 按 routing_key 投总线后置 published。"""
+
+    __tablename__: str = "outbox_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # 幂等键：投递去重/防重复副作用以此全局 UUID 为准
+    event_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    # 逻辑主题 = 现有 topic exchange routing_key（event.apply_point/…），relay 按它 publish
+    routing_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    # 携带 {fn,args,…} 完整 dict（worker 按 payload["fn"] 分派）；Text+json 跨 sqlite/PG
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=OUTBOX_PENDING, index=True
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    next_retry_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, nullable=False, default=now_iso
+    )
+    published_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime, nullable=True, default=None
+    )
+    # 供 M1.2 leader 摄取时置锁；M1.1 relay 单 owner 不 set，仅立列
+    locked_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime, nullable=True, default=None
+    )
+    locked_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    __table_args__: tuple = (Index("ix_outbox_scan", "status", "next_retry_at"),)
+
+
+def _backoff_seconds(attempt: int) -> int:
+    """第 attempt 次失败后到下次重试的秒数（指数、封顶 1h）。"""
+    return min(2 ** int(attempt), _BACKOFF_CAP_S)
+
+
+async def enqueue_outbox(
+    db: AsyncSession,
+    routing_key: str,
+    payload: dict[str, Any],
+    *,
+    event_id: str | None = None,
+) -> bool:
+    """把一次将投递事件加入当前事务（不 commit；由业务会话统一提交/回滚）。
+
+    - 未配置 Rabbit（settings.rabbit_url 空）→ 直接 False：维持 fail-open，dev/测试不产生积压。
+    - 提供显式 event_id 幂等：若该 id 已存在且仍 pending/published → 视为重复并跳过（不重复入队）。
+      失败(failed)项允许以新的投递在后续业务调用再入队。
+    - payload 须为 worker 可直接分派的完整 dict（含 "fn"/"args"）。
+
+    返回 True=本次已 join 进事务待提交；False=被 gate 跳过或幂等已存在。
+    """
+    if not settings.rabbit_url:
+        return False
+
+    eid = event_id or uuid.uuid4().hex
+    if event_id is not None:
+        dup = await db.scalar(
+            select(OutboxMessage.id).where(
+                OutboxMessage.event_id == event_id,
+                OutboxMessage.status.in_([OUTBOX_PENDING, OUTBOX_PUBLISHED]),
+            )
+        )
+        if dup is not None:
+            return False
+
+    row = OutboxMessage(
+        event_id=eid,
+        routing_key=routing_key,
+        payload_json=json.dumps(payload, ensure_ascii=False),
+    )
+    db.add(row)
+    return True

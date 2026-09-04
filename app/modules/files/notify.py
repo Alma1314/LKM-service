@@ -12,6 +12,7 @@
 """
 
 import json
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -19,7 +20,11 @@ from fastapi import Header as FastAPIHeader
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
-from app.core.jobs import enqueue_upload_notify
+from app.core.jobs import RKEY_NOTIFY
+from app.db.outbox import enqueue_outbox
+from app.db.session import new_session
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/notify", tags=["notify"])
 
@@ -84,6 +89,26 @@ def _extract_uploads(payload: Any) -> list[str]:
     return uploads
 
 
+async def _enqueue_upload(upload_id: str) -> None:
+    """把一个直传登记事件写入 outbox（独立事务提交给 relay；无 broker 时门控跳过）。
+
+    webhook 回调本身无业务事务，故自建会话把该 upload 的投递期望落库；relay 推给
+    notify worker 登记。注册语义保持原 fire-and-forget：入队异常不影响回执(打日志)。
+    """
+    if not settings.rabbit_url:
+        return  # dev/无 broker：outbox 门控等价直发被跳过，不落积压不影响回执
+    db = await new_session()
+    try:
+        await enqueue_outbox(
+            db, RKEY_NOTIFY, {"fn": "notify_upload", "args": [upload_id]}
+        )
+        await db.commit()
+    except Exception:
+        logger.exception("outbox notify_enqueue 失败 upload_id=%s", upload_id)
+    finally:
+        await db.close()
+
+
 @router.post("/object")
 async def notify_object(
     request: Request,
@@ -105,6 +130,6 @@ async def notify_object(
     for key in uploads:
         upload_id = key[len(_UP_PREFIX) :]
         # fire-and-forget：入队失败不影响回执（worker 侧可重投/恢复）
-        await enqueue_upload_notify(upload_id)
+        await _enqueue_upload(upload_id)
 
     return JSONResponse(status_code=200, content={"code": 0, "msg": "OK", "data": None})

@@ -1,4 +1,5 @@
 """考试与竞赛子系统（认证考试 + 正式竞赛）模型与错误码。模块公共 API——跨模块 import 的唯一合法入口。"""
+
 from __future__ import annotations
 
 from typing import Any

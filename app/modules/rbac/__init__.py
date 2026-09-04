@@ -2,6 +2,7 @@
 
 仅供依赖注入框架使用，不挂载任何路由/GraphQL，故不暴露 ROUTERS/GRAPHQL。
 """
+
 from __future__ import annotations
 
 from typing import Any

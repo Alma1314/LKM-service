@@ -1,4 +1,5 @@
 """时间线模块：read-time 合流 + 关注过滤 + 审校降权。模块公共 API——跨模块 import 的唯一合法入口。"""
+
 from __future__ import annotations
 
 from typing import Any

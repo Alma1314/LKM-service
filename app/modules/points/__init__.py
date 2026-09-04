@@ -1,4 +1,5 @@
 """积分系统：balance + ledger 账本，reward/spend/transfer 原子原语，排行榜。模块公共 API——跨模块 import 的唯一合法入口。"""
+
 from __future__ import annotations
 
 from typing import Any

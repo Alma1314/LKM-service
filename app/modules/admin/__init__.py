@@ -5,6 +5,7 @@
 
 模块公共 API——跨模块 import 的唯一合法入口。所有 router 均惰性 import。
 """
+
 from __future__ import annotations
 
 from typing import Any

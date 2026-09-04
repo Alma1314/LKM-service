@@ -281,7 +281,7 @@ async def submit_attempt(
         certificate_id = cert.id
         await _apply_unlock(db, exam, user_id)
         # 认证通过事件入队（竞赛计分）
-        await enqueue_points_event(user_id, "competition", f"cert:{certificate_id}")
+        await enqueue_points_event(db, user_id, "competition", f"cert:{certificate_id}")
 
     return SubmitResult(
         attempt_id=attempt.id,

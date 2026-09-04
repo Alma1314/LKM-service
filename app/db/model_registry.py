@@ -20,6 +20,7 @@ def ensure_all_models() -> None:
     副作用：import 所有业务模块的 models.py（经各模块包级导入），使 metadata 填满、
     relationship 字符串引用得以解析。随后 configure() 锁定配置。
     """
+    import app.db.outbox  # 共享基础设施表(outbox_events)，非业务模块性质
     import app.modules.admin.models
     import app.modules.articles.models
     import app.modules.auth.models

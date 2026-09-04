@@ -285,7 +285,7 @@ async def accept_answer(
     q.accepted_answer_id = a.id
     await db.flush()
     # 采纳回答事件入队（仅计数，QA 已按悬赏派发，不加分）
-    await enqueue_points_event(a.author_id, "answer_accepted", f"answer:{a.id}")
+    await enqueue_points_event(db, a.author_id, "answer_accepted", f"answer:{a.id}")
     await bump_collection_version("qa")
     return AnswerOut.model_validate(a)
 
