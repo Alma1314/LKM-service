@@ -1,4 +1,4 @@
-"""关注关系错误码。"""
+"""信息流(feed)域错误码：承接 follow 命名空间（关注关系）。"""
 
 from app.core.err import NS_FOLLOW, ErrCode, register
 

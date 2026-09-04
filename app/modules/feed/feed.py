@@ -1,4 +1,4 @@
-"""时间线数据源层：把异构内容实体归一为统一 FeedItem。
+"""信息流数据源层：把异构内容实体归一为统一 FeedItem（原 timeline/feed.py）。
 
 每个源实现 ``fetch_items(db, author_ids, board_ids, before_time, before_id, limit)``，
 按可见时间降序返回当页候选（已按 cursor 下滤）。排序合并/游标推进在 service 统一做。
@@ -31,8 +31,8 @@ from app.modules.content.models import (
     ContentStatus,
     QAQuestion,
 )
+from app.modules.feed.schemas import FeedItem
 from app.modules.projects.models import Project
-from app.modules.timeline.schemas import FeedItem
 
 _PREVIEW_LEN = 150
 

@@ -20,13 +20,12 @@ MODULES: list[str] = [
     "blog",
     "content",
     "exam",
+    "feed",
     "files",
-    "follow",
     "health",
     "points",
     "projects",
     "starhope",
-    "timeline",
     # rbac 无 REST/GraphQL 导出，但承载跨模块权限框架，无需在此列表聚合路由；
     # 若其注册了错误码/依赖副作用需要随应用加载，可加入并自行判定 hasattr。
 ]
@@ -42,6 +41,7 @@ _ERROR_MODULES: list[str] = [
     "content.columns",  # ColumnErr
     "content.qa",  # QaErr
     "exam",
+    "feed",  # FollowErr（关注关系；M2.3 原 follow 域并入）
     "files",
     "points",
     "projects",

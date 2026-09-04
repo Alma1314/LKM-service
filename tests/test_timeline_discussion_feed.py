@@ -1,6 +1,6 @@
 from app.modules.auth.models import User
 from app.modules.content.models import Board, ContentItem, ContentStatus, ContentType
-from app.modules.timeline import feed as feed_src
+from app.modules.feed import feed as feed_src
 
 
 async def _mk_user(db, username: str) -> User:

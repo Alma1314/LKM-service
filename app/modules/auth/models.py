@@ -28,8 +28,8 @@ if TYPE_CHECKING:
         ContentItem,
     )
     from app.modules.exam.models import ExamAttempt, ExamCertificate
+    from app.modules.feed.models import BoardFollow, UserFollow
     from app.modules.files.models import LibraryFile
-    from app.modules.follow.models import BoardFollow, UserFollow
 
 
 class RefreshToken(Base):

@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.auth.models import Profile, User
 from app.modules.auth.security import create_access_token, hashpwd
-from app.modules.follow import service as follow_service
-from app.modules.follow.service import (
+from app.modules.feed import service as follow_service
+from app.modules.feed.service import (
     is_following_user,
     list_followed_boards,
     list_following_users,

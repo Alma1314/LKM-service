@@ -134,6 +134,50 @@ class TestArticlesGraphQL:
         assert "maintainer" in data["about"]
 
 
+class TestFeedGraphQL:
+    """feed(信息流) GraphQL 字段保真：follow+timeline 合并域在 app 层 merge_types 后仍在。
+
+    M2.3 把 follow 与 timeline 并入单个 feed 域的 Query 类，随后被
+    app/api/graphql.build_schema() 的 merge_types 聚合进单一"Query"。本测回归
+    守卫：合并后的 app 级 schema 仍暴露 myFollowingUsers/myFollowingBoards(原
+    FollowQuery) 与 timeline(原 TimelineQuery) 三字段，防止日后误删某 Query 类
+    或漏掉 registry 登记导致字段静默丢失。仅作探针，不跑 resolver（空库查空即可）。
+    """
+
+    INTROSPECT_QUERY_FIELDS = """
+    query {
+      __schema {
+        queryType {
+          fields { name }
+        }
+      }
+    }
+    """
+
+    async def should_expose_merged_feed_fields(self, client: AsyncClient, db):
+        data = await _run(client, self.INTROSPECT_QUERY_FIELDS, {})
+        field_names = {f["name"] for f in data["__schema"]["queryType"]["fields"]}
+        # 合并前各自存在于 follow/timeline Query，合并后必须在 app 级单一 Query 上保真。
+        assert {"myFollowingUsers", "myFollowingBoards", "timeline"} <= field_names
+
+    async def should_query_timeline_without_error(self, client: AsyncClient, db):
+        # 真实 field-selection 探测：即使空库也要干净返回（无 id/errors 混入）。
+        data = await _run(
+            client,
+            """
+            query {
+              timeline(mode: "follow") {
+                items { id url }
+                nextCursor
+              }
+            }
+            """,
+            {},
+        )
+        assert data["timeline"]["items"] == []
+        assert data["timeline"]["nextCursor"] is None
+
+
 class TestColumnsGraphQL:
     """columns(专栏) 只读 GraphQL 契约测试（对齐前端 column.graphql.ts）。"""
 

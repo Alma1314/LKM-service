@@ -21,9 +21,9 @@ from app.modules.auth.security import hashpwd
 from app.modules.content.boards.schemas import BoardCreate
 from app.modules.content.boards.service import create_board_ex
 from app.modules.content.models import ContentItem
-from app.modules.follow import service as follow_service
-from app.modules.follow.models import UserFollow
-from app.modules.timeline.service import get_timeline
+from app.modules.feed import service as follow_service
+from app.modules.feed.models import UserFollow
+from app.modules.feed.service import get_timeline
 
 
 async def _user(db: AsyncSession, username: str) -> int:
