@@ -13,6 +13,7 @@ from app.core.cache import (
 )
 from app.core.common import PageData, paginate_offset, paginate_pages
 from app.core.err import BizError
+from app.core.metrics import post_created_total
 from app.db.base import now_iso
 from app.db.repo import get_or_raise
 from app.modules.content.column_models import (
@@ -201,6 +202,9 @@ async def create_post(
     )
     db.add(post)
     await db.flush()
+    # M0.5.2：专栏原生发帖走独立 column_posts 表（不经统一 content_items），
+    # 单独按 column_post_native 计一次产出，避免被漏计。
+    post_created_total.labels("column_post_native").inc()
     return ColumnPostInfo.model_validate(post)
 
 

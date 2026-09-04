@@ -15,6 +15,7 @@ from app.core.cache import (
 )
 from app.core.common import PageData, paginate_offset, paginate_pages
 from app.core.err import BizError
+from app.core.metrics import post_created_total
 from app.db.repo import get_or_raise
 from app.modules.auth.models import User
 from app.modules.content.errors import ContentErr
@@ -305,6 +306,10 @@ async def create_item(
     await enqueue_points_event(author_id, "post", f"item:{item.id}")
     await bump_collection_version("content")
 
+    # M0.5.2 业务指标：本方法统一写 content_items（discussion/column_post/
+    # article/blog_post/qa），谓成功落库即全内容 dumps 的“发帖/新版产出”。
+    post_created_total.labels(item.content_type).inc()
+
     names = await _author_map(db, [author_id])
     return _item_to_schema(item, names.get(author_id, ""))
 
@@ -538,6 +543,8 @@ async def publish_blog_item(
     )
     db.add(item)
     await db.flush()
+    # M0.5.2：仅“新建”分支记入博客发布产出；同 slug 重发（上面 existing 更新早退）不复计。
+    post_created_total.labels(ContentType.BLOG_POST).inc()
     await enqueue_points_event(owner_id, "post", f"item:{item.id}")
     await bump_collection_version("content")
     return item.id

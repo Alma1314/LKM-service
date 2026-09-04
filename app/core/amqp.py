@@ -16,6 +16,9 @@ import aio_pika.abc
 
 from app.core.config import settings
 
+# notify_failed_total 为发布失败总计数（实际 publish 异常）；ch None（未配置 fail-open）不计
+from app.core.metrics import notify_failed_total
+
 logger = logging.getLogger("lkm.amqp")
 
 EXCHANGE = "lkm.events"  # topic exchange，routing key event.* / cron.*
@@ -85,4 +88,5 @@ async def _publish(routing_key: str, payload: dict) -> bool:
         return True
     except Exception:
         logger.exception("rabbitmq publish failed rk=%s", routing_key)
+        notify_failed_total.inc()
         return False

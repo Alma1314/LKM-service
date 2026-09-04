@@ -1,4 +1,4 @@
-"""可观测基座 · Prometheus metrics（M0.5.1）。
+"""可观测基座 · Prometheus metrics（M0.5.1 端点/自动埋点；M0.5.2 业务计数定义）。
 
 与 sentry(apm.py) 平行的本体可观测接入：给 FastAPI 加自动 HTTP 埋点并暴露 /metrics
 抓取端点。语义同 Sentry：
@@ -12,10 +12,28 @@
 import logging
 
 from fastapi import FastAPI
+from prometheus_client import Counter
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# ---- M0.5.2 业务指标占位 ----
+# prometheus_client 全局默认 REGISTRY 唯一注册，故计数器建在模块级单例，消费方
+# import 引用即可，避免重复 `Counter(...)` 撞同名 (prometheus 对同名二次注册抛 ValueError)。
+# metrics_enabled=false 仅隐藏 /metrics 导出，计数本身照常累计（成本可忽略）。
+post_created_total = Counter(
+    "post_created_total",
+    "全内容产出：统一 content_items / 专栏原生发帖成功落库后 +1（label content_type）",
+    ("content_type",),
+)
+# AMQP 实际投递失败（publish 抛错），供过渡期错误率看板；未配置 Rabbit（ch None）属
+# 缺省 fail-open 不计入。outbox_pending 等 outbox 积压项待 M1 relay 接线时接（M0 期无
+# outbox_events 表，不复刻占位 0 防假绿）。
+notify_failed_total = Counter(
+    "notify_failed_total",
+    "AMQP 投递失败次数（实际 publish 异常）",
+)
 
 
 def setup_metrics(app: FastAPI) -> None:

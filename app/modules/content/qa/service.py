@@ -14,6 +14,7 @@ from app.core.cache import (
 )
 from app.core.common import PageData, paginate_offset, paginate_pages
 from app.core.err import BizError
+from app.core.metrics import post_created_total
 from app.db.repo import get_or_raise
 from app.modules.auth.models import User
 from app.modules.content.models import (
@@ -98,6 +99,8 @@ async def _sync_question_content_item(
     )
     db.add(item)
     await db.flush()
+    # M0.5.2：QA 提问同步为论坛可见的 content_items 条目，视作一次 qa 类产出。
+    post_created_total.labels("qa").inc()
     # QA 提问同步落成 content_items 会增加统一内容列表的计数，需 bump content 集合版本
     await bump_collection_version("content")
 
