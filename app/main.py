@@ -20,6 +20,7 @@ from app.core import redis as redis_client
 from app.core.apm import init_sentry
 from app.core.config import settings
 from app.core.err import BizError, map_err, resp_json
+from app.core.metrics import setup_metrics
 from app.db.init_db import init_db
 from app.db.session import (
     AsyncSession,
@@ -139,6 +140,10 @@ def create_app() -> FastAPI:
     @application.get("/")
     async def root() -> dict[str, str]:
         return {"message": "OK"}
+
+    # 可观测基座：Prometheus 自动 HTTP 埋点 + /metrics 抓取端点（M0.5.1）。
+    # 放装配尾部，使中间件覆盖已注册的全部路由；metrics_enabled=false 或缺依赖时 fail-open。
+    setup_metrics(application)
 
     return application
 

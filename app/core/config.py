@@ -102,6 +102,12 @@ class Settings(BaseSettings):
     # Sentry 性能采样率（0~1）；仅 DSN 非空时才生效
     sentry_traces_sample_rate: float = 1.0
 
+    # Prometheus metrics（M0.5.1）：默认开（本地无副作用收集器，成本极低）；
+    # 显式 LKM_METRICS_ENABLED=false 可整体关闭（fail-open，不阻塞启动）
+    metrics_enabled: bool = True
+    # /metrics 暴露根路径（不经 api_prefix，供 Prometheus 探抓）
+    metrics_endpoint: str = "/metrics"
+
     # ---- 存储后端 ----
     storage_backend: str = "local"  # local | s3
     s3_endpoint_url: str = ""  # 留空=云 S3 默认 endpoint；填了=MinIO 本地(容器内连接用)
