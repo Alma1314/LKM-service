@@ -20,9 +20,10 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import StaticPool
 
 import app.db.outbox  # noqa: F401  # 确保 OutboxMessage 已入 Base.metadata
-from app.core import outbox_relay
+from app.core import outbox_relay, worker
 from app.core.config import settings
 from app.db.base import Base
+from app.db.event_processed import EventProcessed, already_processed, record_processed
 from app.db.model_registry import ensure_all_models
 from app.db.outbox import (
     MAX_TRIES,
@@ -101,7 +102,13 @@ async def test_enqueue_persists_then_relay_publishes(fact, monkeypatch) -> None:
     done = await outbox_relay.relay_poll(session_factory=fact)
 
     assert done == 1
-    assert sent == [(_RK, _PAYLOAD)]
+    assert len(sent) == 1
+    rk, payload = sent[0]
+    assert rk == _RK
+    # M1.3：relay 发布时把 outbox event_id 透传为消费端幂等键；业务字段原样保留。
+    assert payload["event_id"]
+    payload.pop("event_id")
+    assert payload == _PAYLOAD
     row = await _row(fact)
     assert row.status == OUTBOX_PUBLISHED
     assert row.published_at is not None
@@ -265,3 +272,97 @@ async def test_relay_drops_backlogged_event_at_max_tries(fact, monkeypatch) -> N
         assert _pending_gauge() == 0
     finally:
         await db.close()
+
+
+# ================= M1.3 消费者幂等（event_processed 账本 + relay 透传 + worker 去重）=====
+
+
+async def test_record_processed_then_seen(fact) -> None:
+    db = await fact()
+    try:
+        assert await already_processed(db, "evt-1") is False
+        assert await record_processed(db, "evt-1") is True
+        assert await already_processed(db, "evt-1") is True
+    finally:
+        await db.close()
+
+
+async def test_record_processed_idempotent_nop(fact) -> None:
+    db = await fact()
+    try:
+        await record_processed(db, "evt-dup")
+        # 主键唯一约束：再记同 id 不抛、返回 False、表内仍只一行。
+        assert await record_processed(db, "evt-dup") is False
+        rows = (await db.execute(sa.select(EventProcessed))).scalars().all()
+        assert len(rows) == 1
+    finally:
+        await db.close()
+
+
+async def test_relay_payload_carries_event_id(fact, monkeypatch) -> None:
+    """relay 发布 → 消息带 outbox 幂等键 event_id（供消费端去重），业务字段原样。"""
+    sent: list[dict] = []
+
+    async def _pub(_rk: str, payload: dict) -> bool:
+        sent.append(payload)
+        return True
+
+    monkeypatch.setattr(outbox_relay.amqp, "_publish", _pub)
+    db = await fact()
+    try:
+        await enqueue_outbox(db, "event.notify_upload", {"fn": "n", "args": ["u"]})
+        await db.commit()
+    finally:
+        await db.close()
+    await outbox_relay.relay_poll(session_factory=fact)
+    assert len(sent) == 1
+    assert sent[0]["event_id"]  # 透传
+    assert sent[0]["fn"] == "n"
+
+
+async def _dispatch(fact, monkeypatch, payload: dict, handler) -> None:
+    """worker 的 new_session 换成内存库会话工厂 → 驱动 _dispatch_with_dedup 一次。"""
+
+    async def _fake_new_session() -> AsyncSession:
+        return await fact()
+
+    monkeypatch.setattr(worker, "new_session", _fake_new_session)
+    await worker._dispatch_with_dedup(payload, handler, payload.get("args", []))
+
+
+async def test_dispatch_same_event_runs_handler_once(fact, monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def h(upload_id: str) -> None:
+        calls.append(upload_id)
+
+    payload = {"fn": "n", "event_id": "dup-1", "args": ["up-1"]}
+    await _dispatch(fact, monkeypatch, payload, h)
+    # 第二次（重放 / DLQ requeue 同 event_id）→ 账本命中 → 跳过 handler。
+    await _dispatch(fact, monkeypatch, payload, h)
+    assert calls == ["up-1"]  # 只执行一次
+
+
+async def test_dispatch_failure_skips_recording(fact, monkeypatch) -> None:
+    async def boom(_upload_id: str) -> None:
+        raise RuntimeError("boom")
+
+    payload = {"fn": "n", "event_id": "evt-fail", "args": ["up-f"]}
+    with pytest.raises(RuntimeError, match="boom"):
+        await _dispatch(fact, monkeypatch, payload, boom)
+    db = await fact()
+    try:
+        assert await already_processed(db, "evt-fail") is False  # 失败不记账,可重试
+    finally:
+        await db.close()
+
+
+async def test_dispatch_no_event_id_still_runs(fact, monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def h(x: str) -> None:
+        calls.append(x)
+
+    # 无 event_id（send/cron 直发）→ 不经账本就执行。
+    await _dispatch(fact, monkeypatch, {"fn": "x", "args": ["c"]}, h)
+    assert calls == ["c"]

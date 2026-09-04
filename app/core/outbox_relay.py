@@ -82,6 +82,9 @@ async def relay_poll(
         for msg in rows:
             try:
                 payload = json.loads(msg.payload_json)
+                # 把 outbox 幂等键 event_id 透传进发布消息，消费端据此按「已处理记账」去重
+                # （M1.3；见 app/db/event_processed.py）。fn/args 原样保留，多余键对 handler 无害。
+                payload = {**payload, "event_id": msg.event_id}
                 ok = await amqp._publish(msg.routing_key, payload)
             except Exception:
                 logger.exception(

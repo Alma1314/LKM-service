@@ -17,6 +17,8 @@ from typing import Any
 import aio_pika
 
 from app.core import amqp, task_registry
+from app.db.event_processed import already_processed, record_processed
+from app.db.session import new_session
 
 logger = logging.getLogger("lkm.worker")
 
@@ -74,11 +76,50 @@ async def _declare_topology(ch: Any) -> None:
             await ch.bind_queue(q, EXCHANGE, rk)
 
 
+async def _dispatch_with_dedup(
+    payload: dict[str, Any], handler: Any, args: list[Any]
+) -> None:
+    """带 M1.3 幂等的任务分派（模块工具，供 _on_msg 闭包复用）。
+
+    - payload 带 event_id（outbox relay 发布透传）→ 开临时会话查 event_processed：
+      已处理 → 返回（外层对其 ack，不二次执行）；未处理 → 跑 handler，成功后记账。
+    - 无 event_id（send/cron 等直发）→ 原语义直跑，不经 DB，零额外开销。
+    - event_id 在且查账/记账时 DB 异常 → 记日志并令外层视「首次未记账」处理（宁可重试
+      也不丢），由既有 DLQ/超时语义兜底，不卡后续消息。
+    """
+    eid = payload.get("event_id")
+    if not isinstance(eid, str) or not eid:
+        await handler(*args)
+        return
+    db = await new_session()
+    try:
+        try:
+            if await already_processed(db, eid):
+                logger.info("outbox 幂等跳过已处理 event_id=%s", eid)
+                return  # ack，不重复执行 handler
+        except Exception:
+            # 账本查不动：保守当作未记账，继续执行，避免一旦 DB 抖动业务停摆。
+            logger.exception("event_processed 查账失败,继续执行 event_id=%s", eid)
+        await handler(*args)
+        try:
+            await record_processed(db, eid)
+        except Exception:
+            # 记账失败(罕见)：已跑过一次副作用，宁可让 DLQ requeue 重试走幂等查账兜底。
+            logger.exception("event_processed 记账失败 event_id=%s", eid)
+            raise
+    finally:
+        await db.close()
+
+
 async def _consume(queue_name: str) -> None:
     """消费指定队列，按 payload.fn 从注册表分发 handler。任务执行包 120s 超时。
 
     handler 成功 → ack；异常/超时 → nack(requeue=False) → 死信 DLQ。
     拓扑由 _declare_topology 统一幂等声明；注销本队列的 handler 语义由注册表提供。
+
+    M1.3 幂等：对带 ``event_id`` 的消息（outbox relay 发布时透传），消费前查
+    `event_processed` 账本——已处理 → ack 跳过（重放/DLQ requeue 不再二次副作用）；
+    未处理 → 执行 handler，成功后记账。无 event_id 的直发/cron 消息照常，不走去重。
     """
     handlers = task_registry.handlers_for(queue_name)
     ch = await amqp.get_amqp()
@@ -107,7 +148,9 @@ async def _consume(queue_name: str) -> None:
                 if handler is None:
                     logger.warning("未知任务 %s, 丢弃", fn)
                     return  # ack 丢弃
-                await asyncio.wait_for(handler(*args), timeout=JOB_TIMEOUT_S)
+                # M1.3 幂等：带 event_id 的消息走“查账→执行→记账”，其余按原语义直跑。
+                # handler 抛错仍由外层 except 兜到死信（此处不吞），不卡后续消息。
+                await _dispatch_with_dedup(payload, handler, args)
             except Exception:
                 logger.exception(
                     "任务失败入死信 queue=%s fn=%s", queue_name, payload.get("fn")
