@@ -152,132 +152,139 @@ ignore_imports = [
     "app.db.model_registry -> app.modules.points.models",
     "app.db.model_registry -> app.modules.projects.models",
     "app.db.model_registry -> app.modules.starhope.models",
-    "app.db.repo -> app.modules.auth.models",  # 共享批量 Profile 查询
-    "app.db.repo -> app.modules.auth.schemas",  # ProfileInfo DTO
     "app.db.session -> app.modules.auth.errors",  # 会话构造错误码
 ]
 
 [[tool.importlinter.contracts]]
-# 三段：跨业务模块任意依赖收紧为可断言门禁。
-# rbac/storage/health 是共享基础设施/零依赖岛，不列入业务域；业务模块可自由 import 它们。
-# forbidden 只拦 12 个"业务模块域"互相 import；同域内（含 __init__ 再导出）不受拦。
-# 合法的跨域（治理聚合 admin、事件入队 points.rules、模型关系预注册、读聚合等）逐一入 ignore_imports 白名单并记理由。
-# 归零到 "3 kept, 0 broken" 为验收；任何新增业务域间直连 import 会被此契约拦下。
+# 契约三·业务耦合（auth 与其业务域间边统一移交契约四治理后）：只收紧 10 个非 auth 业务模块域间互相 import。
+# rbac/storage/health 共享基础设施/零依赖岛不列入业务域；同域内不受拦；源/目标落在 app.modules.auth 的边由第四契约统一治理。
 name = "边界: 业务模块间不任意依赖(须走公共API/白名单)"
 type = "forbidden"
-source_modules = ["app.modules.admin","app.modules.articles","app.modules.auth","app.modules.blog","app.modules.content","app.modules.exam","app.modules.feed","app.modules.files","app.modules.points","app.modules.projects","app.modules.starhope"]
-forbidden_modules = ["app.modules.admin","app.modules.articles","app.modules.auth","app.modules.blog","app.modules.content","app.modules.exam","app.modules.feed","app.modules.files","app.modules.points","app.modules.projects","app.modules.starhope"]
-# 只检查**直接**业务模块→业务模块 import；放行经 db/model_registry、core/task_registry 的间接装配路径（各自契约已豁免）。
+source_modules = ["app.modules.admin","app.modules.articles","app.modules.blog","app.modules.content","app.modules.exam","app.modules.feed","app.modules.files","app.modules.points","app.modules.projects","app.modules.starhope"]
+forbidden_modules = ["app.modules.admin","app.modules.articles","app.modules.blog","app.modules.content","app.modules.exam","app.modules.feed","app.modules.files","app.modules.points","app.modules.projects","app.modules.starhope"]
+# 只检查**直接**业务模块→业务模块 import；放行经 db/model_registry、core/task_registry 的间接装配路径。
 allow_indirect_imports = "true"
-# 合法跨域(read/装配/注册/降级/治理聚合)，由 Task1 现状审计全量导出（94 条，逐条对应实测 broken 边）——
-# 归零冻结现状拓扑：任何新增未在其内业务模块间直连，会被上方契约拦下。
-# M2.2/M2.3(content 子域收中、follow+timeline→feed)已结构性消掉最大扇入，本清单随源模块移动 re-anchor 相应条目。
+# 非 auth 业务域间合法跨域(read/装配/注册/治理聚合)，逐条精确并列于此（Task/A 现状审计导出，随源模块移动 re-anchor）。
 ignore_imports = [
-    # content 子域 router 复用 admin 2FA step-up(deps 二次鉴权)与 auth 鉴权 deps/当前用户、seed 注册 ORM：
     "app.modules.content.boards.router -> app.modules.admin.deps",
-    "app.modules.content.boards.router -> app.modules.auth.deps",
     "app.modules.content.columns.router -> app.modules.admin.deps",
-    "app.modules.content.columns.router -> app.modules.auth.deps",
-    "app.modules.content.qa.router -> app.modules.auth.deps",
-    # files/projects router 写/管理端点同样复用 admin.deps 的 admin+2FA 校验：
     "app.modules.files.router -> app.modules.admin.deps",
     "app.modules.projects.router -> app.modules.admin.deps",
-    # content/models → feed/models 为 ORM relationship 的 TYPE_CHECKING 前向引用（防导入环，运行时不加载）：
     "app.modules.content.models -> app.modules.feed.models",
+    "app.modules.articles.service -> app.modules.points.rules",
+    "app.modules.content.service -> app.modules.points.rules",
+    "app.modules.content.service -> app.modules.points.service",
+    "app.modules.exam.service -> app.modules.points.rules",
+    "app.modules.files.service -> app.modules.points.rules",
+    "app.modules.content.service -> app.modules.exam.models",
+    "app.modules.blog.router -> app.modules.content.schemas",
+    "app.modules.blog.router -> app.modules.content.service",
+    "app.modules.blog.service -> app.modules.content.models",
+    "app.modules.blog.service -> app.modules.content.service",
+    "app.modules.admin.content_router -> app.modules.articles.service",
+    "app.modules.admin.content_router -> app.modules.blog.service",
+    "app.modules.admin.content_router -> app.modules.content.schemas",
+    "app.modules.admin.content_router -> app.modules.content.service",
+    "app.modules.admin.users_router -> app.modules.content.models",
+    "app.modules.admin.users_router -> app.modules.files.models",
+    "app.modules.feed.feed -> app.modules.articles.models",
+    "app.modules.feed.feed -> app.modules.content.models",
+    "app.modules.feed.feed -> app.modules.projects.models",
+    "app.modules.feed.service -> app.modules.admin.moderation.engine",
+    "app.modules.feed.service -> app.modules.content.models",
+    "app.modules.feed.models -> app.modules.content.models",
+]
+
+[[tool.importlinter.contracts]]
+# 契约四·AUTH 边界（M3.A 收口门，第四契约）：auth 域身份只读面对业务收敛到唯一缝 app.modules.auth.snapshot；
+# 业务(非 auth)模块不得直连 auth 内部子模块做身份展示读。auth→auth 内部边不在本 scope，故 source 不含 auth；
+# import-linter 2.14 无"仅白名单特定子模块"原语，允许面用逐条精确 ignore_imports 表达（无 wildcard）。四类：
+#   ① 展示读→读缝 auth.snapshot（合法，唯一展示读地面）；② routers→auth.deps 认证地基 / auth.schemas ProfileInfo DTO /
+#      admin auth 管理面(service_2fa/service_auth/service_verify/errors/security 二次验证或治理)；
+#   ③ models→auth.models FK/relationship 与 seed→auth.models ORM 注册（结构声明，非展示读）；
+#   ④ 行为/结构锁定直读 auth.models（A3 独立复核：积分榜昵称排序键、blog+articles raw-nickname、授权/凭证缺失不可经缝迁移，勿再强制迁缝）。
+name = "边界: 业务域不得 import auth(只经 auth.snapshot 读缝)"
+type = "forbidden"
+source_modules = ["app.modules.admin","app.modules.articles","app.modules.blog","app.modules.content","app.modules.exam","app.modules.feed","app.modules.files","app.modules.points","app.modules.projects","app.modules.starhope"]
+forbidden_modules = ["app.modules.auth"]
+allow_indirect_imports = "true"
+ignore_imports = [
+    # ① seam display reads — business 域对所有身份展示的**唯一合法直读点**：
+    "app.modules.admin.users_router -> app.modules.auth.snapshot",
+    "app.modules.content.service -> app.modules.auth.snapshot",
+    "app.modules.exam.service -> app.modules.auth.snapshot",
+    "app.modules.feed.feed -> app.modules.auth.snapshot",
+    "app.modules.feed.service -> app.modules.auth.snapshot",
+    "app.modules.files.service -> app.modules.auth.snapshot",
+    "app.modules.projects.service -> app.modules.auth.snapshot",
+    "app.modules.blog.service -> app.modules.auth.snapshot",
+    "app.modules.articles.service -> app.modules.auth.snapshot",
+    # ② routers → auth.deps / auth.auth_router 内部再验证 security·service_* / schemas ProfileInfo DTO：
+    "app.modules.content.boards.router -> app.modules.auth.deps",
+    "app.modules.content.columns.router -> app.modules.auth.deps",
+    "app.modules.content.qa.router -> app.modules.auth.deps",
+    "app.modules.articles.router -> app.modules.auth.deps",
+    "app.modules.articles.schemas -> app.modules.auth.schemas",
+    "app.modules.articles.service -> app.modules.auth.schemas",
+    "app.modules.blog.graphql -> app.modules.auth.schemas",
+    "app.modules.blog.router -> app.modules.auth.deps",
+    "app.modules.blog.schemas -> app.modules.auth.schemas",
+    "app.modules.blog.service -> app.modules.auth.schemas",
+    "app.modules.content.router -> app.modules.auth.deps",
+    "app.modules.exam.router -> app.modules.auth.deps",
+    "app.modules.files.router -> app.modules.auth.deps",
+    "app.modules.files.service -> app.modules.auth.deps",
+    "app.modules.feed.router -> app.modules.auth.deps",
+    "app.modules.points.router -> app.modules.auth.deps",
+    "app.modules.projects.router -> app.modules.auth.deps",
+    "app.modules.starhope.router -> app.modules.auth.deps",
+    "app.modules.admin.content_router -> app.modules.auth.deps",
+    "app.modules.admin.auth_router -> app.modules.auth.deps",
+    "app.modules.admin.reports_router -> app.modules.auth.deps",
+    "app.modules.admin.users_router -> app.modules.auth.deps",
+    "app.modules.admin.moderation.admin_router -> app.modules.auth.deps",
+    "app.modules.admin.permissions -> app.modules.auth.deps",
+    "app.modules.admin.schemas -> app.modules.auth.schemas",
+    "app.modules.admin.deps -> app.modules.auth.deps",
+    "app.modules.blog.git_http -> app.modules.auth.security",
+    "app.modules.admin.content_router -> app.modules.auth.service_auth",
+    "app.modules.admin.auth_router -> app.modules.auth.errors",
+    "app.modules.admin.auth_router -> app.modules.auth.service_2fa",
+    "app.modules.admin.auth_router -> app.modules.auth.service_auth",
+    "app.modules.admin.auth_router -> app.modules.auth.service_verify",
+    "app.modules.admin.auth_router -> app.modules.auth.security",
+    # ③ models → auth.models FK/relationship 声明 + seed → auth.models ORM 映射注册：
     "app.modules.content.models -> app.modules.auth.models",
-    # auth/models 对 blog/content/exam/files/feed models 的 TYPE_CHECKING 关系前向引用（同上，防 ORM relationship 环）：
-    "app.modules.auth.models -> app.modules.blog.models",
-    "app.modules.auth.models -> app.modules.content.models",
-    "app.modules.auth.models -> app.modules.exam.models",
-    "app.modules.auth.models -> app.modules.files.models",
-    "app.modules.auth.models -> app.modules.feed.models",
-    # 各业务域 models → auth.models：跨域 FK/relationship 指向 User/Profile（ORM 关系声明）：
     "app.modules.articles.models -> app.modules.auth.models",
     "app.modules.blog.models -> app.modules.auth.models",
     "app.modules.exam.models -> app.modules.auth.models",
     "app.modules.files.models -> app.modules.auth.models",
     "app.modules.feed.models -> app.modules.auth.models",
     "app.modules.projects.models -> app.modules.auth.models",
-    # routers/schemas/graphql → auth：认证/账户地基依赖（CurrentUser/ProfileInfo DTO/User 展示）：
-    "app.modules.articles.router -> app.modules.auth.deps",
-    "app.modules.articles.schemas -> app.modules.auth.schemas",
     "app.modules.articles.seed -> app.modules.auth.models",
-    "app.modules.articles.service -> app.modules.auth.schemas",
-    "app.modules.blog.git_http -> app.modules.auth.models",
-    "app.modules.blog.git_http -> app.modules.auth.security",
-    "app.modules.blog.graphql -> app.modules.auth.schemas",
-    "app.modules.blog.router -> app.modules.auth.deps",
-    "app.modules.blog.schemas -> app.modules.auth.schemas",
-    "app.modules.blog.service -> app.modules.auth.models",
-    "app.modules.blog.service -> app.modules.auth.schemas",
     "app.modules.content.boards.seed -> app.modules.auth.models",
     "app.modules.content.columns.seed -> app.modules.auth.models",
-    "app.modules.content.router -> app.modules.auth.deps",
-    "app.modules.content.service -> app.modules.auth.models",
-    "app.modules.exam.router -> app.modules.auth.deps",
     "app.modules.exam.seed -> app.modules.auth.models",
-    "app.modules.exam.service -> app.modules.auth.models",
-    "app.modules.files.router -> app.modules.auth.deps",
     "app.modules.files.seed -> app.modules.auth.models",
-    "app.modules.files.service -> app.modules.auth.deps",
-    "app.modules.files.service -> app.modules.auth.models",
-    "app.modules.feed.router -> app.modules.auth.deps",
-    "app.modules.feed.service -> app.modules.auth.models",
-    "app.modules.points.router -> app.modules.auth.deps",
     "app.modules.points.seed -> app.modules.auth.models",
-    "app.modules.points.service -> app.modules.auth.models",
-    "app.modules.projects.router -> app.modules.auth.deps",
-    "app.modules.projects.service -> app.modules.auth.models",
-    "app.modules.starhope.router -> app.modules.auth.deps",
-    "app.modules.feed.feed -> app.modules.auth.models",
-    # service 发布经 points 事件规则入队/记账（qa reward/spend、通用 enqueue_points_event 积分钩子）：
-    "app.modules.articles.service -> app.modules.points.rules",
-    "app.modules.content.service -> app.modules.points.rules",
-    # qa escrow reward/spend 记账：M2.2 收中后随 qa 逻辑入 content/service：
-    "app.modules.content.service -> app.modules.points.service",
-    "app.modules.exam.service -> app.modules.points.rules",
-    "app.modules.files.service -> app.modules.points.rules",
-    # board 板块发帖需读 exam 证书等级档位（解锁门槛判定）——M2.2 收中后随 boards 逻辑入 content/service：
-    "app.modules.content.service -> app.modules.exam.models",
-    # blog → content：blog 发布联写入 content_items 聚合（publish_blog_item）+ 读 block 元：
-    "app.modules.blog.router -> app.modules.content.schemas",
-    "app.modules.blog.router -> app.modules.content.service",
-    "app.modules.blog.service -> app.modules.content.models",
-    "app.modules.blog.service -> app.modules.content.service",
-    # admin 后台治理聚合面：跨域读 articles/blog/content/auth/files 供管理/内容/举报/用户 dashboard（合法治理，非业务直连）：
-    "app.modules.admin.content_router -> app.modules.articles.service",
-    "app.modules.admin.content_router -> app.modules.blog.service",
-    "app.modules.admin.content_router -> app.modules.content.schemas",
-    "app.modules.admin.content_router -> app.modules.content.service",
-    "app.modules.admin.content_router -> app.modules.auth.deps",
-    "app.modules.admin.content_router -> app.modules.auth.service_auth",
-    "app.modules.admin.auth_router -> app.modules.auth.deps",
-    "app.modules.admin.auth_router -> app.modules.auth.errors",
-    "app.modules.admin.auth_router -> app.modules.auth.service_2fa",
-    "app.modules.admin.auth_router -> app.modules.auth.service_auth",
-    "app.modules.admin.auth_router -> app.modules.auth.service_verify",
-    "app.modules.admin.auth_router -> app.modules.auth.models",
-    "app.modules.admin.reports_router -> app.modules.auth.deps",
-    "app.modules.admin.users_router -> app.modules.auth.deps",
-    "app.modules.admin.users_router -> app.modules.auth.models",
-    "app.modules.admin.users_router -> app.modules.content.models",
-    "app.modules.admin.users_router -> app.modules.files.models",
-    "app.modules.admin.moderation.admin_router -> app.modules.auth.deps",
-    "app.modules.admin.permissions -> app.modules.auth.deps",
-    "app.modules.admin.schemas -> app.modules.auth.schemas",
     "app.modules.admin.seed -> app.modules.auth.models",
-    # admin deps/models → auth：会话/User 复用与 require_admin 常量适配：
-    "app.modules.admin.deps -> app.modules.auth.deps",
+    "app.modules.admin.models -> app.modules.auth.models",
+    # ④ 行为/结构锁定直读 auth.models：积分榜昵称排序键(points.service)、blog 授权与凭证(git_http)
+    # 与 feed/content/exam/projects 授权标量与关系——blog/articles 的 ProfileInfo 组装已迁读缝(auth.snapshot, ①)，
+    # 故已移出该直读面（blog.service 现只经缝读身份，不再直触 auth.models）。
+    "app.modules.articles.service -> app.modules.auth.schemas",
+    "app.modules.blog.git_http -> app.modules.auth.models",
+    "app.modules.blog.service -> app.modules.auth.schemas",
+    "app.modules.content.service -> app.modules.auth.models",
+    "app.modules.exam.service -> app.modules.auth.models",
+    "app.modules.feed.service -> app.modules.auth.models",
+    "app.modules.points.service -> app.modules.auth.models",
+    "app.modules.projects.service -> app.modules.auth.models",
+    # ⑤ admin 治理/授权面 的 router·deps 对 User 直读(admin 管理 + 会话 User 复用 + list_users 治理读 auth.models/User)：
+    "app.modules.admin.auth_router -> app.modules.auth.models",
+    "app.modules.admin.users_router -> app.modules.auth.models",
+    "app.modules.admin.seed -> app.modules.auth.models",
     "app.modules.admin.deps -> app.modules.auth.models",
     "app.modules.admin.models -> app.modules.auth.models",
-    # feed 信息流读聚合 sink：6 源(articles/content/auth/projects)+关注(feed.service 同域)+审核(admin.moderation.engine)；M2.3 follow+timeline 并入单一 feed 域：
-    "app.modules.feed.feed -> app.modules.articles.models",
-    "app.modules.feed.feed -> app.modules.content.models",  # 时间线 read 源读 content_items/discussion/blog_post 归一
-    "app.modules.feed.feed -> app.modules.projects.models",
-    "app.modules.feed.service -> app.modules.admin.moderation.engine",
-    "app.modules.feed.service -> app.modules.content.models",  # 关注写校验目标版块存在(Board)读 content
-    "app.modules.admin.auth_router -> app.modules.auth.security",
-    # feed/models → content/models：BoardFollow ↔ Board 的 TYPE_CHECKING 关系前向引用（防导入环，运行时不加载）：
-    "app.modules.feed.models -> app.modules.content.models",
 ]
 

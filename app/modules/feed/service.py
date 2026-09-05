@@ -37,7 +37,8 @@ from app.core.cache import (
 from app.core.err import BizError
 from app.db.base import now_iso
 from app.modules.admin.moderation.engine import evaluate, load_active_rules
-from app.modules.auth.models import Profile, User
+from app.modules.auth.models import User
+from app.modules.auth.snapshot import get_user_snapshot_batch
 from app.modules.content.models import Board
 from app.modules.feed import feed as feed_src
 from app.modules.feed.errors import FollowErr
@@ -191,24 +192,19 @@ async def list_following_users(
 ) -> list[tuple[int, str, str | None]]:
     """我关注的用户列表：(user_id, display_name, avatar)。
 
-    display_name 取 ``nickname or username``（沿用 points 榜惯例），avatar 取
-    Profile.avatar。走 id 集合 + 一次 join，避免逐条查询。
+    display_name 取 ``nickname or username``（沿用 points 榜惯例；缝的 display_name
+    同口径），avatar 取快照 avatar。走 id 集合 + 读缝一次批量，避免逐条/跨域 join。
     """
     ids = await get_following_ids(db, user_id)
     if not ids:
         return []
-    rows = (
-        await db.execute(
-            select(User.id, User.username, Profile.nickname, Profile.avatar)
-            .outerjoin(Profile, Profile.user_id == User.id)
-            .where(User.id.in_(ids))
-        )
-    ).all()
-    by_id: dict[int, tuple[str, str | None]] = {}
-    for uid, username, nickname, avatar in rows:
-        by_id[uid] = (nickname or username or "", avatar)
+    snaps = await get_user_snapshot_batch(db, user_ids=ids)
     return [
-        (uid, by_id.get(uid, (str(uid), None))[0], by_id.get(uid, (str(uid), None))[1])
+        (
+            uid,
+            snaps[uid].display_name if uid in snaps else str(uid),
+            snaps[uid].avatar if uid in snaps else None,
+        )
         for uid in ids
     ]
 
@@ -235,16 +231,10 @@ async def _fill_authors(db: AsyncSession, items: list[FeedItem]) -> None:
     author_ids = {it.author_id for it in items if it.author_id and not it.author_name}
     if not author_ids:
         return
-    rows = (
-        await db.execute(
-            select(User.id, User.username, Profile.nickname)
-            .outerjoin(Profile, Profile.user_id == User.id)
-            .where(User.id.in_(author_ids))
-        )
-    ).all()
-    name_of: dict[int, str] = {}
-    for uid, username, nickname in rows:
-        name_of[int(uid)] = nickname or username or ""
+    snaps = await get_user_snapshot_batch(db, user_ids=list(author_ids))
+    name_of: dict[int, str] = {
+        uid: s.display_name for uid, s in snaps.items()
+    }
     for it in items:
         if it.author_id in name_of and not it.author_name:
             it.author_name = name_of[it.author_id]

@@ -18,6 +18,7 @@ from app.core.err import BizError, CommonErr
 from app.core.throttle import check_password_login_rate_limit
 from app.db.base import expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise, isolated_update
+from app.modules.auth import events
 from app.modules.auth.channels import CHANNELS, channel_for
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import (
@@ -497,6 +498,11 @@ async def login_password(
         await dummy_verify()
         raise BizError(AuthErr.INVALID_CREDENTIALS)
 
+    # M3.A残项(成功登录解锁)：记录**入库持久态**的 is_locked（在 auto-unlock 之前），供下方
+    # 成功登录把它 True→False 翻转时发出失效事件——解除 post-user.banned 的 user:snap banned 陈旧。
+    # 不可在 auto-unlock(_check_account_locked 会把过期锁的 ORM 值改 False)之后才采样，会漏翻转。
+    was_locked_at_login = bool(user.is_locked)
+
     await _check_account_locked(user)
 
     try:
@@ -511,6 +517,9 @@ async def login_password(
         locked = await _record_failed_attempt(db, user)
         if locked:
             await log_audit(db, user.id, "account_locked", "5 failed login attempts")
+            # 锁定经 isolated_update 的 savepoint 已提交且本请求将回滚 → 失效事件须自建会话独立
+            # 提交，避免与已落库的 is_locked=True 错位（漏失效会让 user:snap.banned 陈旧）。
+            await events.notify_user_banned_committed(user.id)
         raise BizError(AuthErr.INVALID_CREDENTIALS)
 
     # 成功 —— 通过子事务（savepoint）原子性地重置计数器，
@@ -522,6 +531,14 @@ async def login_password(
         .values(failed_login_attempts=0, is_locked=False, locked_until=None),
     )
     await db.refresh(user)
+
+    # M3.A残项(成功登录解锁)：若本次成功登录真把 is_locked 从 True 翻到 False（先前自动锁后、
+    # 过期锁在此刻被清除），发 user.updated 失效，令下次读 user:snap.banned=False，杜绝陈旧。
+    # 只在翻转发生时发（was_locked_at_login=True），普通成功登录 is_locked 恒 False → 零噪声不入队；
+    # 本请求为成功路径(outer 会话将 commit)，同事务入队随其持久（与 upgrade 等 A7 载点同款）。若
+    # 此处无从翻转(本就 False)则不发——避免无谓回填。镜像 A7「无东西需失效就不发」约束。
+    if was_locked_at_login:
+        await events.notify_user_updated(db, user.id)
 
     await log_audit(db, user.id, "login_password", "success")
 
@@ -677,6 +694,8 @@ async def upgrade_to_normal(db: AsyncSession, user: User) -> None:
         user.account_level = "normal"
         await db.flush()
         await log_audit(db, user.id, "level_change", "local -> normal")
+        # 快照 account_level 依赖 User.account_level：升级属身份升迁 → 失效 user:snap。
+        await events.notify_user_updated(db, user.id)
 
 
 async def refresh_access_token(db: AsyncSession, raw_refresh: str) -> dict[str, Any]:

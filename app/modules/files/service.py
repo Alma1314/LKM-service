@@ -13,7 +13,6 @@ from urllib.parse import quote
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.core.common import PageData, paginate_offset, paginate_pages
 from app.core.config import settings
@@ -21,7 +20,7 @@ from app.core.err import BizError
 from app.core.redis import get_redis
 from app.db.repo import get_or_raise
 from app.modules.auth.deps import CurrentUser
-from app.modules.auth.models import User
+from app.modules.auth.snapshot import get_user_snapshot_batch
 from app.modules.files.errors import FileErr
 from app.modules.files.models import FILES_TABLE_PLAN, FileStatus, LibraryFile
 from app.modules.files.schemas import (
@@ -62,12 +61,6 @@ def get_files_plan() -> dict[str, Any]:
     }
 
 
-def _uploader_name(user: User) -> str:
-    if user.profile and user.profile.nickname:
-        return user.profile.nickname
-    return user.username
-
-
 def _file_to_schema(f: LibraryFile, uploader_name: str) -> FileInfo:
     return FileInfo.model_validate(f).model_copy(
         update={"uploader_name": uploader_name}
@@ -77,13 +70,8 @@ def _file_to_schema(f: LibraryFile, uploader_name: str) -> FileInfo:
 async def _uploader_map(db: AsyncSession, user_ids: list[int]) -> dict[int, str]:
     if not user_ids:
         return {}
-    result = await db.execute(
-        select(User)
-        .where(User.id.in_(set(user_ids)))
-        .options(selectinload(User.profile))
-    )
-    users = result.scalars().all()
-    return {u.id: _uploader_name(u) for u in users}
+    snaps = await get_user_snapshot_batch(db, user_ids=list(set(user_ids)))
+    return {uid: s.display_name for uid, s in snaps.items()}
 
 
 async def list_files(

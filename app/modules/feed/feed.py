@@ -20,10 +20,9 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.modules.articles.models import Article
-from app.modules.auth.models import User
+from app.modules.auth.snapshot import get_user_snapshot_batch
 from app.modules.content.models import (
     ColumnPost,
     ColumnPostStatus,
@@ -50,16 +49,8 @@ def _preview_of(text: str | None, limit: int = _PREVIEW_LEN) -> str:
 async def _author_map(db: AsyncSession, user_ids: set[int]) -> dict[int, str]:
     if not user_ids:
         return {}
-    result = await db.execute(
-        select(User).where(User.id.in_(user_ids)).options(selectinload(User.profile))
-    )
-    out: dict[int, str] = {}
-    for u in result.scalars().all():
-        if u.profile and u.profile.nickname:
-            out[u.id] = u.profile.nickname
-        else:
-            out[u.id] = u.username
-    return out
+    snaps = await get_user_snapshot_batch(db, user_ids=list(user_ids))
+    return {uid: s.display_name for uid, s in snaps.items()}
 
 
 def _before_conds(

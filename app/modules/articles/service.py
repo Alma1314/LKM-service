@@ -5,7 +5,6 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects import postgresql as pg
 from sqlalchemy.dialects import sqlite as sq
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.core.cache import (
     TTL_ITEM_S,
@@ -20,7 +19,7 @@ from app.core.common import PageData, paginate_pages, tag_names_sequence
 from app.core.config import settings
 from app.core.err import BizError, CommonErr
 from app.db.base import now_iso
-from app.db.repo import get_or_raise, get_profiles_by_user_ids
+from app.db.repo import get_or_raise
 from app.modules.articles.errors import ArticleErr
 from app.modules.articles.models import (
     Article,
@@ -43,6 +42,10 @@ from app.modules.articles.schemas import (
     CategoryOut,
 )
 from app.modules.auth.schemas import ProfileInfo
+from app.modules.auth.snapshot import (
+    get_user_snapshot_batch,
+    profile_info_from_snap,
+)
 from app.modules.points.rules import enqueue_points_event
 
 # 默认阅读速度：中文约 300 字/分钟
@@ -391,8 +394,11 @@ async def create_article_comment(
 async def _get_author_profiles(
     db: AsyncSession, user_ids: set[int]
 ) -> dict[int, ProfileInfo | None]:
-    """批量查询多个评论作者的 Profile，避免逐条查询的 N+1（收敛到 repo 公共查询）。"""
-    return await get_profiles_by_user_ids(db, user_ids)
+    """批量取评论作者 ProfileInfo（M3.A残项：经 auth 批量读缝一次查齐，不再直读 Profile）。"""
+    if not user_ids:
+        return {}
+    snaps = await get_user_snapshot_batch(db, user_ids=list(user_ids))
+    return {uid: profile_info_from_snap(snaps[uid]) for uid in snaps}
 
 
 async def list_article_comments(db: AsyncSession, slug: str) -> list[ArticleCommentOut]:
@@ -404,7 +410,6 @@ async def list_article_comments(db: AsyncSession, slug: str) -> list[ArticleComm
             await db.execute(
                 select(ArticleComment)
                 .where(ArticleComment.article_id == article.id)
-                .options(selectinload(ArticleComment.user))
                 .order_by(ArticleComment.created_at.asc())
             )
         )

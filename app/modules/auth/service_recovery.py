@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.err import BizError, CommonErr
 from app.db.base import expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise
-from app.modules.auth import security
+from app.modules.auth import events, security
 from app.modules.auth.channels import CHANNELS, channel_for
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.limits import RECOVER_ADMIN_BEGIN_MAX, RECOVER_ADMIN_BEGIN_WINDOW
@@ -73,6 +73,8 @@ async def _reset_password(db: AsyncSession, user: User, new_password: str) -> No
     await revoke_all_refresh_tokens(db, user.id)
 
     await log_audit(db, user.id, "password_reset", detail="recovery")
+    # 账户密码重置：解锁 + 清错次 + 抬 updated_at + 全量吊销，属快照相关身份重置 → 失效。
+    await events.notify_user_session_revoke(db, user.id)
 
 
 async def check_recovery_methods(_db: AsyncSession, _account: str) -> dict[str, Any]:

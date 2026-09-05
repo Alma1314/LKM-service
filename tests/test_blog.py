@@ -289,6 +289,58 @@ class TestBlogStars:
         assert res.items[0].star_count == 2
 
 
+# ---- M3.A残项: 评论作者 ProfileInfo 经 auth 读缝组装，blank-when-unset 保真 ----
+async def _user_nick(
+    db: AsyncSession, username: str, nickname: str | None
+) -> int:
+    from app.modules.auth.models import Profile, User
+
+    user = User(
+        username=username,
+        email=f"{username}@example.com",
+        hashed_password=await hashpwd("secret123456"),
+        account_level="normal",
+    )
+    db.add(user)
+    await db.flush()
+    db.add(Profile(user_id=user.id, nickname=nickname, role="member"))
+    await db.flush()
+    return user.id
+
+
+class TestBlogProfileInfoBlankPreservedFromSeam:
+    async def test_comment_profile_blank_nickname_stays_none_not_username(
+        self, db: AsyncSession, blog_dir: str
+    ) -> None:
+        """不经 seam 时(bug 前)会 username 回退；现 raw nickname 空白 → ProfileInfo.nickname
+        is None（blank-when-unset 拜 M3.A raw-nickname 所赐保持）—— 绝不落成 username。"""
+        owner = await _user(db, username="owner")
+        commenter = await _user_nick(db, "commenter", nickname=None)
+        series = await _series(db, user_id=owner)
+
+        comment = await create_comment(
+            db, series.id, commenter, BlogCommentCreate(content="Nice post!")
+        )
+        assert comment.profile is not None
+        assert comment.profile.nickname is None      # blank 保留，非 username 回退
+        assert comment.user_id == commenter
+
+    async def test_comment_profile_nickname_set_is_verbatim(
+        self, db: AsyncSession, blog_dir: str
+    ) -> None:
+        owner = await _user_nick(db, "ownerx", nickname="主理人")
+        commenter = await _user_nick(db, "writer", nickname="写手昵称")
+        series = await _series(db, user_id=owner)
+
+        # 经 blog list_comments 批量缝也可达同一保真；此处用 create_comment 单作者缝测逐字保真
+        comment = await create_comment(
+            db, series.id, commenter, BlogCommentCreate(content="Author post")
+        )
+        assert comment.profile is not None
+        assert comment.profile.nickname == "写手昵称"   # 设置即逐字照搬
+        assert comment.profile.role.value == "member"
+
+
 # ---- comments ----
 
 

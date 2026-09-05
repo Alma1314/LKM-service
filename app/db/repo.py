@@ -15,7 +15,6 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, ErrCode
-from app.modules.auth.schemas import ProfileInfo
 
 logger = logging.getLogger("lkm.db.repo")
 
@@ -76,29 +75,3 @@ async def isolated_update(db: AsyncSession, stmt: Update) -> None:
             "this may lose a counter/consume: %s",
             stmt,
         )
-
-
-async def get_profiles_by_user_ids(
-    db: AsyncSession, user_ids: set[int]
-) -> dict[int, ProfileInfo | None]:
-    """批量查询多个用户的 Profile（避免 N+1），映射 user_id -> ProfileInfo | None。
-
-    blog 与 articles 两处重复的批量 Profile 查询收敛于此；未命中的 id 显式落 None，
-    使返回 dict 类型稳定（含 None 值）。
-    """
-    ids = set(user_ids)
-    result: dict[int, ProfileInfo | None] = {uid: None for uid in ids}
-    if not ids:
-        return {}
-    from sqlalchemy import select
-
-    from app.modules.auth.models import Profile
-
-    rows = (
-        (await db.execute(select(Profile).where(Profile.user_id.in_(ids))))
-        .scalars()
-        .all()
-    )
-    for p in rows:
-        result[p.user_id] = ProfileInfo.model_validate(p)
-    return result

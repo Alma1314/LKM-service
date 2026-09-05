@@ -7,7 +7,6 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.core.cache import (
     TTL_ITEM_S,
@@ -23,6 +22,7 @@ from app.core.metrics import post_created_total
 from app.db.base import now_iso
 from app.db.repo import get_or_raise
 from app.modules.auth.models import User
+from app.modules.auth.snapshot import get_user_snapshot_batch
 from app.modules.content.boards.errors import BoardErr
 from app.modules.content.boards.schemas import (
     BanRequest,
@@ -85,14 +85,6 @@ from app.modules.points.service import reward, spend
 READING_WPM = 300  # 每 300 字约 1 分钟阅读时间
 
 
-def _author_name(user: User | None) -> str:
-    if user is None:
-        return ""
-    if user.profile and user.profile.nickname:
-        return user.profile.nickname
-    return user.username
-
-
 def _excerpt_of(content: str, limit: int = 150) -> str:
     text = re.sub(r"<[^>]+>", " ", content)
     text = re.sub(r"\s+", " ", text).strip()
@@ -128,15 +120,11 @@ def _comment_to_schema(c: ContentComment, author_name: str) -> ContentCommentInf
 
 
 async def _author_map(db: AsyncSession, user_ids: list[int]) -> dict[int, str]:
-    if not user_ids:
+    ids = {i for i in user_ids if i}
+    if not ids:
         return {}
-    result = await db.execute(
-        select(User)
-        .where(User.id.in_(set(user_ids)))
-        .options(selectinload(User.profile))
-    )
-    users = result.scalars().all()
-    return {u.id: _author_name(u) for u in users}
+    snaps = await get_user_snapshot_batch(db, user_ids=list(ids))
+    return {uid: s.display_name for uid, s in snaps.items()}
 
 
 async def _column_title_map(db: AsyncSession, column_ids: list[int]) -> dict[int, str]:
@@ -1174,26 +1162,14 @@ def _qa_plain(text: str, limit: int = 150) -> str:
     return t[:limit].rstrip() + ("..." if len(t) > limit else "")
 
 
-def _qa_display_name(user: User | None) -> str:
-    """用户展示名：优先 profile 昵称，否则 username。"""
-    if user is None:
-        return ""
-    if user.profile and user.profile.nickname:
-        return user.profile.nickname
-    return user.username
-
-
 async def _qa_author_names(db: AsyncSession, author_ids: list[int]) -> dict[int, str]:
-    """批量取作者展示名（id → 昵称/用户名）。"""
+    """批量取作者展示名（id → 昵称/用户名），委托 auth 只读缝批次读。
+    """
     ids = {i for i in author_ids if i}
     if not ids:
         return {}
-    rows = (
-        await db.execute(
-            select(User).where(User.id.in_(ids)).options(selectinload(User.profile))
-        )
-    ).scalars()
-    return {u.id: _qa_display_name(u) for u in rows}
+    snaps = await get_user_snapshot_batch(db, user_ids=list(ids))
+    return {uid: s.display_name for uid, s in snaps.items()}
 
 
 async def list_questions(

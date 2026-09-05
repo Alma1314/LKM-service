@@ -114,6 +114,13 @@ async def _require_owner_for_push(
             headers={"WWW-Authenticate": 'Basic realm="lkm-git"'},
         )
     username, password = creds
+    # —— A5 凭证例外（合法直接认证，非展示）——
+    # 此处按 username 直查 auth.User 并校验 hashed_password，是 git HTTP-Basic 写路径
+    # 的**凭证直读**（须拿 auth 主模型 User 的 hashed_password 列交给 verifypwd 做口令
+    # 比对），无法改经展示只读缝 auth.snapshot——后者刻意不含凭证列。故判定为合法
+    # 直接认证例外，排除在缝迁移范围外；由 A5 在 import-linter 白名单把
+    # `blog.git_http -> auth.models` 记为凭证例外即可。勿重构此读取、勿改其 User/select
+    # 单行解析与 hashed_password 的 parse/serialize。
     user = (
         (await db.execute(select(User).where(User.username == username)))
         .scalars()

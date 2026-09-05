@@ -11,6 +11,7 @@ from app.core.err import BizError
 from app.db.base import now_iso
 from app.db.repo import get_or_raise
 from app.modules.auth.models import Profile, User
+from app.modules.auth.snapshot import get_user_snapshot_batch
 from app.modules.projects.errors import ProjectErr
 from app.modules.projects.models import Project, ProjectApplication, ProjectMember
 from app.modules.projects.schemas import (
@@ -41,19 +42,23 @@ def _app_to_schema(a: ProjectApplication) -> ProjectApplicationOut:
     )
 
 
-def _user_display(u: User) -> str:
-    if u is None:
-        return ""
-    if u.profile and u.profile.nickname:
-        return u.profile.nickname
-    return u.username
-
-
-def _project_to_schema(p: Project) -> ProjectOut:
+def _project_to_schema(p: Project, *, applicant_name: str) -> ProjectOut:
     out = ProjectOut.model_validate(p)
     out.members = [ProjectMemberOut.model_validate(m) for m in p.members]
-    out.applicant_name = _user_display(p.applicant)
+    out.applicant_name = applicant_name
     return out
+
+
+async def _applicant_names(
+    db: AsyncSession, applicant_ids: list[int]
+) -> dict[int, str]:
+    """批量取申请人展示名（seam 口径 = nickname or username）；缺失 id 不在结果里。"""
+    if not applicant_ids:
+        return {}
+    snaps = await get_user_snapshot_batch(
+        db, user_ids=list(dict.fromkeys(applicant_ids))
+    )
+    return {uid: s.display_name for uid, s in snaps.items()}
 
 
 async def submit_application(
@@ -199,11 +204,8 @@ async def _apply_incubation(db: AsyncSession, applicant_id: int) -> None:
 
 
 def _project_options() -> tuple[Any, ...]:
-    """成员 + 申请人（含昵称）预加载，避免 async 会话里 lazy 访问。"""
-    return (
-        selectinload(Project.members),
-        selectinload(Project.applicant).selectinload(User.profile),
-    )
+    """成员预加载，避免 async 会话里 lazy 访问。申请人展示名改由读缝批量提供。"""
+    return (selectinload(Project.members),)
 
 
 async def list_projects(db: AsyncSession) -> list[ProjectOut]:
@@ -219,7 +221,11 @@ async def list_projects(db: AsyncSession) -> list[ProjectOut]:
         .scalars()
         .all()
     )
-    return [_project_to_schema(p) for p in rows]
+    names = await _applicant_names(db, [p.applicant_id for p in rows])
+    return [
+        _project_to_schema(p, applicant_name=names.get(p.applicant_id, ""))
+        for p in rows
+    ]
 
 
 async def get_project(db: AsyncSession, project_id: int) -> Project:
@@ -233,4 +239,6 @@ async def get_project(db: AsyncSession, project_id: int) -> Project:
 
 
 async def get_project_ex(db: AsyncSession, project_id: int) -> ProjectOut:
-    return _project_to_schema(await get_project(db, project_id))
+    p = await get_project(db, project_id)
+    names = await _applicant_names(db, [p.applicant_id])
+    return _project_to_schema(p, applicant_name=names.get(p.applicant_id, ""))

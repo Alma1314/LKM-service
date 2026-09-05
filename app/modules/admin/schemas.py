@@ -72,3 +72,29 @@ class AdminTrendItem(BaseModel):
     date: datetime.date
     user_delta: int
     post_delta: int
+
+
+class DimUserRow(BaseModel):
+    """离线报表宽表（``user_dim``，M3.B0.3）的只读 accounting 行。
+
+    供运营/报表/accounting 这类批式、可容忍 sync_ts 滞后、绝不容忍 PII 横向散布的读方
+    （B0.3 read port，见 ``app.modules.admin.dim_report``）。字段为 user_dim 反范式副本的
+    非 PII accounting 列 + (gate 开启时才带) 镜像 email。**本行绝不驱动任何管理/改动作**：
+    运营/报表读它绝无行级写会话；在线管理/动作列表继续走 A4 auth 实时缝。
+
+    email 语义镜像 user_dim.email（离线副本，非可写源）；按与 A4 ``AdminUserListItem``
+    相同的 ``include_pii`` 布尔门控——默认不投影/不带，避免离线副本 PII 经报表横向散布。
+    sync_ts 供读方判该行离最后一次 ETL/事件刷新多近（可容忍滞后）。
+    """
+
+    user_id: int
+    username: str
+    account_level: str
+    is_banned: bool
+    is_locked: bool
+    created_at: datetime.datetime
+    sync_ts: datetime.datetime
+    nickname: str | None = None
+    role: str | None = None
+    # PII（离线副本镜像；include_pii=True 才投影）
+    email: str | None = None

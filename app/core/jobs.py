@@ -16,6 +16,10 @@ RKEY_SEND_CODE = "event.send_code"
 RKEY_SEND_MAGIC = "event.send_magic_link"
 RKEY_NOTIFY = "event.notify_upload"
 RKEY_POINTS = "event.apply_point"
+# auth 用户快照失效事件（A7）：变更后投递给 consumer → 反陈旧失效 user:snap
+RKEY_USER_UPDATED = "event.user.updated"
+RKEY_USER_BANNED = "event.user.banned"
+RKEY_USER_SESSION_REVOKE = "event.user.session_revoke"
 
 # 降级同步发送的上限时长（同旧实现）。
 _SEND_TIMEOUT_S = 10.0

@@ -9,9 +9,13 @@ from sqlalchemy.orm import selectinload
 from app.core.common import PageData, paginate_offset, paginate_pages
 from app.core.err import BizError, CommonErr
 from app.db.base import now_iso
-from app.db.repo import get_or_raise, get_profiles_by_user_ids
-from app.modules.auth.models import Profile
+from app.db.repo import get_or_raise
 from app.modules.auth.schemas import ProfileInfo
+from app.modules.auth.snapshot import (
+    get_user_snapshot,
+    get_user_snapshot_batch,
+    profile_info_from_snap,
+)
 from app.modules.blog import git_svc
 from app.modules.blog.errors import BlogErr
 from app.modules.blog.models import (
@@ -103,21 +107,19 @@ async def _starred_ids(
 
 
 async def _get_profile(db: AsyncSession, user_id: int) -> ProfileInfo | None:
-    profile = (
-        (await db.execute(select(Profile).where(Profile.user_id == user_id)))
-        .scalars()
-        .first()
-    )
-    if profile:
-        return ProfileInfo.model_validate(profile)
-    return None
+    """评论作者 ProfileInfo，经 auth 读缝取（M3.A残项：不再直读 Profile）。"""
+    snap = await get_user_snapshot(db, user_id=user_id)
+    if snap is None:
+        return None
+    return profile_info_from_snap(snap)
 
 
 async def _get_profiles(
     db: AsyncSession, user_ids: set[int]
 ) -> dict[int, ProfileInfo | None]:
-    """批量查询多个用户的 Profile，避免逐条查询的 N+1（收敛到 repo 公共查询）。"""
-    return await get_profiles_by_user_ids(db, user_ids)
+    """批量取评论作者 ProfileInfo（经 auth 批量读缝一次查齐，避免逐条补 profile 的散读）。"""
+    snaps = await get_user_snapshot_batch(db, user_ids=list(user_ids))
+    return {uid: profile_info_from_snap(snaps[uid]) for uid in snaps}
 
 
 def _sha3(content: str) -> str:

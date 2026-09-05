@@ -22,6 +22,7 @@ from app.core.err import respond
 from app.db.session import get_read_session
 from app.modules.auth.deps import CurrentUser
 from app.modules.auth.models import User
+from app.modules.auth.snapshot import list_user_snapshots
 from app.modules.content.models import ContentItem, ContentType
 from app.modules.files.models import LibraryFile
 from app.modules.rbac.permissions import Permission
@@ -43,37 +44,31 @@ async def admin_list_users(
     db: AsyncSession = Depends(get_read_session),
 ) -> PageData[AdminUserListItem]:
     """
-    用户管理列表。默认隐藏 email/phone（PII），可按用户名/邮箱筛选。
-    include_pii 目前仅由调用方自决；若后续要分级管控，请额外加敏感级依赖。
+    用户管理列表。默认隐藏 email/phone（PII），`keyword` 仅按**用户名**筛选
+    (邮箱不展示也不参与筛选，避免泄露式枚举)。
+    授权门槛(require_admin 之上 + require_permission)在本路线判定后，把
+    include_pii 布尔透传给 auth 读缝 ``list_user_snapshots``；列表分页/门控语义
+    收敛到缝，响应 JSON 形态(AdminUserListItem 字段 + PageData total/page/pages)
+    保持不变。
     """
     await require_permission(db, _cur, Permission.admin_users_manage)
-    query = select(User)
-    count_q = select(func.count(User.id))
-
-    if keyword:
-        # 关键字匹配用户名；邮箱不展示时只用用户名匹配，避免泄露式筛选
-        query = query.where(User.username.ilike(f"%{keyword}%"))
-        count_q = count_q.where(User.username.ilike(f"%{keyword}%"))
-
-    total = (await db.execute(count_q)).scalar() or 0
-    rows = (
-        await db.execute(
-            query.order_by(User.id.desc()).offset(pag.offset).limit(pag.limit)
-        )
-    ).scalars()
+    # 行查询 + 过滤后 total 均由缝(list_user_snapshots)产出：id desc + offset 分页
+    rows, total = await list_user_snapshots(
+        db, q=keyword, offset=pag.offset, limit=pag.limit, include_pii=include_pii
+    )
     # 返回 schema 实例而非 model_dump，使响应体为 PageData 实例（Task 1 依赖
     # isinstance 判定位以自动附带 X-Total 头）。
     items = [
         AdminUserListItem(
-            id=int(r.id),
-            username=r.username,
-            account_level=str(r.account_level),
-            is_locked=bool(r.is_locked),
-            created_at=r.created_at,
-            email=r.email if include_pii else None,
-            phone=r.phone if include_pii else None,
+            id=m.id,
+            username=m.username,
+            account_level=m.account_level,
+            is_locked=m.is_locked,
+            created_at=m.created_at,
+            email=m.email,
+            phone=m.phone,
         )
-        for r in rows
+        for m in rows
     ]
 
     return PageData(

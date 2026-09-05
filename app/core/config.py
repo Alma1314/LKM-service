@@ -94,6 +94,18 @@ class Settings(BaseSettings):
     # 生产必须设置固定随机值，供桶通知 webhook 的 Authorization: Bearer 头校验。
     files_notify_token: str = ""
 
+    # AUTH 读面 HTTP seam（M3 B1.2）：单体单用户快照 miss 回填可跨进程改走 AUTH 读端点。
+    #   auth_http_url:   AUTH 进程/服务基址（如 http://auth:8001，不带 api_prefix；本仓库
+    #                     内部 client 在运行时拼接 settings.api_prefix）。空串 = 关闭缝
+    #                     （默认）→ 快照 miss 继续单体/进程内直读业务 DB（既存 A6 语义零改动）。
+    #   auth_http_token: 该内部读端点共享令牌（Bearer）。生产设置固定随机长值；URL 非空而
+    #                     token 为空时 seam 不启用（fail-closed，端点一律 401、client fail-open）。
+    #   auth_http_timeout_s: 单次 internal read 超时；AUTH 不可达/超时 → client 抛 → seam
+    #                     fail-open 回落本进程 DB（读不被某死/慢 AUTH 楔住）。见 B1.2 report。
+    auth_http_url: str = ""
+    auth_http_token: str = ""
+    auth_http_timeout_s: float = 3.0
+
     # schema 初始化策略（开发默认 create_all，免维护增量迁移）：
     #   False（默认）→ init_db 用 Base.metadata.create_all()，只建缺失表、不 ALTER、
     #                  不依赖 Alembic；开发新增表只改 models.py 即可，无需手写迁移文件。

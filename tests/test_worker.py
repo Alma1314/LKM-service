@@ -49,8 +49,20 @@ async def test_declare_topology_declares_queues_and_dlx() -> None:
     # DLQ 是直连死信队列, 不设 x-dead-letter（避免死信再死信）
     dlq_args = dict(declared_queues)[worker.DLQ]
     assert "x-dead-letter-exchange" not in dlq_args.get("arguments", {})
-    # 每条业务队列都绑定到 exchange（send(2) notify(1) points(1) jobs(2)）+ DLQ→DLX(1)
-    assert len(bound) == 2 + 1 + 1 + 2 + 1
+    # 每条业务队列都绑定到 exchange（send(2) notify(1) points(1) jobs(5)）+ DLQ→DLX(1)。
+    # jobs 列 = cron.reconcile + cron.cleanup + 三条 auth user 事件(event.user.{updated,banned,session_revoke})，
+    # 见 app/modules/auth/tasks.py 的 ROUTING_KEYS_SNAP；此处如实反映现行拓扑。
+    send_keys = {b[2] for b in bound if b[0] == worker.SEND_QUEUE}
+    assert send_keys == {"event.send_code", "event.send_magic_link"}
+    jobs_keys = {b[2] for b in bound if b[0] == worker.DEFAULT_QUEUE}
+    assert {
+        "cron.reconcile",
+        "cron.cleanup",
+        "event.user.updated",
+        "event.user.banned",
+        "event.user.session_revoke",
+    } <= jobs_keys
+    assert len(bound) == 2 + 1 + 1 + 5 + 1
     # DLQ 必须绑定到 DLX（fanout，死信消息按原始 rk republish 到 DLX → 落 DLQ；
     # 缺这步死信会因 unroutable 被静默丢弃）。显式断言这一关键路由存在。
     dlq_binds = [b for b in bound if b[0] == worker.DLQ]

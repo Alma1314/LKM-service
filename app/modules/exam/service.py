@@ -12,6 +12,7 @@ from app.core.err import BizError, CommonErr
 from app.db.base import now_iso
 from app.db.repo import get_or_raise
 from app.modules.auth.models import Profile, User
+from app.modules.auth.snapshot import get_user_snapshot_batch
 from app.modules.exam.errors import ExamErr
 from app.modules.exam.models import (
     Exam,
@@ -373,35 +374,47 @@ async def leaderboard(
         # 认证考试默认不开放公开榜单，仅返回空（按 spec：认证成绩个人可见）。
         return [], 0
     rows = (
-        await db.execute(
-            select(ExamCertificate, User.username, Profile.nickname)
-            .join(User, User.id == ExamCertificate.user_id)
-            .outerjoin(Profile, Profile.user_id == ExamCertificate.user_id)
-            .where(ExamCertificate.exam_id == exam_id)
-            .order_by(ExamCertificate.score.desc(), ExamCertificate.issued_at.asc())
+        (
+            await db.execute(
+                select(ExamCertificate)
+                .join(User, User.id == ExamCertificate.user_id)
+                .where(ExamCertificate.exam_id == exam_id)
+                .order_by(
+                    ExamCertificate.score.desc(),
+                    ExamCertificate.issued_at.asc(),
+                )
+            )
         )
-    ).all()
+        .scalars()
+        .all()
+    )
     # 每名用户只保留最高成绩（取最早达标的那张证书），随后按成绩降序。
-    best: dict[int, tuple[ExamCertificate, str, str]] = {}
-    for cert, username, nickname in rows:
+    best: dict[int, ExamCertificate] = {}
+    for cert in rows:
         if cert.user_id not in best:
-            best[cert.user_id] = (cert, username, nickname)
+            best[cert.user_id] = cert
     winners = sorted(
         best.values(),
-        key=lambda row: (row[0].score, -row[0].issued_at.timestamp()),
+        key=lambda c: (c.score, -c.issued_at.timestamp()),
         reverse=True,
     )
     total = len(winners)
     page_rows = winners[offset : offset + limit]
+    page_ids = [c.user_id for c in page_rows]
+    snaps = await get_user_snapshot_batch(db, user_ids=page_ids)
     return (
         [
             LeaderboardEntry(
-                user_id=cert.user_id,
-                display_name=nickname or username or "",
-                score=cert.score,
-                certified=cert.passed,
+                user_id=c.user_id,
+                display_name=(
+                    snaps[c.user_id].display_name
+                    if c.user_id in snaps
+                    else str(c.user_id)
+                ),
+                score=c.score,
+                certified=c.passed,
             )
-            for cert, username, nickname in page_rows
+            for c in page_rows
         ],
         total,
     )

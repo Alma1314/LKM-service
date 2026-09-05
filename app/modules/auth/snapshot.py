@@ -1,0 +1,314 @@
+"""auth 统一只读身份缝：UserSnapshot 冻结类型 + 单/批读 + 管理面 PII 门列表。
+
+M3.A「读权收束」第一腿（A1，纯增量）+ 管理面腿（A4）+ 单用户读缓存腿（A6）。把散落全仓
+的 ``select(User)...selectinload(User.profile)`` 展示性读取收敛到此缝。
+
+不变量：
+- ``UserSnapshot`` 是冻结定长 schema，**不含** email/phone/hashed_password 等
+  敏感/PII/凭证列；敏感列只在 auth/admin 授权路径读取。
+- ``_to_snap`` 假定调用方已把 ``User.profile`` 载入(selectinload/outerjoin)，
+  不做二次回查；profile 缺失为空条目时回退到 username 并给空 avatar/role。
+- ``banned`` 以 User.is_locked 作为现状可行替代；后续 banned 事件(改封禁语义)
+  现 Task A register/auth 对齐。
+- ``list_user_snapshots``（A4）是后台管理面的**分页列表**读：返回管理行
+  ``UserManagementItem``（非展示 ``UserSnapshot``），**id 列序 desc + offset 分页 +
+  ``total``**，以贴合其唯一消费方 admin 的 ``/admin/users`` 的 ``PageData`` 分页形态。
+  ``include_pii=False``（默认）：SELECT **不投影** email/phone 两列，内存/网络零 PII；
+  仅在 ``include_pii=True``（由路由在 admin 授权门槛后自决并透传）时才取这两列。
+  本函数不带任何鉴权——授权由路由层（require_admin + require_permission）负责。
+- 单用户读走 cache-through（A6）：``get_user_snapshot`` 命中 ``core.user_cache`` 直接返回
+  ``UserSnapshot``；miss 时回填带来源版本（User.updated_at）+ 反陈旧 CAS，展示语义与直读
+  DB 完全一致（diff=0）。``get_user_snapshot_batch`` 保持 DB 直读单查询语义（不逐行 N+1，
+  也不对批量集成版本 CAS——热目标 auth/self、feed 'me' 已由单读缓存覆盖，见 task-A6-report）。
+  缓存失效由 A7 走 ``core.user_cache.invalidate_user_snap``，不在本缝接线。
+- B1.2 HTTP seam（默认 OFF）：当配置 ``auth_http_url`` + ``auth_http_token``（见 core.config）
+  时，本缝的 **miss 回填源**从「就地直读本进程业务 DB」切换成「跨 HTTP 打 AUTH 读端点」
+  （``auth.user_http``）——在线读路径可由不同进程序提供。AUTH 不可达/超时/畸形 → client 抛
+  ``UserHttpUnavailable`` → **fail-open 回落本进程 DB**（读永不 crash、不以 stale 当 truth）；
+  来源版本取 HTTP 信封带出的 AUTH 端真实 sv，缓存 CAS 语义不变（不捏造版本，不泄露面加宽）。
+  打开时每次 miss 都整段走 client（含往返）；关闭时是既有 A6 原路径、行为逐字节不变（回归锚）。
+"""
+
+from __future__ import annotations
+
+import datetime
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+import app.core.user_cache as user_cache
+from app.modules.auth import user_http
+from app.modules.auth.models import Profile, User
+from app.modules.auth.schemas import ProfileInfo, ProfileRole
+
+logger = logging.getLogger("lkm.auth.snapshot")
+
+
+@dataclass(frozen=True)
+class UserSnapshot:
+    """业务侧固定身份读模型。不含 email/phone/凭证 等 PII/敏感列。
+
+    ``nickname``（raw，**非 PII**，同 username/display_name 属展示身份列）为 profiles.nickname
+    的逐字照搬：空白时是 None —— **不回退到 username**。这与 ``display_name``（nickname or
+    username 合成）刻意保持**语义分流**：需要"展示名默认回退"的用 display_name；需要"nickname
+    是否真被设置"（如 blog/articles 组 ProfileInfo 须保 blank-when-unset）的读 raw nickname。
+    """
+
+    user_id: int
+    username: str
+    display_name: str
+    avatar: str | None
+    role: str | None
+    account_level: str
+    banned: bool
+    nickname: str | None
+
+
+def _to_snap(user: User) -> UserSnapshot:
+    """User(profile 已载入) → UserSnapshot。数据读取方须已载入 profile。"""
+    p: Profile | None = user.profile
+    return UserSnapshot(
+        user_id=user.id,
+        username=user.username,
+        display_name=(p.nickname or user.username) if p else user.username,
+        avatar=p.avatar if p else None,
+        role=p.role if p else None,
+        account_level=user.account_level,
+        banned=bool(user.is_locked),
+        # M3 残项 raw nickname：profiles.nickname 原样（空白即 None），**永不作
+        # username 回退、永不合成**——仅供需要"nickname 是否真的被设置"的消费方
+        # （如 blog/articles 组装 ProfileInfo 保 blank-when-unset）从缝读取，替代
+        # 其自身的直接 Profile 行读。``display_name`` 语义不变（仍 nickname-or-username）。
+        nickname=p.nickname if p else None,
+    )
+
+
+_SNAP_FIELDS = (
+    "user_id",
+    "username",
+    "display_name",
+    "avatar",
+    "role",
+    "account_level",
+    "banned",
+    "nickname",
+)
+
+
+def _snap_to_dict(snap: UserSnapshot) -> dict[str, Any]:
+    """UserSnapshot → JSON 可存 dict（键即冻结字段名，读取端 `UserSnapshot(**d)` 原样重建）。"""
+    return {f: getattr(snap, f) for f in _SNAP_FIELDS}
+
+
+async def get_user_snapshot(db: AsyncSession, *, user_id: int) -> UserSnapshot | None:
+    """按 id 取单用户快照；不存在返回 None。走 cache-through（A6）+ B1.2 HTTP seam。
+
+    - 命中 ``core.user_cache``：以冻结字段重建 ``UserSnapshot`` 直接返回（展示语义与直读 DB
+      等价）；Redis 故障/失效 → miss。
+    - miss 会**先捕获失效代次（``expected_epoch``）再取回填源**。回填源 = 就地直读 DB（A6，
+      默认）或跨 HTTP 打 AUTH 读端点（B1.2 seam，见 ``auth.user_http``）；"取到的既有
+      snapshot（或权威不存在）都先验真，再以来源版本 CAS 回填（缓存防线只对捕获 epoch 之后
+      未再失效、且 sv 不陈旧的回填放行）"。回填被拒照常返回刚取到的值——缓存不影响读语义。
+    - fail-open：seam 开启时若 AUTH 不可达/超时/畸形（client 抛 ``UserHttpUnavailable``），
+      回退本进程 DB 直读一并返回（读永不 crash、不以 stale 当 truth）。
+    """
+
+    cached = await user_cache.read_snap(user_id)
+    if cached is not None:
+        return _from_cache_dict(cached)
+    expected_epoch = await user_cache.current_epoch(user_id)
+
+    fields, version = await _retrieve_fields(user_id, db)
+
+    if fields is None:  # 权威不存在：不缓存缺行，直接 None（含 seam 关闭/离线沿直读路径同一语义）
+        return None
+
+    snap = UserSnapshot(**fields)
+    if version is not None:
+        await user_cache.write_if_newer(user_id, _snap_to_dict(snap), version, expected_epoch)
+    return snap
+
+
+async def _retrieve_fields(
+    user_id: int, db: AsyncSession
+) -> tuple[dict[str, Any] | None, int | None]:
+    """取回填源的**冻结字段 dict + 来源版本**，失败已按 fail-open 语义收口。
+
+    - seam 打开（``user_http.enabled()``）且 AUTH 响应：返回其冻结字段 + AUTH 端真实 sv。
+    - seam 打开但 AUTH 不可用/畸形（抛 ``UserHttpUnavailable``）：记降级日志，**回落 DB**
+      （就地 ``select(User)...`` + ``_to_snap`` + ``version_of_updated_at``），不把失败当 None。
+    - seam 关闭（默认）：就地 DB 直读（既有 A6 原路径）。
+    """
+    if user_http.enabled():
+        try:
+            return await user_http.fetch_user_http_payload(user_id)
+        except user_http.UserHttpUnavailable:
+            logger.warning("auth_http read failed uid=%s; fail-open to local DB", user_id)
+    return await _fetch_fields_from_db(user_id, db)
+
+
+async def _fetch_fields_from_db(
+    user_id: int, db: AsyncSession
+) -> tuple[dict[str, Any] | None, int | None]:
+    """就地直读业务 DB：User(+profile) → 冻结字段 dict + 来源版本（A6 原路径的抽出的查询体）。
+
+    返回 ``(fields_dict=None, version=None)`` 表示该用户不存在（权威）；否则带来源版本。
+    """
+    row = (
+        await db.execute(
+            select(User).where(User.id == user_id).options(selectinload(User.profile))
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return None, None
+    snap = _to_snap(row)
+    version = user_cache.version_of_updated_at(row.updated_at) if row.updated_at else None
+    return _snap_to_dict(snap), version
+
+
+def _from_cache_dict(data: dict[str, Any]) -> UserSnapshot | None:
+    """缓存 dict → UserSnapshot。字段残缺/多余一律判不可重建 → None（回落 DB，杜绝脏缓存透出）。"""
+    try:
+        return UserSnapshot(**{k: data[k] for k in _SNAP_FIELDS})
+    except (KeyError, TypeError):
+        return None
+
+
+async def get_user_snapshot_batch(
+    db: AsyncSession, *, user_ids: list[int]
+) -> dict[int, UserSnapshot]:
+    """按 id 列表批量取快照；不存在的 id 不在结果里。空列表返回空 dict。"""
+    if not user_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(User)
+            .where(User.id.in_(user_ids))
+            .options(selectinload(User.profile))
+        )
+    ).scalars()
+    return {u.id: _to_snap(u) for u in rows}
+
+
+def profile_info_from_snap(snap: UserSnapshot) -> ProfileInfo | None:
+    """快照缝 → ``ProfileInfo`` DTO（M3.A残项：blog/articles 组装作者资料时脱离直读 Profile）。
+
+    - ``nickname`` 取 snap 的 **raw nickname**（原样，空白即 None），**且不回退 username** ——
+      保持 blog/articles ProfileInfo blank-when-unset 语义（这与 display_name 的合成回退刻意分流）。
+    - ``role`` 由 snap.role 字符串转 ``ProfileRole``（None → 默认 MEMBER）。
+    - 无 Profile 的用户（snap.role 缺失 → 原 repo 路径不产出 ProfileInfo）返回 None，保持原先
+      ``profiles.get(uid)`` 对 no-profile 用户落 None 的语义；其余字段 avatar/nickname 逐字节照搬。
+    ``ProfileRole``/nickname/avatar 均非 PII，展示方本就承载；本转换不含 email/phone/凭证。
+    """
+    if snap.role is None:  # profile.role 非空(NOT NULL default='member')，None 即无 Profile 行
+        return None
+    try:
+        role = ProfileRole(snap.role)
+    except ValueError:
+        role = ProfileRole.MEMBER
+    return ProfileInfo(nickname=snap.nickname, avatar=snap.avatar, role=role)
+
+
+@dataclass(frozen=True)
+class UserManagementItem:
+    """后台管理面用户行：管理列(id/username/account_level/is_locked/created_at)恒定。
+
+    刻意**不是**展示型 ``UserSnapshot``：管理行是 admin 治理列表的必要字段（created_at/
+    is_locked 等展示缝不暴露），且可条件承载 PII。email/phone 字段在 ``include_pii=False``
+    的投影路径**根本不被 SELECT**，恒为 None（默认构造不读写 User 的 PII 列）；只有
+    ``include_pii=True`` 的项目才填充。本类型仅供管理授权读，不入展示缝——评论侧等展示
+    消费方接触到的仍是零 PII 的 ``UserSnapshot``。
+    """
+
+    id: int
+    username: str
+    account_level: str
+    is_locked: bool
+    created_at: datetime.datetime
+    # PII（默认隐藏；include_pii=True 才填充）
+    email: str | None = None
+    phone: str | None = None
+
+
+async def list_user_snapshots(
+    db: AsyncSession,
+    *,
+    q: str | None = None,
+    offset: int = 0,
+    limit: int = 50,
+    include_pii: bool = False,
+) -> tuple[list[UserManagementItem], int]:
+    """管理面分页列表读（A4）。返回 ``(id 列序 desc 的一页 rows, 过滤后 total)``。
+
+    - **本函数不做任何授权**。admin ``require_admin + require_permission`` 门槛在路由层
+      判定后自行决定 ``include_pii``（授权与 gate 都归路由），此处仅接收布尔。
+    - ``q`` 关键字仅按 ``User.username`` 匹配（与既有 admin 行为一致，且邮箱不展示时
+      不按邮箱筛选以免泄露式枚举）。
+    - ``include_pii=False``（默认）：SELECT 不投影 email/phone，PII 零接触；
+      True 时才取邮件/手机。创建时间/is_locked/account_level 非 PII（绑定约束仅
+      email/phone/凭证为 PII），管理行恒带。
+    - 分页对接 admin 的 ``PageData``：offset + limit + 返回过滤后 total（路由据此算
+      page/pages）。排序用 ``id desc`` 与既有 admin 列表一致、分页键稳定。
+    """
+    # 计数：与行查询同 predicate(q 仅按 username)，路由据此算 page/pages。
+    count_q = select(func.count(User.id))
+    cond = User.username.ilike(f"%{q}%") if q else None
+    if cond is not None:
+        count_q = count_q.where(cond)
+    total = int((await db.execute(count_q)).scalar_one() or 0)
+
+    if include_pii:
+        # 显式投影 email/phone：PII 只能在 gate 打开时接触这两列
+        stmt = select(
+            User.id,
+            User.username,
+            User.account_level,
+            User.is_locked,
+            User.created_at,
+            User.email,
+            User.phone,
+        )
+        if cond is not None:
+            stmt = stmt.where(cond)
+        stmt = stmt.order_by(User.id.desc()).offset(offset).limit(limit)
+        rows = (await db.execute(stmt)).all()
+        items = [
+            UserManagementItem(
+                id=r[0],
+                username=r[1],
+                account_level=str(r[2]),
+                is_locked=bool(r[3]),
+                created_at=r[4],
+                email=r[5],
+                phone=r[6],
+            )
+            for r in rows
+        ]
+    else:
+        # no-pii：SELECT 不投影 email/phone，内存/网络零 PII，字段落默认 None
+        stmt = select(
+            User.id,
+            User.username,
+            User.account_level,
+            User.is_locked,
+            User.created_at,
+        )
+        if cond is not None:
+            stmt = stmt.where(cond)
+        stmt = stmt.order_by(User.id.desc()).offset(offset).limit(limit)
+        rows = (await db.execute(stmt)).all()
+        items = [
+            UserManagementItem(
+                id=r[0],
+                username=r[1],
+                account_level=str(r[2]),
+                is_locked=bool(r[3]),
+                created_at=r[4],
+            )
+            for r in rows
+        ]
+    return items, total

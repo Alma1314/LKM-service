@@ -1,7 +1,6 @@
 """common 共享 helper 与通用响应契约测试（parse_tags / 分页 / PageData 自动 X-Total 头）。"""
 
 from fastapi.responses import JSONResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.common import (
     PageData,
@@ -41,30 +40,6 @@ def test_tag_names_sequence_dedups_preserving_order() -> None:
     assert tag_names_sequence(["a", "", "b", "a", "c"]) == ["a", "b", "c"]
     assert tag_names_sequence([]) == []
     assert tag_names_sequence(["", ""]) == []
-
-
-async def test_get_profiles_by_user_ids_fills_none_for_missing(
-    db: AsyncSession,
-) -> None:
-    """批量查询：已存在的 id 映射回 ProfileInfo，缺失 id 显式 None。"""
-    from app.db.repo import get_profiles_by_user_ids
-    from app.modules.auth.models import Profile, User
-
-    u1 = User(
-        username="prof1",
-        email="prof1@example.com",
-        hashed_password="x",
-        account_level="normal",
-    )
-    db.add(u1)
-    await db.flush()
-    db.add(Profile(user_id=u1.id, nickname="Prof One"))
-    await db.flush()
-
-    result = await get_profiles_by_user_ids(db, {u1.id, 999_999})
-    assert result[u1.id] is not None
-    assert result[999_999] is None
-    assert await get_profiles_by_user_ids(db, set()) == {}
 
 
 def test_PageData_shape() -> None:

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.err import BizError
 from app.db.repo import get_or_raise
+from app.modules.auth import events
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import Profile, User
 from app.modules.auth.schemas import ProfileInfo, ProfileUpdate
@@ -41,6 +42,8 @@ async def update_profile(db: AsyncSession, user_id: int, info: ProfileUpdate) ->
     if info.avatar is not None:
         profile.avatar = info.avatar
     await db.flush()
+    # 快照 display_name/avatar 一并依赖 Profile.nickname/avatar（A6）→ 变更须失效 user:snap。
+    await events.notify_user_updated(db, user_id)
 
 
 class _Readable(Protocol):
@@ -113,6 +116,8 @@ async def update_avatar(db: AsyncSession, user_id: int, stream: _Readable) -> st
 
     profile.avatar = new_key
     await db.flush()
+    # 头像为展示 URL（immutable 指纹 key），Profile.avatar 变更须同步失效 user:snap。
+    await events.notify_user_updated(db, user_id)
     return new_key
 
 
