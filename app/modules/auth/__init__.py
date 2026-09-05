@@ -25,6 +25,7 @@ def __getattr__(name: str) -> Any:
         if _exported_routers is None:
             from app.modules.auth.router import router
             from app.modules.auth.router_2fa import router as router_2fa
+            from app.modules.auth.router_authz import router as router_authz
             from app.modules.auth.router_oauth import router as router_oauth
             from app.modules.auth.router_onboarding import router as router_onboarding
             from app.modules.auth.router_passkey import router as router_passkey
@@ -37,6 +38,7 @@ def __getattr__(name: str) -> Any:
             _exported_routers = [
                 router,
                 router_2fa,
+                router_authz,
                 router_oauth,
                 router_onboarding,
                 router_passkey,

@@ -37,8 +37,7 @@ from app.core.cache import (
 from app.core.err import BizError
 from app.db.base import now_iso
 from app.modules.admin.moderation.engine import evaluate, load_active_rules
-from app.modules.auth.models import User
-from app.modules.auth.snapshot import get_user_snapshot_batch
+from app.modules.auth.snapshot import get_user_snapshot, get_user_snapshot_batch
 from app.modules.content.models import Board
 from app.modules.feed import feed as feed_src
 from app.modules.feed.errors import FollowErr
@@ -63,8 +62,9 @@ async def follow_user(db: AsyncSession, follower_id: int, following_id: int) -> 
     """follower 关注 following（幂等：重复关注静默成功）。"""
     if follower_id == following_id:
         raise BizError(FollowErr.CANNOT_FOLLOW_SELF, "不能关注自己")
-    target = await db.get(User, following_id)
-    if target is None:
+    # 关注目标身份存在性走 auth 快照缝（business 不直读 auth.users）。
+    target_snap = await get_user_snapshot(db, user_id=following_id)
+    if target_snap is None:
         raise BizError(FollowErr.TARGET_NOT_FOUND, "关注目标用户不存在")
 
     row = await db.scalar(

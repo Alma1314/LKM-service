@@ -21,8 +21,7 @@ from app.core.err import BizError
 from app.core.metrics import post_created_total
 from app.db.base import now_iso
 from app.db.repo import get_or_raise
-from app.modules.auth.models import User
-from app.modules.auth.snapshot import get_user_snapshot_batch
+from app.modules.auth.snapshot import get_user_snapshot, get_user_snapshot_batch
 from app.modules.content.boards.errors import BoardErr
 from app.modules.content.boards.schemas import (
     BanRequest,
@@ -1041,8 +1040,9 @@ async def check_post_allowed(db: AsyncSession, board_id: int, user_id: int) -> N
     """校验用户在板块的发帖资格：板块存在 / 可见 / 未禁言 / 认证 / 日限发。异常抛相应 BoardErr。"""
     board = await get_board_ex(db, board_id)
     if not board.is_public:
-        # 私有板块：需 normal 以上（认证成员）
-        ulevel = await db.scalar(select(User.account_level).where(User.id == user_id))
+        # 私有板块：需 normal 以上（认证成员）。account_level 判给 auth 快照缝（含 banned 态）。
+        _snap = await get_user_snapshot(db, user_id=user_id)
+        ulevel = _snap.account_level if _snap else None
         if ulevel not in ("normal", "admin"):
             raise BizError(BoardErr.BOARD_NOT_PUBLIC)
     if await is_banned(db, board.id, user_id):

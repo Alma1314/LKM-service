@@ -133,3 +133,54 @@ def _to_fields_or_unavailable(data: Any) -> dict[str, Any]:
     if missing:
         raise UserHttpUnavailable(f"auth_http malformed snapshot, missing={missing}")
     return {f: data[f] for f in _SNAP_FIELDS}
+
+
+# —— 授权判定 seam（M3.B S3）：monolith deps 把“会话存活/失效/角色政令”委托给 auth 权威 ——
+
+_AUTHZ_FIELDS: tuple[str, ...] = ("ok", "account_level", "role")
+
+
+async def authorize_via_seam(
+    *,
+    user_id: int,
+    expect_token_version: int,
+    iat_ts: float | int | None,
+    require_admin: bool = False,
+) -> dict[str, object]:
+    """经 AUTH internal authz 端点裁决一次会话：返回 ``{"ok","cause","account_level","role"}``。
+
+    **鉴权缝 = fail-closed**（与快照读缝的 fail-open 相反）：鉴权“拿不到/异常”必须以拒绝收场，
+    不能保守回落本进程（拆库后本就无本地 auth 真值可退）。故任何网络/超时/4xx/5xx/畸形 → 抛
+    ``UserHttpUnavailable``，由 deps 按“不可用即拒”（403）处理。仅当调用方显式配置了 seam
+    （``enabled()``）才走 HTTP；seam 关闭时调用方应回落到其本地路径。
+    """
+    url = f"{settings.auth_http_url}{settings.api_prefix}/auth/internal/authz"
+    headers = {
+        "Authorization": f"Bearer {settings.auth_http_token}",
+        "Accept": "application/json",
+    }
+    body = {
+        "user_id": user_id,
+        "expect_token_version": expect_token_version,
+        "iat_ts": iat_ts,
+        "require_admin": require_admin,
+    }
+    try:
+        async with _build_client() as client:
+            resp = await client.post(url, headers=headers, json=body)
+    except httpx.HTTPError as exc:
+        raise UserHttpUnavailable(f"auth_http authz request failed: {exc}") from None
+
+    if resp.status_code != 200:
+        raise UserHttpUnavailable(f"auth_http authz unexpected status {resp.status_code}")
+
+    payload = _coerce_json(resp)
+    for f in _AUTHZ_FIELDS:
+        if f not in payload:
+            raise UserHttpUnavailable(f"auth_http authz missing field {f}")
+    return {
+        "ok": bool(payload.get("ok")),
+        "cause": payload.get("cause"),
+        "account_level": payload.get("account_level"),
+        "role": payload.get("role"),
+    }

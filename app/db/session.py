@@ -14,41 +14,72 @@ from app.core.config import settings
 from app.core.err import BizError
 from app.modules.auth.errors import AuthErr
 
+# —— 主库（monolith，realm="default"）的惰性单例。M3.B 物理拆目标：monolith 主进程
+# 只触达 database_url（auth 独立库走单独的 app/db/auth_session.py，主进程不侧挂）。
 _async_engine: AsyncEngine | None = None
 _AsyncSessionLocal: async_sessionmaker[AsyncSession] | None = None
+
+
+def _set_sqlite_pragma_on_connect(engine: AsyncEngine) -> None:
+    """为 sqlite 引擎开启每连接外键 pragma（外键必须按连接启用）。"""
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys = ON")
+        cursor.close()
+
+
+def create_realm_async_engine(
+    url: str,
+    *,
+    driver: str,
+    pool_size: int | None = None,
+    pool_max_overflow: int | None = None,
+    pool_pre_ping: bool | None = None,
+) -> AsyncEngine:
+    """按驱动/池参数建立 async 引擎，并配 sqlite 的外键 pragma 钩子。
+
+    供主库（:func:`get_async_engine`）与 auth 独立库（app/db/auth_session.py）共用的唯一
+    建池逻辑，避免两处策略漂移：
+    - PostgreSQL/asyncpg 走显式连接池 + pre_ping；
+    - SQLite 走 NullPool（单文件多连接无益）并逐连接开启外键 pragma。
+    """
+    connect_args: dict[str, object] = {}
+    engine_kwargs: dict[str, object] = {"echo": False, "connect_args": connect_args}
+    if driver == "postgresql":
+        if (
+            pool_size is not None
+            or pool_max_overflow is not None
+            or pool_pre_ping is not None
+        ):
+            if pool_size is not None:
+                engine_kwargs["pool_size"] = pool_size
+            if pool_max_overflow is not None:
+                engine_kwargs["max_overflow"] = pool_max_overflow
+            if pool_pre_ping is not None:
+                engine_kwargs["pool_pre_ping"] = pool_pre_ping
+        return create_async_engine(url, **engine_kwargs)
+
+    from sqlalchemy.pool import NullPool
+
+    engine_kwargs["poolclass"] = NullPool
+    connect_args["check_same_thread"] = False
+    engine = create_async_engine(url, **engine_kwargs)
+    _set_sqlite_pragma_on_connect(engine)
+    return engine
 
 
 def get_async_engine() -> AsyncEngine | None:
     global _async_engine
     if _async_engine is None:
-        connect_args: dict[str, object] = {}
-        engine_kwargs: dict[str, object] = {"echo": False, "connect_args": connect_args}
-        if settings.db_driver == "postgresql":
-            # asyncpg：显式连接池大小 + pre_ping，剔除坏连接（生产热路径）
-            engine_kwargs.update(
-                pool_size=settings.db_pool_size,
-                max_overflow=settings.db_pool_max_overflow,
-                pool_pre_ping=settings.db_pool_pre_ping,
-            )
-        else:
-            # SQLite 单文件连接数无益：NullPool 避免池竞争与陈旧连接
-            # （外键 pragma 必须每连接设置，NullPool 每次新建连接正好适用）
-            from sqlalchemy.pool import NullPool
-
-            engine_kwargs["poolclass"] = NullPool
-            connect_args["check_same_thread"] = False
-        _async_engine = create_async_engine(settings.database_url, **engine_kwargs)
-        # 启用 SQLite 外键支持（必须按连接设置，作用于底层 sync 连接）
-        if settings.db_driver == "sqlite":
-
-            @event.listens_for(_async_engine.sync_engine, "connect")
-            def _set_sqlite_pragma(
-                dbapi_connection: Any, connection_record: Any
-            ) -> None:
-                cursor = dbapi_connection.cursor()
-                cursor.execute("PRAGMA foreign_keys = ON")
-                cursor.close()
-
+        _async_engine = create_realm_async_engine(
+            settings.database_url,
+            driver=settings.db_driver,
+            pool_size=settings.db_pool_size,
+            pool_max_overflow=settings.db_pool_max_overflow,
+            pool_pre_ping=settings.db_pool_pre_ping,
+        )
     return _async_engine
 
 

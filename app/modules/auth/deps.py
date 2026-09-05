@@ -20,6 +20,13 @@ from app.modules.auth.models import User
 from app.modules.auth.providers.base import EmailProvider, SmsProvider
 from app.modules.auth.providers.console import ConsoleEmailProvider, ConsoleSmsProvider
 from app.modules.auth.security import decode_access_token
+from app.modules.auth.service_authz import (
+    CAUSE_LOCKED,
+    CAUSE_NOT_ADMIN,
+    CAUSE_NOT_FOUND,
+    CAUSE_PASSWORD_CHANGED,
+    CAUSE_SESSION_REVOKED,
+)
 
 _LEVEL_ORDER = {"local": 0, "normal": 1, "admin": 2}
 
@@ -56,6 +63,15 @@ async def _resolve_current_user(token: str, db: AsyncSession) -> CurrentUser:
     user_id = payload.get("user_id")
     if not user_id:
         raise BizError(AuthErr.TOKEN_INVALID, "Token missing user_id")
+
+    # —— M3.B S3 seam：鉴权缝开启时把“锁定/token_version/改密撤销/权威角色档”判给 auth ——
+    if seam_enabled():
+        return await _resolve_via_seam(
+            int(user_id),
+            int(payload.get("token_version", 0)),
+            payload.get("iat"),
+            require_admin=False,
+        )
 
     result = await db.execute(
         select(User).where(User.id == user_id).options(selectinload(User.profile))
@@ -96,6 +112,80 @@ async def _resolve_current_user(token: str, db: AsyncSession) -> CurrentUser:
         role=role,
         email=user.email,
         phone=user.phone,
+    )
+
+
+def seam_enabled() -> bool:
+    """鉴权缝（authz HTTP seam）是否启用：monolith deps 据此把裁决交 auth（拆库后唯一真值）。"""
+    from app.modules.auth import user_http as auth_user_http
+
+    return auth_user_http.enabled()
+
+
+def _fail_current_user(cause: object | None) -> BizError:
+    """把 seam 返回的 cause 映射成与本地路径一致的单点失败 BizError（fail-closed 拒）。"""
+    if cause == CAUSE_LOCKED:
+        return BizError(AuthErr.ACCOUNT_LOCKED)
+    if cause == CAUSE_SESSION_REVOKED:
+        return BizError(
+            AuthErr.TOKEN_EXPIRED, "Session invalidated – please login again"
+        )
+    if cause == CAUSE_PASSWORD_CHANGED:
+        return BizError(
+            AuthErr.TOKEN_EXPIRED, "Password changed – please login again"
+        )
+    if cause == CAUSE_NOT_FOUND:
+        return BizError(AuthErr.USER_NOT_FOUND)
+    if cause == CAUSE_NOT_ADMIN:
+        return BizError(CommonErr.FORBIDDEN, "Insufficient permission")
+    # cause 未知或缺省：一律按不可用拒（fail-closed，鉴权绝不保守放行）
+    return BizError(AuthErr.TOKEN_INVALID, "Account state cannot be proven")
+
+
+async def _resolve_via_seam(
+    user_id: int,
+    expect_token_version: int,
+    iat_ts: object,
+    *,
+    require_admin: bool,
+) -> CurrentUser:
+    """经 auth internal authz 裁决一次会话并重建 CurrentUser。
+
+    任何网络/5xx/畸形由 seam 抛 ``UserHttpUnavailable``（fail-closed）：此缝拿不到裁决
+    必然判 403/401，绝不“连不上就放行”。返回的 role/account_level 用 auth 权威值。
+    """
+    from app.modules.auth import user_http as auth_user_http
+
+    # 规范化“非数值/畸形”的 iat 载荷为一可比较 float；缺失 → None（不检查改密撤销）。
+    iat_secs: float | None = None
+    if isinstance(iat_ts, (int, float)):
+        iat_secs = float(iat_ts)
+    elif isinstance(iat_ts, str):
+        try:
+            iat_secs = float(iat_ts)
+        except ValueError:
+            iat_secs = None
+
+    try:
+        verdict = await auth_user_http.authorize_via_seam(
+            user_id=user_id,
+            expect_token_version=expect_token_version,
+            iat_ts=iat_secs,
+            require_admin=require_admin,
+        )
+    except auth_user_http.UserHttpUnavailable as exc:
+        raise BizError(
+            AuthErr.TOKEN_INVALID, "Account state service unavailable"
+        ) from exc
+
+    if not verdict.get("ok"):
+        raise _fail_current_user(verdict.get("cause"))
+    return CurrentUser(
+        id=user_id,
+        account_level=str(verdict.get("account_level") or ""),
+        role=str(verdict.get("role") or "member"),
+        email=None,
+        phone=None,
     )
 
 

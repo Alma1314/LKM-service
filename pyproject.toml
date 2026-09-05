@@ -74,7 +74,7 @@ dev = [
 [tool.ruff]
 line-length = 88
 target-version = "py313"
-extend-exclude = ["alembic", "blog_repos"]
+extend-exclude = ["alembic", "alembic_auth", "blog_repos"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "UP", "B", "RUF", "SIM", "ASYNC", "PERF", "ANN"]
@@ -269,22 +269,23 @@ ignore_imports = [
     "app.modules.points.seed -> app.modules.auth.models",
     "app.modules.admin.seed -> app.modules.auth.models",
     "app.modules.admin.models -> app.modules.auth.models",
-    # ④ 行为/结构锁定直读 auth.models：积分榜昵称排序键(points.service)、blog 授权与凭证(git_http)
-    # 与 feed/content/exam/projects 授权标量与关系——blog/articles 的 ProfileInfo 组装已迁读缝(auth.snapshot, ①)，
-    # 故已移出该直读面（blog.service 现只经缝读身份，不再直触 auth.models）。
-    "app.modules.articles.service -> app.modules.auth.schemas",
+    # ④ 行为/结构锁定直读 auth.models 的**不可缝迁移例外**：points 积分榜 fused 昵称排序键
+    # （DB 侧 join sort 不可经展示快照迁移，保持直读）；blog/git_http 凭证直读(hashed_password +
+    # verifypwd，快照缝不含凭证列)。S4 已把 feed/content/exam/projects 的身份存在检查/account_level
+    # 判给 auth.snapshot ① 缝；故其不再 import auth.models。
     "app.modules.blog.git_http -> app.modules.auth.models",
-    "app.modules.blog.service -> app.modules.auth.schemas",
-    "app.modules.content.service -> app.modules.auth.models",
-    "app.modules.exam.service -> app.modules.auth.models",
-    "app.modules.feed.service -> app.modules.auth.models",
     "app.modules.points.service -> app.modules.auth.models",
-    "app.modules.projects.service -> app.modules.auth.models",
     # ⑤ admin 治理/授权面 的 router·deps 对 User 直读(admin 管理 + 会话 User 复用 + list_users 治理读 auth.models/User)：
     "app.modules.admin.auth_router -> app.modules.auth.models",
     "app.modules.admin.users_router -> app.modules.auth.models",
     "app.modules.admin.seed -> app.modules.auth.models",
     "app.modules.admin.deps -> app.modules.auth.models",
     "app.modules.admin.models -> app.modules.auth.models",
+    # ⑥ M3.B S4 过渡：exam/projects 的“单向派升写”由业务本地直改 users/profiles 收敛为调 auth 权威
+    # 升权原语 service_authz.grant_*。S5/S6 真拆库后业务不再 import auth 内部，改走 auth HTTP 内部写缝
+    #（router_authz /auth/internal/grant 经 client）→ 届时移除这两条 ignore。当前蓝绿同库阶段以内进程
+    # 委托保持考试通过/纳入成员语义与旧实现一一对等（只升不降、有改才 bump token + user.updated）。
+    "app.modules.exam.service -> app.modules.auth.service_authz",
+    "app.modules.projects.service -> app.modules.auth.service_authz",
 ]
 

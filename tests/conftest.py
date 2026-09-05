@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import StaticPool
 
+from app.db.auth_base import auth_metadata
 from app.db.base import Base
 from app.db.session import get_read_session, get_session
 from app.main import app
@@ -41,6 +42,30 @@ async def db() -> AsyncGenerator[AsyncSession]:
     )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    SessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    session: AsyncSession = SessionLocal()
+    try:
+        yield session
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+@pytest.fixture
+async def auth_db() -> AsyncGenerator[AsyncSession]:
+    """auth 独立库的内存 aiosqlite 会话（M3.B S1：第二 schema/metadata）。
+
+    只在 ``auth_metadata``（AuthBase）上建表，与 ``db`` 主库（monolith Base.metadata）物理
+    分离，模拟两库 schema 各自 create_all。S1–S4 auth.models 仍挂 monolith Base、auth_metadata
+    为空 → 本 fixture 不建表但与 S5 后真实 auth 库同构（auth 表迁入即自动建）。
+    """
+    engine: AsyncEngine = create_async_engine(
+        "sqlite+aiosqlite://",
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(auth_metadata.create_all)
 
     SessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session: AsyncSession = SessionLocal()

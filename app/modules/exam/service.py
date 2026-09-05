@@ -11,7 +11,6 @@ from sqlalchemy.orm import selectinload
 from app.core.err import BizError, CommonErr
 from app.db.base import now_iso
 from app.db.repo import get_or_raise
-from app.modules.auth.models import Profile, User
 from app.modules.auth.snapshot import get_user_snapshot_batch
 from app.modules.exam.errors import ExamErr
 from app.modules.exam.models import (
@@ -31,18 +30,6 @@ from app.modules.exam.schemas import (
     SubmitResult,
 )
 from app.modules.points.rules import enqueue_points_event
-
-# 等级/角色唯一派升使用的排名表（与 auth.deps._LEVEL_ORDER 及
-# docs/后台管理权限等级需求总结.md 口径一致，仅 >= 提升，不下放）。
-_LEVEL_RANK = {"local": 0, "normal": 1, "admin": 2}
-_ROLE_RANK = {"member": 0, "columnist": 1, "author": 2}
-
-
-def _rank_of(table: dict[str, int], value: str | None) -> int:
-    """把等级/角色映射为可比较的整序，未知值按 0（最低）处理。"""
-    if not value:
-        return 0
-    return table.get(value, 0)
 
 
 def _question_for_attempt(q: ExamQuestion) -> QuestionForAttempt:
@@ -297,48 +284,22 @@ async def submit_attempt(
 
 
 async def _apply_unlock(db: AsyncSession, exam: Exam, user_id: int) -> None:
-    """通过认证考试后升级 account_level 与 profile.role 并递增 token_version。
+    """通过认证考试后升级 account_level/profile.role（auth 域权威升权写面）。
 
-    只单向提升（不降级）：local->normal 升 account_level；columnist/author 升
-    profile.role。复用 service_auth 的 token_version 失效思路，使旧 token 失效需重登。
-
-    注意：account_level 在 User 表，role 在 Profile 表（见 db/models.py）。
+    M3.B S4：把「单向派升 + token_version 失效」收敛到 auth 的 :func:`grant_exam_unlock`
+    （author 独立库后 auth 是 users/profiles 唯一写者）。同库蓝绿阶段与 exam 事务在同一 DB
+    会话内执行，语义与旧实现一一对等（只升不降、有改才 bump）并发出 user.updated。
     """
+    from app.modules.auth import service_authz
+
     if not exam.unlock_level and not exam.unlock_role:
         return
-    from sqlalchemy import update as sa_update
-
-    from app.modules.auth.models import User as U
-
-    current_level = await db.scalar(select(U.account_level).where(U.id == user_id))
-    # 只单向提升（不降级）：目标等级/角色须严格高于当前值才会更新。
-    # 例如 admin 通过初级考试不会被降回 normal；author 通过 columnist 考试不会被降级。
-    needs_token_bump = False
-    if exam.unlock_level and _rank_of(_LEVEL_RANK, exam.unlock_level) > _rank_of(
-        _LEVEL_RANK, current_level
-    ):
-        await db.execute(
-            sa_update(U).where(U.id == user_id).values(account_level=exam.unlock_level)
-        )
-        needs_token_bump = True
-    if exam.unlock_role:
-        current_role = (
-            await db.scalar(select(Profile.role).where(Profile.user_id == user_id))
-        ) or "member"
-        if _rank_of(_ROLE_RANK, exam.unlock_role) > _rank_of(_ROLE_RANK, current_role):
-            await db.execute(
-                sa_update(Profile)
-                .where(Profile.user_id == user_id)
-                .values(role=exam.unlock_role)
-            )
-            needs_token_bump = True
-    if needs_token_bump:
-        await db.execute(
-            sa_update(U)
-            .where(U.id == user_id)
-            .values(token_version=U.token_version + 1)
-        )
-    await db.flush()
+    await service_authz.grant_exam_unlock(
+        db,
+        user_id,
+        unlock_level=exam.unlock_level,
+        unlock_role=exam.unlock_role,
+    )
 
 
 async def list_certificates(db: AsyncSession, user_id: int) -> list[CertificateOut]:
@@ -377,7 +338,6 @@ async def leaderboard(
         (
             await db.execute(
                 select(ExamCertificate)
-                .join(User, User.id == ExamCertificate.user_id)
                 .where(ExamCertificate.exam_id == exam_id)
                 .order_by(
                     ExamCertificate.score.desc(),

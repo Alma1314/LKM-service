@@ -106,6 +106,21 @@ class Settings(BaseSettings):
     auth_http_token: str = ""
     auth_http_timeout_s: float = 3.0
 
+    # AUTH 独立库（M3.B S1 基建）：auth 自持数据将迁到专属第二个 PostgreSQL。
+    # S1 只增 config + 惰性 auth_session/auth_base（auth.models 尚未迁移前为零引用 scaffolding）；
+    # auth_* 键与 monolith 的 db_* 正交，默认本地 sqlite（同单体的 auth_lkm.db）——迁移真正发生
+    # （S5/S6）前不会在建 schema / 运行时被消费。
+    auth_db_driver: str = "sqlite"
+    auth_db_path: str = "auth_lkm.db"
+    auth_db_host: str = "localhost"
+    auth_db_port: int = 5432
+    auth_db_name: str = "lkm_auth"
+    auth_db_user: str = "postgres"
+    auth_db_password: str = ""
+    auth_db_pool_size: int = 10
+    auth_db_pool_max_overflow: int = 20
+    auth_db_pool_pre_ping: bool = True
+
     # schema 初始化策略（开发默认 create_all，免维护增量迁移）：
     #   False（默认）→ init_db 用 Base.metadata.create_all()，只建缺失表、不 ALTER、
     #                  不依赖 Alembic；开发新增表只改 models.py 即可，无需手写迁移文件。
@@ -191,6 +206,21 @@ class Settings(BaseSettings):
                 f"@{self.db_host}:{self.db_port}/{self.db_name}"
             )
         return f"sqlite+aiosqlite:///{self.db_path}"
+
+    @property
+    def auth_database_url(self) -> str:
+        """AUTH 独立库（M3.B S1）的连接 URL，构造逻辑与 :prop:`database_url` 同构。
+
+        默认与单体同方言/同默认位（本地 sqlite ``auth_lkm.db``）。S5/S6 前 auth_session
+        不会被 monolith 主进程实例化，URL 仅静态可用。
+        """
+        if self.auth_db_driver == "postgresql":
+            password = urllib.parse.quote_plus(self.auth_db_password)
+            return (
+                f"postgresql+asyncpg://{self.auth_db_user}:{password}"
+                f"@{self.auth_db_host}:{self.auth_db_port}/{self.auth_db_name}"
+            )
+        return f"sqlite+aiosqlite:///{self.auth_db_path}"
 
 
 settings = Settings()

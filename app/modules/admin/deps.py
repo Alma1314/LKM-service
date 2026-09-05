@@ -16,7 +16,10 @@ from app.core.config import settings
 from app.core.err import BizError, CommonErr
 from app.db.base import now_iso
 from app.db.session import get_session
-from app.modules.auth.deps import CurrentUser  # 复用其字段契约
+from app.modules.auth.deps import (  # 复用其字段契约 + authz seam 开关
+    CurrentUser,
+    seam_enabled,
+)
 from app.modules.auth.models import User
 
 COOKIE_NAME = "admin_session"
@@ -100,6 +103,14 @@ async def get_current_admin(
     except (TypeError, ValueError):
         raise BizError(CommonErr.FORBIDDEN, "Admin session subject invalid") from None
 
+    # —— M3.B S3 seam：后台会话的锁定/失效/角色档同样判给 auth（require_admin=True）——
+    if seam_enabled():
+        return await _resolve_admin_via_seam(
+            user_id,
+            int(payload.get("token_version", 0)),
+            payload.get("iat"),
+        )
+
     result = await db.execute(
         select(User).where(User.id == user_id).options(selectinload(User.profile))
     )
@@ -139,6 +150,25 @@ async def get_current_admin(
         email=user.email,
         phone=user.phone,
     )
+
+
+async def _resolve_admin_via_seam(
+    user_id: int, expect_token_version: int, iat_ts: object
+) -> CurrentUser:
+    """后台 seam 判定：复用 auth.deps 的 seam 解析（require_admin=True），并把失败统一为 FORBIDDEN。
+
+    seam 拿不到权威裁决（auth 不可用/超时）→ fail-closed 一律 FORBIDDEN（后台绝不保守放行）。
+    """
+    from app.modules.auth.deps import _resolve_via_seam
+
+    try:
+        return await _resolve_via_seam(
+            user_id, expect_token_version, iat_ts, require_admin=True
+        )
+    except BizError:
+        raise BizError(
+            CommonErr.FORBIDDEN, "Admin account state invalid or unavailable"
+        ) from None
 
 
 require_admin = Depends(get_current_admin)

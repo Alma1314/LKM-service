@@ -35,6 +35,7 @@ from app.db.session import dispose_engine
 from app.modules.auth import router as auth_router
 from app.modules.auth import (
     router_2fa,
+    router_authz,
     router_oauth,
     router_onboarding,
     router_passkey,
@@ -48,6 +49,7 @@ from app.modules.auth import (
 _AUTH_ROUTERS = [
     auth_router.router,
     router_2fa.router,
+    router_authz.router,
     router_oauth.router,
     router_onboarding.router,
     router_passkey.router,

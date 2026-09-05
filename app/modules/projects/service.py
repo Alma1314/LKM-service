@@ -10,7 +10,6 @@ from sqlalchemy.orm import selectinload
 from app.core.err import BizError
 from app.db.base import now_iso
 from app.db.repo import get_or_raise
-from app.modules.auth.models import Profile, User
 from app.modules.auth.snapshot import get_user_snapshot_batch
 from app.modules.projects.errors import ProjectErr
 from app.modules.projects.models import Project, ProjectApplication, ProjectMember
@@ -98,10 +97,9 @@ async def _assert_member_users_exist(db: AsyncSession, user_ids: set[int]) -> No
     """
     if not user_ids:
         return
-    found = (
-        (await db.execute(select(User.id).where(User.id.in_(user_ids)))).scalars().all()
-    )
-    missing = user_ids - set(found)
+    # 身份存在性走 auth 快照缝（business 不直读 auth.users；拆库后存在性由 auth 权威）。
+    present = await get_user_snapshot_batch(db, user_ids=sorted(user_ids))
+    missing = user_ids - set(present)
     if missing:
         raise BizError(ProjectErr.MEMBER_USER_NOT_FOUND)
 
@@ -168,39 +166,15 @@ async def review_application(
 
 
 async def _apply_incubation(db: AsyncSession, applicant_id: int) -> None:
-    """纳入成员升级：account_level 单向升 admin；role 仅在 member 档时设为 incubated_member。
+    """纳入成员升级：account_level→admin / member role→incubated_member（auth 域权威写面）。
 
-    复用 exam._apply_unlock 思路：只单向提升、不降级；有改动才 token_version+1 使旧令牌失效。
+    M3.B S4：把单向派升 + token_version 失效收敛到 auth 的 :func:`grant_incubation`（拆库后
+    auth 是 users/profiles 唯一写者）。同库蓝绿阶段与项目事务在同一 DB 会话执行，语义与旧实现
+    一一对等并发出 user.updated。
     """
-    from sqlalchemy import update as sa_update
+    from app.modules.auth import service_authz
 
-    current_level = await db.scalar(
-        select(User.account_level).where(User.id == applicant_id)
-    )
-    needs_bump = False
-    if current_level != "admin":
-        await db.execute(
-            sa_update(User).where(User.id == applicant_id).values(account_level="admin")
-        )
-        needs_bump = True
-
-    profile = await db.scalar(select(Profile).where(Profile.user_id == applicant_id))
-    current_role = profile.role if profile else "member"
-    if current_role in ("member", ""):
-        await db.execute(
-            sa_update(Profile)
-            .where(Profile.user_id == applicant_id)
-            .values(role="incubated_member")
-        )
-        needs_bump = True
-
-    if needs_bump:
-        await db.execute(
-            sa_update(User)
-            .where(User.id == applicant_id)
-            .values(token_version=User.token_version + 1)
-        )
-    await db.flush()
+    await service_authz.grant_incubation(db, applicant_id)
 
 
 def _project_options() -> tuple[Any, ...]:
