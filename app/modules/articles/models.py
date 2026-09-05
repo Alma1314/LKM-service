@@ -83,7 +83,7 @@ class ArticleComment(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     article_id: Mapped[int] = mapped_column(
-        ForeignKey("articles.id"), nullable=False, index=True
+        ForeignKey("articles.id", ondelete="CASCADE"), nullable=False, index=True
     )
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id"), nullable=False, index=True
@@ -114,7 +114,9 @@ class ArticleLike(Base):
 
     __tablename__: str = "article_likes"
 
-    article_id: Mapped[int] = mapped_column(ForeignKey("articles.id"), primary_key=True)
+    article_id: Mapped[int] = mapped_column(
+        ForeignKey("articles.id", ondelete="CASCADE"), primary_key=True
+    )
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
@@ -145,7 +147,9 @@ class ArticleTag(Base):
 
     __tablename__: str = "article_tag"
 
-    article_id: Mapped[int] = mapped_column(ForeignKey("articles.id"), primary_key=True)
+    article_id: Mapped[int] = mapped_column(
+        ForeignKey("articles.id", ondelete="CASCADE"), primary_key=True
+    )
     tag_id: Mapped[int] = mapped_column(
         ForeignKey("tags.id"), primary_key=True, index=True
     )

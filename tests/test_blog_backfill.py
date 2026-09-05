@@ -34,9 +34,31 @@ def fake_git(monkeypatch):
     return fg
 
 
+async def _owner_user(db, username: str = "owner", email: str = "owner@example.com") -> int:
+    """建真实 owner（PG 强外键下裸插 owner_id=1 孤儿会 FK 失败；sqlite 不强制故此前宽松）。
+
+    逐步 create_all 的 conftest db 里先落真实 User + Profile，用其自增 id 作 FK 之父。
+    与 tests/test_blog.py 的 ``_user`` 同范（仅此文件没走 create_series 服务不需要 role）。
+    """
+    from app.modules.auth.models import Profile, User
+
+    user = User(
+        username=username,
+        email=email,
+        hashed_password="secret",  # 未经 hashpwd 也无妨：本文件不发登录取密
+        account_level="normal",
+    )
+    db.add(user)
+    await db.flush()
+    db.add(Profile(user_id=user.id))
+    await db.flush()
+    return user.id
+
+
 @pytest.fixture
 async def series(db):
-    s = BlogSeries(owner_id=1, title="t", repo_name="repo-standard", description=None)
+    owner_id = await _owner_user(db)
+    s = BlogSeries(owner_id=owner_id, title="t", repo_name="repo-standard", description=None)
     db.add(s)
     await db.flush()
     await db.refresh(s)

@@ -24,6 +24,25 @@ async def _no_redis():
     return None
 
 
+async def _owner_user(db) -> int:
+    """建真实 owner user。本文件在 conftest 的 db 上直接落 BlogSeries(owner_id=1) 是
+    孤儿 FK 行——PG 强制外键必败，sqlite 不强制故此前宽松；改为插真实 User+Profile 取
+    其自增 id，PG/sqlite 双绿。"""
+    from app.modules.auth.models import Profile, User
+
+    user = User(
+        username="owner",
+        email="owner@example.com",
+        hashed_password="secret",
+        account_level="normal",
+    )
+    db.add(user)
+    await db.flush()
+    db.add(Profile(user_id=user.id))
+    await db.flush()
+    return user.id
+
+
 async def _factory(db):
     """fake session factory：返回注入的内存会话（与生产 new_session 同为 async 契约）。"""
     return db
@@ -75,7 +94,8 @@ async def test_skip_when_series_exists(db, repo_dir, inject_session):
     from app.modules.blog.models import BlogSeries
 
     _mk_repo(repo_dir, "live")
-    db.add(BlogSeries(owner_id=1, title="t", repo_name="live"))
+    owner_id = await _owner_user(db)
+    db.add(BlogSeries(owner_id=owner_id, title="t", repo_name="live"))
     await db.flush()
 
     await reconcile_blog_repos.reconcile_blog_repos()

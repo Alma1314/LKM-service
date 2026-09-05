@@ -254,13 +254,17 @@ async def list_categories(db: AsyncSession) -> list[ArticleCategory]:
 def _fts_search_stmt(q: str) -> tuple[Any, Any]:
     """按驱动返回 sqlalchemy 查询表达式，供 search_articles 使用。"""
     if settings.db_driver == "postgresql":
-        # PostgreSQL 真 FTS：simple 分词（中文分词效果已知受限，属 spec 取舍）
+        # PostgreSQL 真 FTS：simple 分词（中文分词效果已知受限，属 spec 取舍）。
+        # 说明：vector 是 to_tsvector(...) 函数调用（非 data 列），SQLAlchemy 直接在其上
+        # 拼列式 `.match()` 会把右操作数再次包一层 plainto_tsquery(...) → plainto_tsquery(
+        # plainto_tsquery(...)) 双嵌套非法函数，真 PG 下 UndefinedFunction。此处用
+        # `bool_op("@@")` 显式比较 tsvector @@ tsquery，两侧均已带 regconfig，幂等正确。
         vector = func.to_tsvector(
             "simple",
             func.concat_ws(" ", Article.title, Article.description, Article.content),
         )
         query = func.plainto_tsquery("simple", q)
-        return vector.match(query), func.ts_rank(vector, query)
+        return vector.bool_op("@@")(query), func.ts_rank(vector, query)
     # SQLite 降级：ilike 通配（跨驱动安全）
     pattern = f"%{q}%"
     cond = or_(
@@ -632,7 +636,11 @@ async def hard_delete_article(db: AsyncSession, slug: str) -> None:
     article = await _get_article(db, slug)
     if article.status in ("published", "pending"):
         raise BizError(ArticleErr.CANNOT_HARD_DELETE_PUBLISHED)
-    # 级联删关联：comments/likes/tags 关系已在 ORM 配置 cascade/delete-orphan
+    # 级联删关联。article_tag/article_comments/article_likes 对 article 的外键在模型层
+    # 声明 ondelete="CASCADE"，交给数据库在删 article 时级联清子行。ORM 的
+    # cascade/delete-orphan 只对挂进 relationship 集合的对象生效，而本服务以
+    # ``db.add(<独立关联对象>)`` 落盘子行，追不到——若不加 DB 级 CASCADE，真 FK 库(PG)
+    # 下 DELETE articles 会被 NO ACTION 外键拦截（sqlite 默认不强制外键故此前静默、遗下孤儿）。
     await db.delete(article)
     await db.flush()
     await _invalidate_article_cache(db, slug)

@@ -26,8 +26,9 @@ class Settings(BaseSettings):
     app_version: str = "0.0.1"
     api_prefix: str = "/api/v1"
 
-    db_driver: str = "sqlite"
-    # 生产环境改为：db_driver: str = "postgresql" 或编写.env
+    # 数据库驱动 —— 开发与生产对齐默认 PostgreSQL(asyncpg)；
+    # SQLite 仅作逃生：显式设 LKM_DB_DRIVER=sqlite 回到本地 sqlite（无 PG 时不常用）。
+    db_driver: str = "postgresql"
     db_path: str = "lkm.db"
     db_host: str = "localhost"
     db_port: int = 5432

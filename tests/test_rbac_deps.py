@@ -5,7 +5,8 @@ import pytest
 from app.core.err import BizError, CommonErr
 from app.modules.admin.models import RolePermission
 from app.modules.auth.deps import CurrentUser
-from app.modules.content.models import ContentItem
+from app.modules.auth.models import User
+from app.modules.content.models import Board, ContentItem
 from app.modules.rbac.permissions import DEFAULT_GRANTS, Permission
 from app.modules.rbac.service import check_owner
 from tests.conftest import DB
@@ -41,33 +42,46 @@ def _admin(user_id: int) -> CurrentUser:
     )
 
 
-async def _mk_post(db: DB, author_id: int) -> int:
+async def _mk_post(db: DB) -> tuple[int, int]:
+    """建真实 board + 真实作者 user，返回 (post_id, author_id)。
+
+    content_items.board_id/author_id 是强 FK（board NOT NULL）；裸插 board_id=1 / author_id=7
+    在 PG 是孤儿 FK 会失败，sqlite 不强制故此前宽松。返回落库自增 id，属主判定用真实作者 id。
+    """
+    board = Board(slug="b", title="Board", description="")
+    db.add(board)
+    await db.flush()
+    author = User(username="author", hashed_password="x")
+    db.add(author)
+    await db.flush()
     post = ContentItem(
         content_type="discussion",
-        board_id=1,
-        author_id=author_id,
+        board_id=board.id,
+        author_id=author.id,
         title="t",
         content="c",
     )
     db.add(post)
     await db.flush()
-    return int(post.id)
+    return int(post.id), int(author.id)
 
 
 async def test_owner_allowed_by_id(db: DB) -> None:
-    pid = await _mk_post(db, 7)
+    pid, aid = await _mk_post(db)
     await check_owner(
-        db, _actor(7), pid, ContentItem, "author_id", Permission.content_owner_delete
+        db, _actor(aid), pid, ContentItem, "author_id", Permission.content_owner_delete
     )
     # 无异常即通过
 
 
 async def test_foreign_forbidden(db: DB) -> None:
-    pid = await _mk_post(db, 7)
+    pid, aid = await _mk_post(db)
+    # 非属主 id 必须不同于作者 id（也不落库，仅为比较）
+    stranger = aid + 5000
     with pytest.raises(BizError) as exc:
         await check_owner(
             db,
-            _actor(99),
+            _actor(stranger),
             pid,
             ContentItem,
             "author_id",
@@ -77,7 +91,7 @@ async def test_foreign_forbidden(db: DB) -> None:
 
 
 async def test_admin_allowed(db: DB) -> None:
-    pid = await _mk_post(db, 7)
+    pid, _ = await _mk_post(db)
     await check_owner(
         db, _admin(1), pid, ContentItem, "author_id", Permission.content_owner_delete
     )
@@ -85,7 +99,7 @@ async def test_admin_allowed(db: DB) -> None:
 
 async def test_admin_requires_grant(db: DB) -> None:
     # admin 但如果 role 未被授予该 object 权限点（例如 admin:org_member 无 content_owner_delete）则仍拒
-    pid = await _mk_post(db, 7)
+    pid, _ = await _mk_post(db)
     org = CurrentUser(
         id=2, account_level="admin", role="org_member", email=None, phone=None
     )

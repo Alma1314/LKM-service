@@ -172,8 +172,12 @@ class TestResolveSeriesId:
     """repo_name → blog_series.id；孤儿仓库返回 None。"""
 
     async def should_return_id_when_series_exists(self, db):
+        # PG 强外键：裸插 owner_id=1 需先在 schema 有真实 owner 用户，否则 FK 失败
+        owner = User(username="serieowner", hashed_password="x")
+        db.add(owner)
+        await db.flush()
         series = BlogSeries(
-            owner_id=1, title="t", repo_name="repo-has", description=None
+            owner_id=owner.id, title="t", repo_name="repo-has", description=None
         )
         db.add(series)
         await db.flush()
@@ -278,8 +282,12 @@ class TestMaybeBackfillAfterPush:
         monkeypatch.setattr("app.modules.blog.git_http._session_factory", _factory)
 
     async def _make_series(self, db, repo_name: str) -> int:
+        # PG 强外键：先建真实 owner 取自增 id 再挂 series 属主，避免 owner_id=1 孤儿 FK。
+        owner = User(username=f"o{repo_name}", hashed_password="x")
+        db.add(owner)
+        await db.flush()
         series = BlogSeries(
-            owner_id=1, title="t", repo_name=repo_name, description=None
+            owner_id=owner.id, title="t", repo_name=repo_name, description=None
         )
         db.add(series)
         await db.flush()
