@@ -6,6 +6,7 @@ import contextlib
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+from app.core.config import settings
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -132,7 +133,13 @@ async def admin_trend(
         func.date 在 SQLite 返回 'YYYY-MM-DD' 字符串，统一转 date 作 key。"""
         out: dict[date, int] = {}
         try:
-            stmt = select(func.date(col).label("d"), func.count()).where(col >= start)
+            # 统一按 UTC 分桶：PG 的 func.date(timestamptz) 会先按会话时区(本地+08)取日，
+            # 与“以 UTC 今天为基准”偏移一天；故 PG 先 AT TIME ZONE 'UTC' 变 naive-UTC 再取日。
+            if settings.db_driver == "postgresql":
+                day_expr = func.date(func.timezone("UTC", col))
+            else:
+                day_expr = func.date(col)
+            stmt = select(day_expr.label("d"), func.count()).where(col >= start)
             if extra_where is not None:
                 stmt = stmt.where(extra_where)
             rows = (await db.execute(stmt.group_by("d"))).all()

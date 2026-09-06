@@ -258,7 +258,11 @@ async def complete_passkey_registration(
     except WebAuthnException as exc:
         raise BizError(AuthErr.PASSKEY_REGISTRATION_FAILED, str(exc)) from exc
 
-    cred_id = verified.credential_id
+    cred_raw = verified.credential_id
+    # credential_id 列语义 = base64url 文本串（异于 raw bytes；登录侧浏览器 rawId 亦为
+    # base64url-unpadded 文本）。Duwab 顶层 verify 返回的 credential_id 是原始 bytes，
+    # 直接入库/比较会把 PG varchar 列变成 bytea 比较而爆（sqlite 弱类型掩盖）。统一编码。
+    cred_id = _b64(cred_raw) if isinstance(cred_raw, (bytes, bytearray)) else str(cred_raw)
     public_key_bytes = verified.credential_public_key
 
     existing = (

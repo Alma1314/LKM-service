@@ -252,7 +252,21 @@ async def list_categories(db: AsyncSession) -> list[ArticleCategory]:
 
 
 def _fts_search_stmt(q: str) -> tuple[Any, Any]:
-    """按驱动返回 sqlalchemy 查询表达式，供 search_articles 使用。"""
+    """按驱动返回 sqlalchemy 查询表达式，供 search_articles 使用。
+
+    PostgreSQL：真 FTS ``to_tsvector('simple') @@ plainto_tsquery('simple')``。
+    中文等连续无空格文本在 ``simple`` 分词下整段视为一个 lexeme、无法匹配“词内子串
+    （如查"机器"命中"机器学习"）”，故再 OR 一遍同于 SQLite 的 ``ILIKE`` 子串通配，
+    保证两驱动下“标题/正文子串能被搜到”这一既有语义一致（FTS 命中仍参与排序）。
+    SQLite：仅 ilike 通配（跨驱动安全）。
+    """
+    # SQLite 降级 + PG 子串兜底：共用同一 ilike 通配（跨驱动安全）
+    pattern = f"%{q}%"
+    contains = or_(
+        Article.title.ilike(pattern),
+        Article.description.ilike(pattern),
+        Article.content.ilike(pattern),
+    )
     if settings.db_driver == "postgresql":
         # PostgreSQL 真 FTS：simple 分词（中文分词效果已知受限，属 spec 取舍）。
         # 说明：vector 是 to_tsvector(...) 函数调用（非 data 列），SQLAlchemy 直接在其上
@@ -264,15 +278,10 @@ def _fts_search_stmt(q: str) -> tuple[Any, Any]:
             func.concat_ws(" ", Article.title, Article.description, Article.content),
         )
         query = func.plainto_tsquery("simple", q)
-        return vector.bool_op("@@")(query), func.ts_rank(vector, query)
-    # SQLite 降级：ilike 通配（跨驱动安全）
-    pattern = f"%{q}%"
-    cond = or_(
-        Article.title.ilike(pattern),
-        Article.description.ilike(pattern),
-        Article.content.ilike(pattern),
-    )
-    return cond, None
+        fts = vector.bool_op("@@")(query)
+        # FTS 命中且带相关度；仅子串命中者（无 FTS 相关度）也须给出、排序在后。
+        return or_(fts, contains), func.ts_rank(vector, query)
+    return contains, None
 
 
 async def search_articles(
@@ -284,7 +293,8 @@ async def search_articles(
 
     stmt = select(Article).where(cond)
     if rank is not None:
-        stmt = stmt.order_by(rank.desc())
+        # 仅子串命中（无 FTS 相关度）为 NULL → 排到 FTS 命中之后
+        stmt = stmt.order_by(rank.desc().nulls_last())
     else:
         stmt = stmt.order_by(Article.published.desc())
     stmt = stmt.offset((page - 1) * limit).limit(limit)
