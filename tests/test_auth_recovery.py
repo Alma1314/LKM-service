@@ -12,6 +12,12 @@ from app.core.err import BizError
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import MagicLink, Profile, RefreshToken, User
 
+
+@pytest.fixture
+async def db(auth_db: AsyncSession) -> AsyncSession:
+    """auth 域单测跑在 auth 独立库 schema（S5 拆后 users 不在 biz）。"""
+    return auth_db
+
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------

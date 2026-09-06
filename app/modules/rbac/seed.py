@@ -46,10 +46,13 @@ async def seed_rbac(db: AsyncSession) -> int:
     before = int(
         (await db.scalar(select(func.count()).select_from(RolePermission))) or 0
     )
-    # PostgreSQL ON CONFLICT：显式冲突目标（role+permission 唯一索引防重复插入幂等）。
+    # PostgreSQL ON CONFLICT：显式冲突目标（role+permission 唯一约束）防重复插入 → 幂等。
     from sqlalchemy.dialects.postgresql import insert as impl_insert
 
     stmt = impl_insert(RolePermission).values(rows)
+    stmt = stmt.on_conflict_do_nothing(
+        index_elements=[RolePermission.role_name, RolePermission.permission]
+    )
     await db.execute(stmt)
     await db.flush()
     after = int(

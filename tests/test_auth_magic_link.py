@@ -15,6 +15,12 @@ from app.modules.auth.models import TOTP, MagicLink, User
 from app.modules.auth.providers.console import ConsoleEmailProvider
 
 
+@pytest.fixture
+async def db(auth_db: AsyncSession) -> AsyncSession:
+    """auth 域单测跑在 auth 独立库 schema（S5 拆后 users 不在 biz）。"""
+    return auth_db
+
+
 def _service():
     from app.modules.auth import service_auth
 

@@ -21,6 +21,12 @@ from app.modules.auth.service_verify import (
 )
 
 
+@pytest.fixture
+async def db(auth_db: AsyncSession) -> AsyncSession:
+    """auth 域单测跑在 auth 独立库 schema（S5 拆后 users 不在 biz）。"""
+    return auth_db
+
+
 async def _get[T](db: AsyncSession, model: type[T], *where: Any) -> T:
     # 测试均为“先建后查”，必然命中，返回类型直接按 _T 处理
     return cast(T, (await db.execute(select(model).where(*where))).scalars().first())

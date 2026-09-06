@@ -18,6 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.files.models import FileStatus, LibraryFile
 
 
+@pytest.fixture
+async def db(fused_db_session: AsyncSession) -> AsyncSession:
+    """notify/upload 用例需 auth(user 供 FK/凭据)+biz(LibraryFile/files) 单 schema。"""
+    return fused_db_session
+
+
 class _FakeRedis:
     """极简 dict 版 Redis，覆盖 set/getdel。"""
 

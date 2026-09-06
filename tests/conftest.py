@@ -141,6 +141,61 @@ async def auth_db() -> AsyncGenerator[AsyncSession]:
 
 
 @pytest.fixture
+async def fused_db_session() -> AsyncGenerator[AsyncSession]:
+    """S5 拆后迁移期装配：单 PG schema 内含 biz(Base)+auth(AuthBase) 双 metadata。
+
+    供「monolith 时代集成测试」迁用——它们单会话须同时见 auth(users/profile) 与业务
+    (content/blog/files…) 表。两 metadata 覆盖的表名互不相交(已核校验)，可安全同 schema
+    create_all。用 asyncpg ``server_settings.search_path`` 让本引擎每连接都落该 schema，
+    多会话/跨连接也稳定(纯 BEGIN 内 SET 会被 rollback 丢弃)。测毕 drop schema。
+    """
+
+    def _ensure() -> None:
+        from app.db.model_registry import ensure_all_models
+
+        ensure_all_models()
+
+    _ensure()
+    url = settings.database_url
+    schema = str(next(_schema_counter))
+    boot: AsyncEngine = create_async_engine(url)
+    try:
+        async with boot.begin() as conn:
+            await conn.execute(text(f'DROP SCHEMA IF EXISTS "f{schema}" CASCADE'))
+            await conn.execute(text(f'CREATE SCHEMA "f{schema}"'))
+    finally:
+        await boot.dispose()
+    engine: AsyncEngine = create_async_engine(
+        url,
+        poolclass=StaticPool,
+        connect_args={"server_settings": {"search_path": f"f{schema}"}},
+    )
+    from app.db.auth_base import auth_metadata
+    from app.db.base import Base
+
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(auth_metadata.create_all)
+        session_factory = async_sessionmaker(
+            autocommit=False, autoflush=False, bind=engine, expire_on_commit=False
+        )
+        session: AsyncSession = session_factory()
+        try:
+            yield session
+        finally:
+            await session.close()
+    finally:
+        await engine.dispose()
+        _drop_conn = create_async_engine(url, poolclass=NullPool)
+        try:
+            async with _drop_conn.begin() as conn:
+                await conn.execute(text(f'DROP SCHEMA IF EXISTS "f{schema}" CASCADE'))
+        finally:
+            await _drop_conn.dispose()
+
+
+@pytest.fixture
 async def client(
     db: AsyncSession, auth_db: AsyncSession
 ) -> AsyncGenerator[AsyncClient]:
@@ -343,16 +398,18 @@ async def auth_user_factory(
 # -----------------------------------------------------------------------------
 
 
-@pytest.fixture
-async def auth_seam_realm(
-    auth_db: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """把 auth HTTP seam 在测试内指到本测 auth schema（跨 realm 业务读/鉴权替身）。"""
+def _install_user_seam(carrier: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> None:
+    """把 auth HTTP seam 三个入口替身为按 ``carrier`` 会话/库的 auth 真值直读。
+
+    供 :func:`auth_seam_realm`（carrier=auth_db，独立 auth 库 schema）与
+    :func:`auth_seam_fused`（carrier=fused 融合 schema 内的 auth 表）复用，避免两处漂移。
+    - authorize_via_seam：按 carrier 的 User(+Profile) 裁 is_locked/…/account_level/role → verdict。
+    - fetch_user_http_payload：按 carrier 的 User(+Profile) 产出冻结 dict+sv（等价 AUTH 读端点）。
+    - grant_via_seam：升权写替身 → carrier 上 service_authz 原语。
+    """
     from app.core.config import settings as _cfg
     from app.modules.auth import user_http as uh
 
-    # —— 开启 seam（url+token 都配齐才真正 enabled()）——
     monkeypatch.setattr(_cfg, "auth_http_url", "http://auth-realm-test")
     monkeypatch.setattr(_cfg, "auth_http_token", "internal-test-secret")
     monkeypatch.setattr(_cfg, "auth_http_timeout_s", 1.0)
@@ -369,18 +426,19 @@ async def auth_seam_realm(
             "role": None,
         }
         u = (
-            await auth_db.execute(select(User).where(User.id == int(user_id)))
+            await carrier.execute(select(User).where(User.id == int(user_id)))
         ).scalar_one_or_none()
         if u is None:
             state["cause"] = "not_found"
             return state
-        # 锁判定沿用 deps 本地语义（is_locked 且锁未过期为锁）
         now = now_iso()
         if u.is_locked and u.locked_until and u.locked_until > now:
             state["cause"] = "locked"
             return state
         prof = (
-            await auth_db.execute(select(Profile).where(Profile.user_id == int(user_id)))
+            await carrier.execute(
+                select(Profile).where(Profile.user_id == int(user_id))
+            )
         ).scalar_one_or_none()
         state["ok"] = True
         state["account_level"] = u.account_level
@@ -394,12 +452,12 @@ async def auth_seam_realm(
         from app.modules.auth.snapshot import UserSnapshot, _snap_to_dict
 
         u = (
-            await auth_db.execute(select(User).where(User.id == int(user_id)))
+            await carrier.execute(select(User).where(User.id == int(user_id)))
         ).scalar_one_or_none()
-        if u is None:  # 权威不存在 → data null（不回落、不缓存缺行）
+        if u is None:
             return None, None
         p = (
-            await auth_db.execute(
+            await carrier.execute(
                 select(Profile).where(Profile.user_id == int(user_id))
             )
         ).scalar_one_or_none()
@@ -418,17 +476,13 @@ async def auth_seam_realm(
         version = version_of_updated_at(u.updated_at) if u.updated_at else None
         return _snap_to_dict(snap), version
 
-    # 升权写缝替身：业务拆库后触发单向升权（exam_unlock/incubation，如 projects 审核通过纳入
-    # 成员、exam 通过解锁）经 user_http.grant_via_seam 打到 auth 内部写端点。测试把该写缝替身为
-    # 在**本测 auth realm**(auth_db，auth_user_uid 刚建的真用户) 上执行真实 service_authz 原语，
-    # 使升权落 auth 真值、不触业务 db（users 已不在业务 realm）。返回与端点同义信封语义。
     async def _grant(*, kind: str, user_id: int, **kw: object) -> int:
         from app.modules.auth import service_authz
 
         if kind == "incubation":
-            return await service_authz.grant_incubation(auth_db, int(user_id))
+            return await service_authz.grant_incubation(carrier, int(user_id))
         return await service_authz.grant_exam_unlock(
-            auth_db,
+            carrier,
             int(user_id),
             unlock_level=kw.get("unlock_level"),
             unlock_role=kw.get("unlock_role"),
@@ -437,3 +491,25 @@ async def auth_seam_realm(
     monkeypatch.setattr(uh, "authorize_via_seam", _authz)
     monkeypatch.setattr(uh, "fetch_user_http_payload", _fetch)
     monkeypatch.setattr(uh, "grant_via_seam", _grant)
+
+
+@pytest.fixture
+async def auth_seam_realm(
+    auth_db: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """把 auth HTTP seam 在测试内指到本测 auth 独立库 schema（跨 realm 业务读/鉴权替身）。"""
+    _install_user_seam(auth_db, monkeypatch)
+
+
+@pytest.fixture
+async def auth_seam_fused(
+    fused_db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """把 auth HTTP seam 在测试内指到本测 fused 融合库里的 auth 表（供 unit+HTTP 装配用例）。
+
+    业务 HTTP(current user/作者 display/升权)走 seam 读 fused schema 里与业务同库的 users，
+    无需额外 auth_db/schema；business 路由仍靠 client 的 biz db + auth seam 一同满足。
+    """
+    _install_user_seam(fused_db_session, monkeypatch)

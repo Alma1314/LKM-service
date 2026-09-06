@@ -8,12 +8,27 @@ admin_content_review 仅 super_admin 持有；未授权即拒绝（403）。
 对 users_manage / content_review 是 403。以下是红绿 proof。
 """
 
+import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.admin.deps import COOKIE_NAME, COOKIE_PATH, create_admin_access_token
 from app.modules.admin.models import RolePermission
 from app.modules.auth.models import Profile, User
 from tests.conftest import DB, Client
+
+
+@pytest.fixture
+async def db(fused_db_session: AsyncSession) -> AsyncSession:
+    """admin+RBAC 用例需 auth(users/profile)+biz(role_permissions) 单 schema（融合装配）。"""
+    return fused_db_session
+
+
+@pytest.fixture(autouse=True)
+async def _seam_for_admin(auth_seam_fused) -> None:
+    """admin 端点解析 current admin user 走 auth seam → fused 里的 auth 表。"""
+
+
 
 
 async def _mk_user(

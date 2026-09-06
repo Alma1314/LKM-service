@@ -23,6 +23,12 @@ from app.modules.auth.router_onboarding import (
 from app.modules.auth.schemas import OnboardingStepRequest
 
 
+@pytest.fixture
+async def db(auth_db: AsyncSession) -> AsyncSession:
+    """onboarding 表在 auth 独立库（S5 拆后）；本文件单一 auth schema 面上跑即可。"""
+    return auth_db
+
+
 def _FakeCurrentUser(id: int, account_level: str = "normal") -> CurrentUser:
     return CurrentUser(id=id, account_level=account_level, role="member")
 

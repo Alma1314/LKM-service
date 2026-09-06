@@ -10,8 +10,7 @@ HTTP 端 auth 设置复用 test_admin_users.py 的既定模式：admin+super_adm
 (<admin/users> 读需 admin_users_manage)。不新增 fixture，复用 conftest db/client。
 """
 
-from typing import Any
-
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +26,17 @@ from app.modules.auth.snapshot import (
 from app.modules.rbac.permissions import Permission
 
 PERM = Permission.admin_users_manage
+
+
+@pytest.fixture
+async def db(fused_db_session: AsyncSession) -> AsyncSession:
+    """admin 读 user PII 用例需 auth(user/profile)+biz(role_permissions) 单 schema。"""
+    return fused_db_session
+
+
+@pytest.fixture(autouse=True)
+async def _seam_for_admin(auth_seam_fused) -> None:
+    """/admin/users 端点解析/读 user PII 走 auth seam → fused 里 auth 表。"""
 
 
 async def _create_user(
@@ -65,11 +75,23 @@ async def _grant_super_admin(db: AsyncSession) -> None:
         await db.flush()
 
 
-async def _login_admin(client: AsyncClient, username: str = "root") -> Any:
-    return await client.post(
-        "/api/v1/admin/auth/login",
-        json={"username": username, "password": "secret123456"},
+async def _login_admin(
+    db: AsyncSession, client: AsyncClient, username: str = "root"
+) -> None:
+    # S5-A2 后 monolith 不再 serve /admin/auth/login（迁 AUTH 进程）；admin 首见会话 cookie
+    # 直接按 fused db(或 auth) 里的 admin 用户 mint，等价该写面产出的会话。
+    from app.modules.admin.deps import (
+        COOKIE_NAME,
+        COOKIE_PATH,
+        create_admin_access_token,
     )
+    from app.modules.auth.models import User
+
+    u = (
+        await db.execute(select(User).where(User.username == username))
+    ).scalar_one()
+    tok = create_admin_access_token(u)
+    client.cookies.set(COOKIE_NAME, tok, path=COOKIE_PATH)
 
 
 # ---------------------------------------------------------------------------
@@ -156,10 +178,7 @@ async def test_list_endpoint_hides_pii_by_default(
     await _create_user(db, "root", account_level="admin")
     await _create_user(db, "carol", account_level="local", email="carol@priv.io")
     await _grant_super_admin(db)
-    await client.post(
-        "/api/v1/admin/auth/login",
-        json={"username": "root", "password": "secret123456"},
-    )
+    await _login_admin(db, client, "root")
     resp = await client.get("/api/v1/admin/users")
     assert resp.status_code == 200
     body = resp.json()["data"]
@@ -176,10 +195,7 @@ async def test_list_endpoint_include_pii_true(db: AsyncSession, client: AsyncCli
     await _create_user(db, "root", account_level="admin")
     await _create_user(db, "dave", account_level="local", email="dave@priv.io")
     await _grant_super_admin(db)
-    await client.post(
-        "/api/v1/admin/auth/login",
-        json={"username": "root", "password": "secret123456"},
-    )
+    await _login_admin(db, client, "root")
     resp = await client.get("/api/v1/admin/users", params={"include_pii": "true"})
     assert resp.status_code == 200
     dave = next(
@@ -194,10 +210,7 @@ async def test_list_endpoint_keyword_matches_username(
     await _create_user(db, "root", account_level="admin")
     await _create_user(db, "erin", account_level="local")
     await _grant_super_admin(db)
-    await client.post(
-        "/api/v1/admin/auth/login",
-        json={"username": "root", "password": "secret123456"},
-    )
+    await _login_admin(db, client, "root")
     resp = await client.get("/api/v1/admin/users", params={"keyword": "eri"})
     body = resp.json()["data"]
     assert body["total"] == 1

@@ -27,6 +27,12 @@ from app.modules.auth.security import create_access_token, hashpwd
 from tests.conftest import DB
 
 
+@pytest.fixture
+async def db(auth_db: AsyncSession) -> AsyncSession:
+    """deps seam 用例（seam-off 本地读/锁判定）在 auth 面落真实用户。"""
+    return auth_db
+
+
 @pytest.fixture(autouse=True)
 async def _reset_globals():
     """每用例前后清 _client_factory 与 token，杜绝跨用例污染。"""

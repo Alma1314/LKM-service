@@ -29,6 +29,12 @@ from app.modules.auth.security import (
     hashpwd,
 )
 
+
+@pytest.fixture
+async def db(auth_db: AsyncSession) -> AsyncSession:
+    """2FA/TOTP/User 表在 auth 独立库（S5 拆后）；本文件默认走 auth 面。"""
+    return auth_db
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -502,18 +508,25 @@ class TestStepUp2FA:
 class TestDeleteNot2FAGated:
     """普通用户删除自己的内容不再要求 2FA（danger 2FA 仅保留给管理员代删/删passkey）。"""
 
-    async def should_not_gate_user_delete_with_mfa(self, client: Any, db: AsyncSession):
+    async def should_not_gate_user_delete_with_mfa(
+        self, auth_front_client: Any, db: AsyncSession
+    ):
         """有有效 token 即可删除：删除不由 2FA 门禁拦截（不再返回 401 code=4）。
 
         注意：RBAC 迁移后，统一内容删除路由先在 check_owner 判定（未拥有
         content.owner_delete 且非属主时，对不存在的内容也统一返回 403 以免泄露资源
         存在性），故此处断言 403 而非旧的 404——核心意图仍是非 2FA 门禁。
+
+        经 auth_front_client：前台 /auth 端点与会话(CurrentUser 裁决)绑 auth 库(auth_db)，
+        用 auth realm 种子的用户 + token 请求即可命中鉴权，不再要求 biz 库有 users。
         """
         user = await _create_user(db, username="delete_nogate")
         token = create_access_token(
             user_id=user.id, account_level="normal", role="member"
         )
-        resp = await client.delete("/api/v1/content/items/999999", headers=_auth(token))
+        resp = await auth_front_client.delete(
+            "/api/v1/content/items/999999", headers=_auth(token)
+        )
         # 能走到权限判定（而非被 2FA 门禁拦住）→ 不再是 401 code=4
         assert resp.status_code == 403
 

@@ -19,6 +19,12 @@ from app.modules.auth.service_authz import grant_exam_unlock
 from tests.conftest import DB, Client
 
 
+@pytest.fixture
+async def db(auth_db: AsyncSession) -> AsyncSession:
+    """auth 内部 seam 用 auth 独立库（User/Profile/token_version 等 auth 表）。"""
+    return auth_db
+
+
 @pytest.fixture(autouse=True)
 def _reset_settings_token():
     """每用例后清零 auth_http_token，避免跨用例污染内部缝开关。"""

@@ -37,8 +37,29 @@ from app.modules.blog.service import (
     write_series_file,
 )
 
+
+@pytest.fixture
+async def db(fused_db_session: AsyncSession) -> AsyncSession:
+    """blog 属“融合装配”用例：单会话须同时见 biz(series/content/file) 与 auth(user/profile)。
+
+    S5 拆库后 users 不在 biz；本文件大量 helper 直接在传进的 db 写 User，故把它指向
+    conftest 融合 schema（biz+auth 双 metadata 于同库同 schema）。作者展示/rank 若需求经
+    auth seam 的另行接 auth_db/auth_seam_realm。
+    """
+    return fused_db_session
+
+
+@pytest.fixture(autouse=True)
+async def _auth_seam_for_http(auth_seam_fused) -> None:
+    """HTTP(client)/GraphQL 业务面读 current user/作者展示走 auth seam → fused 里的 auth 表。
+
+    blog 整组是融合装配(unit 与 route 都落在 fused schema)，关 seam 时 app 会经 monolith
+    biz 会话找 users 而失败；autouse 开启 seam 到 carrier=fused 使两边对齐。
+    """
+
+
 # ---- fixtures ----
-# db 与 client fixture 均由 tests/conftest.py 提供（内存 sqlite 会话 + httpx.AsyncClient）
+# db 与 client fixture 均由 tests/conftest.py 提供（PG schema-per-test 会话 + httpx.AsyncClient）
 
 
 @pytest.fixture

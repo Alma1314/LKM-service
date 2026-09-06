@@ -30,6 +30,13 @@ from app.modules.auth.security import hashpwd
 from app.modules.auth.snapshot import UserSnapshot, get_user_snapshot
 from tests.conftest import DB, Client
 
+
+@pytest.fixture
+async def db(auth_db: AsyncSession) -> AsyncSession:
+    """snapshot miss 回填/候补 DB 读取在 auth 面落真实 user。"""
+    return auth_db
+
+
 WIRE_SNAP = {
     "user_id": 1,
     "username": "wirebob",

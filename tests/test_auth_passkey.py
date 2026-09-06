@@ -10,11 +10,18 @@ import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.modules.auth.models  # noqa: F401
 from app.core.err import BizError
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import PasskeyCredential
+
+
+@pytest.fixture
+async def db(auth_db: AsyncSession) -> AsyncSession:
+    """passkey 表在 auth 独立库（S5 拆后）；本文件单一 auth schema 面上跑即可。"""
+    return auth_db
 
 
 def _b64(data: bytes) -> str:

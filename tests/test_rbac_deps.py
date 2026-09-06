@@ -1,6 +1,7 @@
 """require_owner 底层谓词 check_owner：admin/属主/他人三分支。"""
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError, CommonErr
 from app.modules.admin.models import RolePermission
@@ -10,6 +11,12 @@ from app.modules.content.models import Board, ContentItem
 from app.modules.rbac.permissions import DEFAULT_GRANTS, Permission
 from app.modules.rbac.service import check_owner
 from tests.conftest import DB
+
+
+@pytest.fixture
+async def db(fused_db_session: AsyncSession) -> AsyncSession:
+    """rbac deps 用例需 auth(users)+biz(content/role_permissions) 单 schema（融合装配）。"""
+    return fused_db_session
 
 
 @pytest.fixture(autouse=True)

@@ -26,6 +26,12 @@ from app.modules.blog.git_http import (
 from app.modules.blog.models import BlogContent, BlogSeries
 
 
+@pytest.fixture
+async def db(fused_db_session: AsyncSession) -> AsyncSession:
+    """git-http owner 判定需 auth(user)+biz(blog/series) 单 schema（融合）。"""
+    return fused_db_session
+
+
 class TestDecodeBasicAuth:
     def should_parse_valid_credentials(self):
         token = base64.b64encode(b"user:pass").decode()

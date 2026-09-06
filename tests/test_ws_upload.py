@@ -24,6 +24,12 @@ from app.ws import router as ws_router
 from app.ws.manager import ConnectionManager
 
 
+@pytest.fixture
+async def db(fused_db_session: AsyncSession) -> AsyncSession:
+    """ws authorize 校验需要 auth(user) 存在（融合；business 无 users）。"""
+    return fused_db_session
+
+
 async def _insert_user(db: AsyncSession, username: str = "wsuser") -> int:
     u = User(
         username=username,

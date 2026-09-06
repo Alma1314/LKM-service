@@ -45,11 +45,11 @@ from app.modules.auth.tasks import invalidate_user_snap
 from tests.conftest import DB
 
 
-# B0.2：consumer handler invalidate_user_snap 现还会顺带离线刷新 user_dim(自开会话 seam)。
-# 在单测里把 seam 指向一块独立的 PG 融合 schema(ensure user_dim + 全量业务/模块表)，避免触碰
-# 真实默认 DB 表；该离线副本与各用例如断言无关(它们断言 redis/真实 DB 快照)，仅作 fail-open 写目标。
-@pytest.fixture(autouse=True)
-async def _dim_sync_throwaway(monkeypatch) -> AsyncIterator[None]:
+# S5 拆库后 auth(User/Profile) 在 auth_metadata、biz(outbox/user_dim)在 Base —— 本文件真写点需
+# “融合单一 PG schema”（Base+auth_metadata 双 create_all，无表名冲突）承载，auth/biz 单会话可见
+# （等同拆库收尾终态）。跨多会话落此 schema 用 asyncpg connect_args.server_settings.search_path。
+@pytest.fixture
+async def _fused_realm():
     from sqlalchemy import text
 
     from app.db.auth_base import auth_metadata
@@ -57,7 +57,7 @@ async def _dim_sync_throwaway(monkeypatch) -> AsyncIterator[None]:
 
     ensure_all_models()
     url = settings.database_url
-    schema = "ics"
+    schema = "uci"
     boot = create_async_engine(url)
     async with boot.begin() as conn:
         await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
@@ -72,6 +72,25 @@ async def _dim_sync_throwaway(monkeypatch) -> AsyncIterator[None]:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(auth_metadata.create_all)
     maker = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    try:
+        yield engine, maker
+    finally:
+        await engine.dispose()
+
+
+@pytest.fixture
+async def db(_fused_realm) -> AsyncSession:
+    """覆盖 conftest.db：跑在融合 auth+biz schema 的长活会话（auth 写点/outbox 单会话可见）。"""
+    _engine, maker = _fused_realm
+    async with maker() as s:
+        yield s
+
+
+# B0.2：consumer handler invalidate_user_snap 现还会顺带离线刷新 user_dim(自开会话 seam)。
+# 指向同一融合库的独立会话工厂，作 fail-open 写目标（不与真实默认 DB 纠缠）。
+@pytest.fixture(autouse=True)
+async def _dim_sync_throwaway(monkeypatch, _fused_realm) -> None:
+    _engine, maker = _fused_realm
 
     async def _factory() -> AsyncSession:
         return maker()
@@ -79,10 +98,7 @@ async def _dim_sync_throwaway(monkeypatch) -> AsyncIterator[None]:
     monkeypatch.setattr(
         "app.modules.auth.user_dim_sync._session_factory", _factory
     )
-    try:
-        yield
-    finally:
-        await engine.dispose()
+
 
 
 @pytest.fixture(autouse=True)

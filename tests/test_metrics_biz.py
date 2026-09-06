@@ -5,11 +5,18 @@
 - post_created_total 按 content_type 分系列；notify_failed_total 亦已注册（占位在 /metrics 可见）。
 """
 
+import pytest
 from prometheus_client import REGISTRY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.content import service as content_service
 from app.modules.content.schemas import ContentItemCreate
+
+
+@pytest.fixture
+async def db(fused_db_session: AsyncSession) -> AsyncSession:
+    """需 auth(user)+biz(board/content) 单 schema（融合）。"""
+    return fused_db_session
 
 
 def _sample_value(name: str, labels: dict[str, str]) -> float:

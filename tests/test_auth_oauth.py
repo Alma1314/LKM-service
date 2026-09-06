@@ -10,6 +10,12 @@ from app.core.config import settings
 from app.modules.auth.models import OAuthState, UserOAuth
 
 
+@pytest.fixture
+async def db(auth_db: AsyncSession) -> AsyncSession:
+    """oauth 域单测跑在 auth 独立库 schema（S5 拆后 oauth/user 表在 auth 库）。"""
+    return auth_db
+
+
 class TestGithubAuthUrl:
     async def should_contain_github_authorize_url(self, db: AsyncSession):
         from app.modules.auth.service_oauth import get_github_auth_url

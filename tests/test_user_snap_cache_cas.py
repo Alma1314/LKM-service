@@ -31,6 +31,12 @@ from app.modules.auth.snapshot import get_user_snapshot
 from tests.conftest import DB
 
 
+@pytest.fixture
+async def db(auth_db: AsyncSession) -> AsyncSession:
+    """snapshot/cache 读的 user 在 auth 独立库。"""
+    return auth_db
+
+
 @pytest.fixture(autouse=True)
 async def reset_redis_globals() -> AsyncIterator[None]:
     """每个用例前后彻底复位 redis 模块级单例，杜绝跨测试残留键/连接污染（repo 范式）。"""
