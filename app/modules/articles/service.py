@@ -3,7 +3,6 @@ from typing import Any
 
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects import postgresql as pg
-from sqlalchemy.dialects import sqlite as sq
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import (
@@ -16,7 +15,6 @@ from app.core.cache import (
     make_key,
 )
 from app.core.common import PageData, paginate_pages, tag_names_sequence
-from app.core.config import settings
 from app.core.err import BizError, CommonErr
 from app.db.base import now_iso
 from app.db.repo import get_or_raise
@@ -93,12 +91,11 @@ async def _sync_article_tags(
     ).all()
     name_to_id = {name: tag_id for tag_id, name in rows}
 
-    # 2) 缺失的 tag 一批插；再批量回查拿全量 id（跨驱动用 on_conflict 免唯一冲突）
+    # 2) 缺失的 tag 一批插；再批量回查拿全量 id（用 on_conflict 免唯一冲突）
     missing = [n for n in ordered if n not in name_to_id]
     if missing:
-        dialect_insert = pg.insert if settings.db_driver == "postgresql" else sq.insert
         await db.execute(
-            dialect_insert(Tag)
+            pg.insert(Tag)
             .values([{"name": n} for n in missing])
             .on_conflict_do_nothing(index_elements=["name"])
         )
@@ -252,36 +249,33 @@ async def list_categories(db: AsyncSession) -> list[ArticleCategory]:
 
 
 def _fts_search_stmt(q: str) -> tuple[Any, Any]:
-    """按驱动返回 sqlalchemy 查询表达式，供 search_articles 使用。
+    """返回 sqlalchemy 查询表达式，供 search_articles 使用。
 
-    PostgreSQL：真 FTS ``to_tsvector('simple') @@ plainto_tsquery('simple')``。
-    中文等连续无空格文本在 ``simple`` 分词下整段视为一个 lexeme、无法匹配“词内子串
-    （如查"机器"命中"机器学习"）”，故再 OR 一遍同于 SQLite 的 ``ILIKE`` 子串通配，
-    保证两驱动下“标题/正文子串能被搜到”这一既有语义一致（FTS 命中仍参与排序）。
-    SQLite：仅 ilike 通配（跨驱动安全）。
+    PostgreSQL 真 FTS ``to_tsvector('simple') @@ plainto_tsquery('simple')``，再 OR 一
+    遍 ``ILIKE`` 子串通配：中文等连续无空格文本在 ``simple`` 分词下整段视为一个 lexeme、
+    无法匹配“词内子串（如查'机器'命中'机器学习'）”，故 ILIKE 兜底保证“标题/正文子串能
+    被搜到”这一既有语义一致（FTS 命中仍参与排序）。
     """
-    # SQLite 降级 + PG 子串兜底：共用同一 ilike 通配（跨驱动安全）
+    # PG FTS 的子串兜底：共用同一 ilike 通配
     pattern = f"%{q}%"
     contains = or_(
         Article.title.ilike(pattern),
         Article.description.ilike(pattern),
         Article.content.ilike(pattern),
     )
-    if settings.db_driver == "postgresql":
-        # PostgreSQL 真 FTS：simple 分词（中文分词效果已知受限，属 spec 取舍）。
-        # 说明：vector 是 to_tsvector(...) 函数调用（非 data 列），SQLAlchemy 直接在其上
-        # 拼列式 `.match()` 会把右操作数再次包一层 plainto_tsquery(...) → plainto_tsquery(
-        # plainto_tsquery(...)) 双嵌套非法函数，真 PG 下 UndefinedFunction。此处用
-        # `bool_op("@@")` 显式比较 tsvector @@ tsquery，两侧均已带 regconfig，幂等正确。
-        vector = func.to_tsvector(
-            "simple",
-            func.concat_ws(" ", Article.title, Article.description, Article.content),
-        )
-        query = func.plainto_tsquery("simple", q)
-        fts = vector.bool_op("@@")(query)
-        # FTS 命中且带相关度；仅子串命中者（无 FTS 相关度）也须给出、排序在后。
-        return or_(fts, contains), func.ts_rank(vector, query)
-    return contains, None
+    # PostgreSQL 真 FTS：simple 分词（中文分词效果已知受限，属 spec 取舍）。
+    # 说明：vector 是 to_tsvector(...) 函数调用（非 data 列），SQLAlchemy 直接在其上
+    # 拼列式 `.match()` 会把右操作数再次包一层 plainto_tsquery(...) → plainto_tsquery(
+    # plainto_tsquery(...)) 双嵌套非法函数，真 PG 下 UndefinedFunction。此处用
+    # `bool_op("@@")` 显式比较 tsvector @@ tsquery，两侧均已带 regconfig，幂等正确。
+    vector = func.to_tsvector(
+        "simple",
+        func.concat_ws(" ", Article.title, Article.description, Article.content),
+    )
+    query = func.plainto_tsquery("simple", q)
+    fts = vector.bool_op("@@")(query)
+    # FTS 命中且带相关度；仅子串命中者（无 FTS 相关度）也须给出、排序在后。
+    return or_(fts, contains), func.ts_rank(vector, query)
 
 
 async def search_articles(
@@ -292,12 +286,8 @@ async def search_articles(
     total = (await db.execute(count_stmt)).scalar_one()
 
     stmt = select(Article).where(cond)
-    if rank is not None:
-        # 仅子串命中（无 FTS 相关度）为 NULL → 排到 FTS 命中之后
-        stmt = stmt.order_by(rank.desc().nulls_last())
-    else:
-        stmt = stmt.order_by(Article.published.desc())
-    stmt = stmt.offset((page - 1) * limit).limit(limit)
+    # 仅子串命中（无 FTS 相关度）为 NULL → 排到 FTS 命中之后
+    stmt = stmt.order_by(rank.desc().nulls_last()).offset((page - 1) * limit).limit(limit)
     items = (await db.execute(stmt)).scalars().all()
     return PageData(
         items=[ArticleListItem.model_validate(a) for a in items],

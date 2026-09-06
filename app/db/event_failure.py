@@ -9,8 +9,10 @@ relay 对某事件投递反复失败、`attempt_count` 达 `MAX_TRIES` 上限后
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import Integer, String, Text
+from sqlalchemy import Integer, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, UTCDateTime, now_iso
@@ -26,7 +28,9 @@ class EventFailure(Base):
     # 逻辑主题 = 将投失败时的 routing_key
     routing_key: Mapped[str] = mapped_column(String(64), nullable=False)
     # 与 outbox_events.payload_json 同构的全量 {fn,args} dict；含透传的 event_id
-    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     reason: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     folded_at: Mapped[datetime] = mapped_column(

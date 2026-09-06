@@ -1,10 +1,8 @@
-"""db/session.py 的 IntegrityError 映射单测：唯一约束 vs 外键/NOT NULL。"""
+"""db/session.py 的 IntegrityError 映射单测：唯一约束 vs 其他，及引擎池策略。"""
 
-import sqlite3
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.pool import NullPool
 
 from app.db.session import _is_unique_violation, get_async_engine
 
@@ -15,62 +13,36 @@ def _ie(orig: Exception | None) -> IntegrityError:
 
 
 class TestIsUniqueViolation:
-    def should_detect_sqlite_unique_constraint(self):
-        orig = sqlite3.IntegrityError("UNIQUE constraint failed: users.email")
-        assert _is_unique_violation(_ie(orig)) is True
-
-    def should_not_detect_sqlite_foreign_key(self):
-        orig = sqlite3.IntegrityError("FOREIGN KEY constraint failed")
-        assert _is_unique_violation(_ie(orig)) is False
-
-    def should_not_detect_sqlite_not_null(self):
-        orig = sqlite3.IntegrityError("NOT NULL constraint failed: users.username")
-        assert _is_unique_violation(_ie(orig)) is False
+    """纯 PostgreSQL 语义：只靠 asyncpg 错误类名（UniqueViolation）判定。"""
 
     def should_detect_unique_violation_by_class_name(self):
-        class UniqueViolationError(Exception):
+        class UniqueViolation(Exception):
             pass
 
-        assert _is_unique_violation(_ie(UniqueViolationError("dup"))) is True
+        assert _is_unique_violation(_ie(UniqueViolation("dup"))) is True
+
+    def should_not_detect_other_violation_by_class_name(self):
+        # 真 PG 下的外键违例类名是 ForeignKeyViolation（非 UniqueViolation）
+        class ForeignKeyViolation(Exception):
+            pass
+
+        class NotNullViolation(Exception):
+            pass
+
+        assert _is_unique_violation(_ie(ForeignKeyViolation("fk"))) is False
+        assert _is_unique_violation(_ie(NotNullViolation("nn"))) is False
 
     def should_return_false_when_no_orig(self):
         assert _is_unique_violation(_ie(None)) is False
 
 
 class TestEnginePoolConfig:
-    """模块2：连接池配置（PostgreSQL 显式池 + pre_ping；SQLite NullPool）。"""
-
-    async def should_configure_pool_for_sqlite(self, monkeypatch):
-        """SQLite 驱动 → 引擎用 NullPool（避免池竞争）。"""
-        import app.db.session as session_mod
-        from app.core.config import settings
-
-        monkeypatch.setattr(settings, "db_driver", "sqlite")
-        real_create = session_mod.create_async_engine
-        captured: dict[str, Any] = {}
-        engine: Any = None
-
-        def _spy_create(url: str, **kwargs: Any) -> Any:
-            captured.update(kwargs)
-            return real_create(url, **kwargs)
-
-        monkeypatch.setattr(session_mod, "create_async_engine", _spy_create)
-        monkeypatch.setattr(session_mod, "_async_engine", None)
-        monkeypatch.setattr(session_mod, "_AsyncSessionLocal", None)
-
-        engine = get_async_engine()
-        try:
-            assert captured.get("poolclass") is NullPool
-        finally:
-            assert engine is not None
-            await engine.dispose()
+    """PostgreSQL(asyncpg) 建池：显式 pool_size/max_overflow/pool_pre_ping。"""
 
     def should_configure_pool_for_postgres(self, monkeypatch):
-        """PostgreSQL 驱动 → 引擎带 pool_size/max_overflow/pool_pre_ping。"""
         import app.db.session as session_mod
         from app.core.config import settings
 
-        monkeypatch.setattr(settings, "db_driver", "postgresql")
         captured: dict[str, Any] = {}
 
         def _fake_create(url: str, **kwargs: Any) -> Any:
@@ -92,15 +64,16 @@ class TestEnginePoolConfig:
 
 
 class TestReadSession:
-    """模块2：读会话 exit 后不自动 commit（只读请求省空事务）。"""
+    """读会话 exit 后不自动 commit（只读请求省空事务）。"""
 
     async def should_not_commit_on_exit(self, monkeypatch) -> None:
         from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
         from sqlalchemy.pool import StaticPool
 
         import app.db.session as session_mod
+        from app.core.config import settings
 
-        engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+        engine = create_async_engine(settings.database_url, poolclass=StaticPool)
 
         calls: list[str] = []
 

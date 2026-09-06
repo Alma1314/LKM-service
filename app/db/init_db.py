@@ -2,7 +2,7 @@
 
 多 worker安全：每个 uvicorn worker 的 lifespan 都会调 init_db()。
 首次建库时并发 upgrade 会有竞态（重复建表/版本锁冲突），故用 Redis 分布式锁串行化；
-Redis 不可用（未配置/宕机，fail-open）则不设锁直接跑（dev/sqlite 单 worker 本无并发）。
+Redis 不可用（未配置/宕机，fail-open）则不设锁直接跑（dev 单 worker 本无并发）。
 """
 
 import asyncio

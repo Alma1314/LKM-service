@@ -42,7 +42,6 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        render_as_batch=True,  # SQLite-compatible
     )
 
     with context.begin_transaction():
@@ -50,13 +49,11 @@ def run_migrations_offline() -> None:
 
 
 def _sync_url(url: str) -> str:
-    """Alembic runs in a sync context——把数据库驱动换成同步方言。
+    """Alembic 在同步上下文跑——把 asyncpg 驱动换成同步 psycopg2。
 
-    settings.database_url 是 async 方言（sqlite+aiosqlite / postgresql+asyncpg），
-    alembic 不能直接用。SQLite 回落标准库 sqlite3；Postgres 回落 psycopg2（装同步驱动）。
+    settings.database_url 是 ``postgresql+asyncpg``；alembic(postgresql://)*不可直接用，
+    回落 psycopg2（装同步驱动）。
     """
-    if url.startswith("sqlite+aiosqlite"):
-        return "sqlite" + url[len("sqlite+aiosqlite") :]
     if url.startswith("postgresql+asyncpg"):
         return "postgresql+psycopg2" + url[len("postgresql+asyncpg") :]
     return url
@@ -66,7 +63,7 @@ def run_migrations_online() -> None:
     """Run migrations in 'online' (live-database) mode.
 
     Creates an Engine and associates a connection with the context.
-    For SQLite the render_as_batch flag is enabled so ALTER statements work.
+    统一 PostgreSQL 目标，无 SQLite batch_alter_table 需求。
     """
     config.set_main_option("sqlalchemy.url", _sync_url(settings.database_url))
     connectable = engine_from_config(
@@ -79,7 +76,6 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            render_as_batch=True,  # SQLite-compatible
         )
 
         with context.begin_transaction():

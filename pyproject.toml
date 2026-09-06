@@ -15,7 +15,6 @@ dependencies = [
     "httpx>=0.28.0",
     "cbor2>=5.6.0",
     "strawberry-graphql>=0.263.0",
-    "aiosqlite>=0.22.1",
     "asyncpg>=0.31.0",
     "psycopg2-binary>=2.9",
     "webauthn>=2,<3",
@@ -138,7 +137,7 @@ name = "边界: db 层不反向依赖业务模块"
 type = "forbidden"
 source_modules = ["app.db"]
 forbidden_modules = ["app.modules"]
-# 模型注册枢纽 + 共享 repo/seed 辅助（见 P4-T3 审计）：
+# 模型注册枢纽 + 共享 repo/seed 辅助：
 ignore_imports = [
     "app.db.init_db -> app.modules.rbac.seed",  # schema 就绪后种 RBAC 默认权限
     "app.db.model_registry -> app.modules.admin.models",  # 模型预注册枢纽
@@ -152,19 +151,14 @@ ignore_imports = [
     "app.db.model_registry -> app.modules.points.models",
     "app.db.model_registry -> app.modules.projects.models",
     "app.db.model_registry -> app.modules.starhope.models",
-    # app.db.session -> app.modules.auth.errors 已随 M3-peer 摘环移除(AuthErr 并 app.core.err)
 ]
 
 [[tool.importlinter.contracts]]
-# 契约三·业务耦合（auth 与其业务域间边统一移交契约四治理后）：只收紧 10 个非 auth 业务模块域间互相 import。
-# rbac/storage/health 共享基础设施/零依赖岛不列入业务域；同域内不受拦；源/目标落在 app.modules.auth 的边由第四契约统一治理。
 name = "边界: 业务模块间不任意依赖(须走公共API/白名单)"
 type = "forbidden"
 source_modules = ["app.modules.admin","app.modules.articles","app.modules.blog","app.modules.content","app.modules.exam","app.modules.feed","app.modules.files","app.modules.points","app.modules.projects","app.modules.starhope"]
 forbidden_modules = ["app.modules.admin","app.modules.articles","app.modules.blog","app.modules.content","app.modules.exam","app.modules.feed","app.modules.files","app.modules.points","app.modules.projects","app.modules.starhope"]
-# 只检查**直接**业务模块→业务模块 import；放行经 db/model_registry、core/task_registry 的间接装配路径。
 allow_indirect_imports = "true"
-# 非 auth 业务域间合法跨域(read/装配/注册/治理聚合)，逐条精确并列于此（Task/A 现状审计导出，随源模块移动 re-anchor）。
 ignore_imports = [
     "app.modules.content.boards.router -> app.modules.admin.deps",
     "app.modules.content.columns.router -> app.modules.admin.deps",
@@ -196,20 +190,12 @@ ignore_imports = [
 ]
 
 [[tool.importlinter.contracts]]
-# 契约四·AUTH 边界（M3.A 收口门，第四契约）：auth 域身份只读面对业务收敛到唯一缝 app.modules.auth.snapshot；
-# 业务(非 auth)模块不得直连 auth 内部子模块做身份展示读。auth→auth 内部边不在本 scope，故 source 不含 auth；
-# import-linter 2.14 无"仅白名单特定子模块"原语，允许面用逐条精确 ignore_imports 表达（无 wildcard）。四类：
-#   ① 展示读→读缝 auth.snapshot（合法，唯一展示读地面）；② routers→auth.deps 认证地基 / auth.schemas ProfileInfo DTO /
-#      admin auth 管理面(service_2fa/service_auth/service_verify/errors/security 二次验证或治理)；
-#   ③ models→auth.models FK/relationship 与 seed→auth.models ORM 注册（结构声明，非展示读）；
-#   ④ 行为/结构锁定直读 auth.models（A3 独立复核：积分榜昵称排序键、blog+articles raw-nickname、授权/凭证缺失不可经缝迁移，勿再强制迁缝）。
 name = "边界: 业务域不得 import auth(只经 auth.snapshot 读缝)"
 type = "forbidden"
 source_modules = ["app.modules.admin","app.modules.articles","app.modules.blog","app.modules.content","app.modules.exam","app.modules.feed","app.modules.files","app.modules.points","app.modules.projects","app.modules.starhope"]
 forbidden_modules = ["app.modules.auth"]
 allow_indirect_imports = "true"
 ignore_imports = [
-    # ① seam display reads — business 域对所有身份展示的**唯一合法直读点**：
     "app.modules.admin.users_router -> app.modules.auth.snapshot",
     "app.modules.content.service -> app.modules.auth.snapshot",
     "app.modules.exam.service -> app.modules.auth.snapshot",
@@ -220,7 +206,6 @@ ignore_imports = [
     "app.modules.blog.service -> app.modules.auth.snapshot",
     "app.modules.articles.service -> app.modules.auth.snapshot",
     "app.modules.points.service -> app.modules.auth.snapshot",
-    # ② routers → auth.deps / auth.auth_router 内部再验证 security·service_* / schemas ProfileInfo DTO：
     "app.modules.content.boards.router -> app.modules.auth.deps",
     "app.modules.content.columns.router -> app.modules.auth.deps",
     "app.modules.content.qa.router -> app.modules.auth.deps",
@@ -247,12 +232,9 @@ ignore_imports = [
     "app.modules.admin.permissions -> app.modules.auth.deps",
     "app.modules.admin.schemas -> app.modules.auth.schemas",
     "app.modules.admin.deps -> app.modules.auth.deps",
-    # S5-A2：admin 会话 cookie/token 纯基元单一事实源收进 auth.admin_session，admin 侧 seam-only
-    # me/danger decode 复用（单向 admin→auth，owner-leaf 之外经本精确条目豁免、非放宽）。
     "app.modules.admin.deps -> app.modules.auth.admin_session",
     "app.modules.blog.git_http -> app.modules.auth.security",
     "app.modules.admin.content_router -> app.modules.auth.service_auth",
-    # ③ models → auth.models FK/relationship 声明 + seed → auth.models ORM 映射注册：
     "app.modules.articles.seed -> app.modules.auth.models",
     "app.modules.content.boards.seed -> app.modules.auth.models",
     "app.modules.content.columns.seed -> app.modules.auth.models",
@@ -260,18 +242,8 @@ ignore_imports = [
     "app.modules.files.seed -> app.modules.auth.models",
     "app.modules.points.seed -> app.modules.auth.models",
     "app.modules.admin.seed -> app.modules.auth.models",
-    # ④ 行为/结构锁定直读 auth.models 的**不可缝迁移例外**：blog/git_http 凭证直读(hashed_password +
-    # verifypwd，快照缝不含凭证列)。S4 已把 feed/content/exam/projects 的身份存在检查/account_level
-    # 判给 auth.snapshot ① 缝；故其不再 import auth.models。points 积分榜 M3.B S5（A段）已由 fused
-    # ``select(User,Profile)`` 服务端 join 收编为业务 points 表取 raw+snapshot 批读组合（python 排序
-    # 保序），故 points.service 亦不再直读 auth.models（改走 ① 的 auth.snapshot）。
     "app.modules.blog.git_http -> app.modules.auth.models",
-    # ⑤ admin 治理/授权面 的 router·deps 对 User 直读(admin 管理 + 会话 User 复用 + list_users 治理读 auth.models/User)：
     "app.modules.admin.seed -> app.modules.auth.models",
-    # ⑥ M3.B S4 过渡：exam/projects 的“单向派升写”由业务本地直改 users/profiles 收敛为调 auth 权威
-    # 升权原语 service_authz.grant_*。S5/S6 真拆库后业务不再 import auth 内部，改走 auth HTTP 内部写缝
-    #（router_authz /auth/internal/grant 经 client）→ 届时移除这两条 ignore。当前蓝绿同库阶段以内进程
-    # 委托保持考试通过/纳入成员语义与旧实现一一对等（只升不降、有改才 bump token + user.updated）。
     "app.modules.exam.service -> app.modules.auth.service_authz",
     "app.modules.projects.service -> app.modules.auth.service_authz",
 ]

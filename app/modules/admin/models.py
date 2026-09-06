@@ -9,9 +9,9 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
-    Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, UTCDateTime, now_iso  # 注意 db.base 而非 db.models
@@ -97,7 +97,7 @@ class DlqMessage(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     routing_key: Mapped[str] = mapped_column(String(255), index=True)
-    payload_json: Mapped[str] = mapped_column(Text)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     exchange: Mapped[str] = mapped_column(String(255), default="lkm.events")
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     reason: Mapped[str] = mapped_column(String(255), default="")

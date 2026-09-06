@@ -29,7 +29,6 @@ def get_auth_engine() -> AsyncEngine:
     if _auth_async_engine is None:
         _auth_async_engine = create_realm_async_engine(
             settings.auth_database_url,
-            driver=settings.auth_db_driver,
             pool_size=settings.auth_db_pool_size,
             pool_max_overflow=settings.auth_db_pool_max_overflow,
             pool_pre_ping=settings.auth_db_pool_pre_ping,

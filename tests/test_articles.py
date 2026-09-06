@@ -152,7 +152,7 @@ async def test_list_categories(db, client):
     assert slugs["science"]["articleCount"] == 1
 
 
-async def test_search_articles_sqlite(db, client):
+async def test_search_articles(db, client):
     await _make_article(db, "a-1", "news", title="机器学习入门")
     data = await _run_graphql(
         client,

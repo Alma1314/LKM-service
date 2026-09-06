@@ -18,14 +18,14 @@ def test_make_model_maps_json_body() -> None:
         status="pending",
     )
     assert m.routing_key == "event.send_code"
-    assert json.loads(m.payload_json)["payload"] == payload
+    assert m.payload_json["payload"] == payload
     assert m.attempts == 2
     assert m.status == "pending"
     # 坏 JSON 兜底
     bad = worker_dlq._make_model(
         routing_key="event.x", body=b"not-json", attempts=0, reason="", status="pending"
     )
-    assert "raw" in json.loads(bad.payload_json)["payload"]
+    assert "raw" in bad.payload_json["payload"]
 
 
 async def test_persist_writes_row(db: Any) -> None:
@@ -55,7 +55,15 @@ async def test_requeue_publishes_and_marks_requeued(db: Any, monkeypatch: Any) -
 
     monkeypatch.setattr(worker_dlq.amqp, "_publish", fake_pub)
 
-    m = DlqMessage(routing_key="event.point", payload_json='{"payload":{"fn":"apply_point_event","args":[1,"like","x:1"]}}')
+    m = DlqMessage(
+        routing_key="event.point",
+        payload_json={
+            "payload": {
+                "fn": "apply_point_event",
+                "args": [1, "like", "x:1"],
+            }
+        },
+    )
     db.add(m)
     await db.commit()
     await db.refresh(m)

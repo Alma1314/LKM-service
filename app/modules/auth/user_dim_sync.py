@@ -40,6 +40,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.dialects import postgresql as pg
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import now_iso
@@ -128,25 +129,21 @@ async def sync_dim_for_ids(db: AsyncSession, user_ids: list[int]) -> int:
         return 0
     now = now_iso()
     rows = _rows_for(now, joined)
-    # 方言 INSERT 构造器：Postgres 与 SQLite 皆暴露 on_conflict_do_update
-    if db.get_bind().dialect.name == "postgresql":
-        from sqlalchemy.dialects.postgresql import insert as impl_insert
-    else:
-        from sqlalchemy.dialects.sqlite import insert as impl_insert
-    stmt = impl_insert(UserDim).values(rows)
+    # PostgreSQL INSERT … ON CONFLICT DO UPDATE(excluded)：批量整行镜像写回，幂等。
+    stmt = pg.insert(UserDim).values(rows)
     stmt = stmt.on_conflict_do_update(
         index_elements=[UserDim.user_id],
         set_={
-            "username": impl_insert(UserDim).excluded.username,
-            "email": impl_insert(UserDim).excluded.email,
-            "nickname": impl_insert(UserDim).excluded.nickname,
-            "role": impl_insert(UserDim).excluded.role,
-            "account_level": impl_insert(UserDim).excluded.account_level,
-            "is_locked": impl_insert(UserDim).excluded.is_locked,
-            "is_banned": impl_insert(UserDim).excluded.is_banned,
-            "created_at": impl_insert(UserDim).excluded.created_at,
-            "updated_at": impl_insert(UserDim).excluded.updated_at,
-            "sync_ts": impl_insert(UserDim).excluded.sync_ts,
+            "username": pg.insert(UserDim).excluded.username,
+            "email": pg.insert(UserDim).excluded.email,
+            "nickname": pg.insert(UserDim).excluded.nickname,
+            "role": pg.insert(UserDim).excluded.role,
+            "account_level": pg.insert(UserDim).excluded.account_level,
+            "is_locked": pg.insert(UserDim).excluded.is_locked,
+            "is_banned": pg.insert(UserDim).excluded.is_banned,
+            "created_at": pg.insert(UserDim).excluded.created_at,
+            "updated_at": pg.insert(UserDim).excluded.updated_at,
+            "sync_ts": pg.insert(UserDim).excluded.sync_ts,
         },
     )
     await db.execute(stmt)

@@ -36,7 +36,7 @@ def _make_model(
         parsed = {"raw": body.decode("utf-8", "replace")}
     return DlqMessage(
         routing_key=routing_key,
-        payload_json=json.dumps({"payload": parsed}),
+        payload_json={"payload": parsed},
         exchange="lkm.events",
         attempts=attempts,
         reason=reason[:255],
@@ -73,7 +73,7 @@ async def requeue(db: Any, dlq_id: int) -> bool:
     m = await db.scalar(select(DlqMessage).where(DlqMessage.id == dlq_id))
     if m is None or m.status != "pending":
         return False
-    parsed = json.loads(m.payload_json).get("payload", {})
+    parsed = m.payload_json.get("payload", {})
     ok = await amqp._publish(m.routing_key, parsed)
     if ok:
         m.status = "requeued"

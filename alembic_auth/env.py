@@ -32,9 +32,7 @@ target_metadata = auth_metadata
 
 
 def _sync_url(url: str) -> str:
-    """Alembic 运行于同步上下文——把 async 方言换同步（同主链 env.py 策略）。"""
-    if url.startswith("sqlite+aiosqlite"):
-        return "sqlite" + url[len("sqlite+aiosqlite") :]
+    """Alembic 运行于同步上下文——把 asyncpg 换成同步 psycopg2（同主链 env.py 策略）。"""
     if url.startswith("postgresql+asyncpg"):
         return "postgresql+psycopg2" + url[len("postgresql+asyncpg") :]
     return url
@@ -52,7 +50,6 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        render_as_batch=True,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -66,11 +63,7 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            render_as_batch=True,
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()
 

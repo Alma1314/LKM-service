@@ -100,7 +100,7 @@ async def test_invokes_rbac_seed(monkeypatch) -> None:
     monkeypatch.setattr(
         init_db_mod, "_seed_base_data", init_db_mod._REAL_seed_base_data
     )
-    from sqlalchemy import func, select
+    from sqlalchemy import func, select, text
     from sqlalchemy.ext.asyncio import (
         AsyncSession,
         async_sessionmaker,
@@ -113,16 +113,23 @@ async def test_invokes_rbac_seed(monkeypatch) -> None:
     from app.modules.admin.models import RolePermission
     from app.modules.rbac.permissions import DEFAULT_GRANTS
 
-    engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+    # 建一个隔离 PG schema（业务库），StaticPool 单连接 + SET search_path → 该连接所有
+    # 会话（含 seed 落库）都落此 schema，避免误写开发库；测毕 drop。模式与 conftest 一致。
+    schema = "s_rbac_seed"
+    engine = create_async_engine(settings.database_url, poolclass=StaticPool)
     async with engine.begin() as conn:
+        await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+        await conn.execute(text(f'SET search_path TO "{schema}"'))
         await conn.run_sync(Base.metadata.create_all)
-    SessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    SessionLocal = async_sessionmaker(
+        autocommit=False, autoflush=False, bind=engine, expire_on_commit=False
+    )
     session: AsyncSession = SessionLocal()
 
     async def _fake_new_session() -> AsyncSession:
-        # _seed_base_data 函数内 `from app.db.session import new_session` 在调用点解析，
-        # 替换 app.db.session.new_session 即可生效。
-        return session
+        # 同一引擎（StaticPool 已 SET search_path）→ 新会话仍落在该 schema
+        return SessionLocal()
 
     monkeypatch.setattr(db_session, "new_session", _fake_new_session)
 
@@ -133,6 +140,7 @@ async def test_invokes_rbac_seed(monkeypatch) -> None:
     # use_alembic 默认 False → 走 create_all 分支 + seed
     await init_db_mod.init_db()
 
+    await session.execute(text(f'SET search_path TO "{schema}"'))
     total = (
         await session.execute(select(func.count()).select_from(RolePermission))
     ).scalar_one()
@@ -141,9 +149,15 @@ async def test_invokes_rbac_seed(monkeypatch) -> None:
     await session.close()
     await engine.dispose()
 
+    # drop 该一次性 schema
+    _clean = create_async_engine(settings.database_url)
+    async with _clean.begin() as conn:
+        await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+    await _clean.dispose()
+
 
 async def test_fail_open_when_redis_disabled(monkeypatch) -> None:
-    """Redis 未配置 → 不设锁直接跑（dev/sqlite 单 worker 场景）。"""
+    """Redis 未配置 → 不设锁直接跑（dev 单 worker 场景）。"""
     monkeypatch.setattr(settings, "redis_url", "")
     monkeypatch.setattr(settings, "use_alembic", True)
     ran = 0

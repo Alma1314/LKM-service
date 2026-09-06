@@ -1,23 +1,23 @@
 """M1.1 outbox 事务发件箱 + relay 验收。
 
-与 conftest 的 client（内存 db 依赖覆盖）解耦：本文件自带静态 sqlite+aiosqlite+StaticPool
-内存库。enqueue（业务会话）与 relay（session_factory 注入同一 engine）读写同一库，
-避免 relay 默认走生产 new_session 而连到别的库、读不到内存行。
+enqueue（业务会话）与 relay（session_factory 注入同一 engine）读写同一 PG 隔离 schema，
+避免 relay 默认走生产 new_session 而连到别的库、读不到内存行。队列侧（worker 消费幂等）同样
+经 monkeypatch new_session 走同一库。
 """
 
-import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
 import sqlalchemy as sa
 from prometheus_client import REGISTRY
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool, StaticPool
 
 import app.db.outbox  # noqa: F401  # 确保 OutboxMessage 已入 Base.metadata
 from app.core import outbox_relay, worker
@@ -39,21 +39,36 @@ _PAYLOAD = {"fn": "apply_point_event", "args": [7, "post", "item:9"]}
 
 @pytest.fixture
 async def engine() -> AsyncEngine:
-    """隔离内存库：全量 ensure 模型（含 outbox_events）+ 该引擎独立建表。"""
+    """隔离 PG schema（业务库）：全量 ensure 模型 + set search_path 后 create_all 落此。"""
     ensure_all_models()
-    eng = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+    url = settings.database_url
+    schema = "s_outbox"
+    eng = create_async_engine(url, poolclass=StaticPool)
     async with eng.begin() as conn:
+        await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+        await conn.execute(text(f'SET search_path TO "{schema}"'))
         await conn.run_sync(Base.metadata.create_all)
     yield eng
     await eng.dispose()
+    # 测毕清理一次性 schema
+    _clean = create_async_engine(url, poolclass=NullPool)
+    try:
+        async with _clean.begin() as conn:
+            await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+    finally:
+        await _clean.dispose()
 
 
 @pytest.fixture
 async def fact(engine: AsyncEngine):
     """返回会话工厂：业务(enqueue/add) 与 relay session_factory 共用此引擎。"""
-    maker = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    maker = async_sessionmaker(
+        autocommit=False, autoflush=False, bind=engine, expire_on_commit=False
+    )
 
     async def _new() -> AsyncSession:
+        # 同引擎（StaticPool 已 SET search_path）→ 新会话仍落该 schema
         return maker()
 
     return _new
@@ -194,7 +209,7 @@ async def test_relay_folds_to_event_failure_at_max_tries(fact, monkeypatch) -> N
     m = OutboxMessage(
         event_id="near-max",
         routing_key=_RK,
-        payload_json=json.dumps(_PAYLOAD),
+        payload_json=_PAYLOAD,
         status=OUTBOX_PENDING,
         attempt_count=MAX_TRIES - 2,
     )
@@ -265,7 +280,7 @@ async def test_relay_folds_backlogged_event_at_max_tries(fact, monkeypatch) -> N
     m = OutboxMessage(
         event_id="soon-failed",
         routing_key=_RK,
-        payload_json=json.dumps(_PAYLOAD),
+        payload_json=_PAYLOAD,
         status=OUTBOX_PENDING,
         attempt_count=MAX_TRIES - 1,
     )

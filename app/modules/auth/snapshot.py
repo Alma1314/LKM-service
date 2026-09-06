@@ -42,7 +42,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 import app.core.user_cache as user_cache
-from app.core.config import settings
 from app.modules.auth import user_http
 from app.modules.auth.models import Profile, User
 from app.modules.auth.schemas import ProfileInfo, ProfileRole
@@ -379,15 +378,11 @@ async def user_count_by_day(
     以日期序列循环补 0。
 
     PG 的 ``func.date(timestamptz)`` 会先按会话时区(本地+08)取日，与“以 UTC 今天为基准”
-    偏移一天，故 PG 先 ``AT TIME ZONE 'UTC'`` 变 naive-UTC 再取日（与单体既有 admin_trend
-    语义一致，跨天不 flaky）；SQLite 直接 ``func.date``（naive-UTC 值解释）。本函数只返回
-    落在窗口内、增量 >0 的日期 → 计数，零 PII。
+    偏移一天，故先 ``AT TIME ZONE 'UTC'`` 变 naive-UTC 再取日（与单体既有 admin_trend
+    语义一致，跨天不 flaky）。本函数只返回落在窗口内、增量 >0 的日期 → 计数，零 PII。
     """
     end = start + datetime.timedelta(days=days)
-    if settings.auth_db_driver == "postgresql":
-        day_expr = func.date(func.timezone("UTC", User.created_at))
-    else:
-        day_expr = func.date(User.created_at)
+    day_expr = func.date(func.timezone("UTC", User.created_at))
     stmt = (
         select(day_expr.label("d"), func.count())
         .where(User.created_at >= start, User.created_at < end)

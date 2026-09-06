@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -25,6 +25,8 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import StaticPool
 
+from app.core.config import settings
+from app.db.auth_base import auth_metadata
 from app.db.base import Base
 from app.db.model_registry import ensure_all_models
 from app.db.user_dim import UserDim
@@ -35,11 +37,26 @@ from app.modules.auth.tasks import invalidate_user_snap, reconcile_user_dim
 
 @pytest.fixture
 async def dim_db() -> AsyncIterator[tuple[Any, Any, Any]]:
-    """自足内存库：返回 (engine, sessionmaker, boot-session)。全量 schema(含 user_dim)。"""
+    """自足 PG「融合作业态」库：返回 (engine, sessionmaker, boot-session)。
+
+    S5 拆后 user_dim(base) 与 User/Profile(auth_metadata) 分属两 realm；本测试以单一融合
+    schema 同时 create_all Base+auth（无表名冲突），等价“宽表归 auth”收尾态，使 ETL 的
+    单会话读写可同时见二者。每连接 search_path=uds(server_settings) 保证稳定。"""
     ensure_all_models()
-    engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+    url = settings.database_url
+    boot = create_async_engine(url)
+    async with boot.begin() as conn:
+        await conn.execute(text('DROP SCHEMA IF EXISTS "uds" CASCADE'))
+        await conn.execute(text('CREATE SCHEMA "uds"'))
+    await boot.dispose()
+    engine = create_async_engine(
+        url,
+        poolclass=StaticPool,
+        connect_args={"server_settings": {"search_path": "uds"}},
+    )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(auth_metadata.create_all)
     maker = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)
     s = maker()
     try:

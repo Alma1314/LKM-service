@@ -46,16 +46,31 @@ from tests.conftest import DB
 
 
 # B0.2：consumer handler invalidate_user_snap 现还会顺带离线刷新 user_dim(自开会话 seam)。
-# 在单测里把 seam 指向一块独立内存库(ensure user_dim + 全量 schema)，避免触碰真实默认 DB；
-# 该离线副本与各用例如断言无关(它们断言 redis/真实 DB 快照)，仅充当 fail-open 的写目标。
+# 在单测里把 seam 指向一块独立的 PG 融合 schema(ensure user_dim + 全量业务/模块表)，避免触碰
+# 真实默认 DB 表；该离线副本与各用例如断言无关(它们断言 redis/真实 DB 快照)，仅作 fail-open 写目标。
 @pytest.fixture(autouse=True)
 async def _dim_sync_throwaway(monkeypatch) -> AsyncIterator[None]:
+    from sqlalchemy import text
+
+    from app.db.auth_base import auth_metadata
     from app.db.model_registry import ensure_all_models
 
     ensure_all_models()
-    engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+    url = settings.database_url
+    schema = "ics"
+    boot = create_async_engine(url)
+    async with boot.begin() as conn:
+        await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+    await boot.dispose()
+    engine = create_async_engine(
+        url,
+        poolclass=StaticPool,
+        connect_args={"server_settings": {"search_path": schema}},
+    )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(auth_metadata.create_all)
     maker = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
     async def _factory() -> AsyncSession:
@@ -130,10 +145,8 @@ async def _rows(db: AsyncSession) -> list[Any]:
     return list(res.scalars().all())
 
 
-def _payload_user_id(payload_json: str) -> int:
-    import json
-
-    return int(json.loads(payload_json)["args"][0])
+def _payload_user_id(payload_json: dict[str, Any]) -> int:
+    return int(payload_json["args"][0])
 
 
 # ---- Layer 1：真实写点按源发对应 outbox 事件 ----

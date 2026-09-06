@@ -8,13 +8,13 @@ broker）才入队；未配置(dev/测试)直返 False，维持既有 fail-open 
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Index, Integer, String, Text, select
+from sqlalchemy import Index, Integer, String, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -43,8 +43,10 @@ class OutboxMessage(Base):
     event_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
     # 逻辑主题 = 现有 topic exchange routing_key（event.apply_point/…），relay 按它 publish
     routing_key: Mapped[str] = mapped_column(String(64), nullable=False)
-    # 携带 {fn,args,…} 完整 dict（worker 按 payload["fn"] 分派）；Text+json 跨 sqlite/PG
-    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    # 携带 {fn,args,…} 完整 dict（worker 按 payload["fn"] 分派）；原生 JSONB 存 dict
+    payload_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default=OUTBOX_PENDING, index=True
     )
@@ -105,7 +107,7 @@ async def enqueue_outbox(
     row = OutboxMessage(
         event_id=eid,
         routing_key=routing_key,
-        payload_json=json.dumps(payload, ensure_ascii=False),
+        payload_json=payload,
     )
     db.add(row)
     return True

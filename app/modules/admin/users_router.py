@@ -26,7 +26,6 @@ from app.core.common import (
     PaginateParams,
     paginate_pages,
 )
-from app.core.config import settings
 from app.core.err import respond
 from app.db.auth_session import get_auth_session as _get_auth_session_raw
 from app.db.session import get_read_session
@@ -174,16 +173,13 @@ async def admin_trend(
     async def _biz_deltas(col: Any, extra_where: Any | None = None) -> dict[date, int]:
         """按某 biz 时间列分组统计每日增量；单表异常返回空 dict（_safe_count 同款容错）。
         extra_where 可选附加过滤（如 content_type == discussion）。
-        func.date 在 SQLite 返回 'YYYY-MM-DD' 字符串，统一转 date 作 key。本处的语义约束：
+        func.date 返回日期文本，统一转 date 作 key。本处的语义约束：
         消费方是 biz 表（posts 等仍在 biz realm），不做跨库假设。"""
         out: dict[date, int] = {}
         try:
             # 统一按 UTC 分桶：PG 的 func.date(timestamptz) 会先按会话时区(本地+08)取日，
-            # 与“以 UTC 今天为基准”偏移一天；故 PG 先 AT TIME ZONE 'UTC' 变 naive-UTC 再取日。
-            if settings.db_driver == "postgresql":
-                day_expr = func.date(func.timezone("UTC", col))
-            else:
-                day_expr = func.date(col)
+            # 与“以 UTC 今天为基准”偏移一天；故先 AT TIME ZONE 'UTC' 变 naive-UTC 再取日。
+            day_expr = func.date(func.timezone("UTC", col))
             stmt = select(day_expr.label("d"), func.count()).where(col >= start)
             if extra_where is not None:
                 stmt = stmt.where(extra_where)

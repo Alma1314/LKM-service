@@ -1,7 +1,7 @@
 """积分查询端点（Task6）：排行榜 period + title、成就/任务/兑换列表。
 
-直接驱动 service 函数验证聚合与标题逻辑；seed 数据经 conftest 内存库建表后由
-seed 函数写入。遵循项目 async / 内存 aiosqlite 测试惯例。
+直接驱动 service 函数验证聚合与标题逻辑；seed 数据经 conftest PG schema-per-test 建表后
+由 seed 函数写入。遵循项目 async / PG 测试惯例。
 """
 
 import datetime

@@ -25,18 +25,14 @@ class Settings(BaseSettings):
     app_name: str = "LKM-API"
     app_version: str = "0.0.1"
     api_prefix: str = "/api/v1"
-
-    # 数据库驱动 —— 开发与生产对齐默认 PostgreSQL(asyncpg)；
-    # SQLite 仅作逃生：显式设 LKM_DB_DRIVER=sqlite 回到本地 sqlite（无 PG 时不常用）。
-    db_driver: str = "postgresql"
-    db_path: str = "lkm.db"
+    
     db_host: str = "localhost"
     db_port: int = 5432
     db_name: str = "lkm"
     db_user: str = "postgres"
     db_password: str = ""
 
-    # 连接池（仅 PostgreSQL/asyncpg 生效；SQLite 单文件连接数无益，走 NullPool）
+    # 连接池（PostgreSQL/asyncpg 生效）
     db_pool_size: int = 10
     db_pool_max_overflow: int = 20
     # 取连接前 ping 探活，剔除坏连接，避免陈旧连接 0 连接时的短暂出错
@@ -107,12 +103,8 @@ class Settings(BaseSettings):
     auth_http_token: str = ""
     auth_http_timeout_s: float = 3.0
 
-    # AUTH 独立库（M3.B S1 基建）：auth 自持数据将迁到专属第二个 PostgreSQL。
-    # S1 只增 config + 惰性 auth_session/auth_base（auth.models 尚未迁移前为零引用 scaffolding）；
-    # auth_* 键与 monolith 的 db_* 正交，默认本地 sqlite（同单体的 auth_lkm.db）——迁移真正发生
-    # （S5/S6）前不会在建 schema / 运行时被消费。
-    auth_db_driver: str = "sqlite"
-    auth_db_path: str = "auth_lkm.db"
+    # AUTH 独立库：auth 自持数据在专属第二个 PostgreSQL（独立 schema/engine）。
+    # auth_* 键与 monolith 的 db_* 正交，统一标准只用 PostgreSQL(asyncpg)，无 sqlite 逃生分支。
     auth_db_host: str = "localhost"
     auth_db_port: int = 5432
     auth_db_name: str = "lkm_auth"
@@ -200,28 +192,20 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        if self.db_driver == "postgresql":
-            password = urllib.parse.quote_plus(self.db_password)
-            return (
-                f"postgresql+asyncpg://{self.db_user}:{password}"
-                f"@{self.db_host}:{self.db_port}/{self.db_name}"
-            )
-        return f"sqlite+aiosqlite:///{self.db_path}"
+        password = urllib.parse.quote_plus(self.db_password)
+        return (
+            f"postgresql+asyncpg://{self.db_user}:{password}"
+            f"@{self.db_host}:{self.db_port}/{self.db_name}"
+        )
 
     @property
     def auth_database_url(self) -> str:
-        """AUTH 独立库（M3.B S1）的连接 URL，构造逻辑与 :prop:`database_url` 同构。
-
-        默认与单体同方言/同默认位（本地 sqlite ``auth_lkm.db``）。S5/S6 前 auth_session
-        不会被 monolith 主进程实例化，URL 仅静态可用。
-        """
-        if self.auth_db_driver == "postgresql":
-            password = urllib.parse.quote_plus(self.auth_db_password)
-            return (
-                f"postgresql+asyncpg://{self.auth_db_user}:{password}"
-                f"@{self.auth_db_host}:{self.auth_db_port}/{self.auth_db_name}"
-            )
-        return f"sqlite+aiosqlite:///{self.auth_db_path}"
+        """AUTH 独立库的 PostgreSQL(asyncpg) 连接 URL。"""
+        password = urllib.parse.quote_plus(self.auth_db_password)
+        return (
+            f"postgresql+asyncpg://{self.auth_db_user}:{password}"
+            f"@{self.auth_db_host}:{self.auth_db_port}/{self.auth_db_name}"
+        )
 
 
 settings = Settings()

@@ -4,7 +4,6 @@
 """
 
 import asyncio
-import os
 
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -132,55 +131,63 @@ class TestTransfer:
 
 class TestConcurrency:
     async def test_concurrent_spend_no_overdraw(self, db: AsyncSession, auth_db: AsyncSession):
-        """两个独立会话（各自事务）在该文件库上并发扣款 → 只有余额足够的那笔成功。
+        """两个独立会话（各自事务）在真实 PG 上并发扣款 → 只有余额足够的那笔成功。
 
-        目的：每个 spend 都跑在独立的 AsyncSession 上，让其在本进程的真实并发
-        下竞争，而不是复用同一个 session 串行执行，从而覆盖 atomic 防透支守卫。
+        目的：每个 spend 都跑在独立的 AsyncSession 上，让其在本进程的真实并发下
+        竞争，从而覆盖 atomic 防透支守卫。
 
-        注：db 夹具是 StaticPool（单连接内存 sqlite），两个独立会话共享同一连接
-        会互相践踏事务，无法获得真并发。因此这里自建一个文件型 sqlite 引擎并配
-        NullPool，使每个并发会话独占一条连接、指向同一数据库文件——这才是数据库
-        级别并发。sqlite 的写锁仍会把真实写串行化，但 WHERE balance + delta >= 0
-        原子守卫决定哪一笔成功，正是本测试要证明的行为。
+        说明：db 夹具是 schema-per-test 单长活会话，不宜拿来并发；此处在 biz 库建一个
+        隔离 schema ``pts``，配 ``NullPool`` 引擎——每个并发会话独占一条连接、同指该 schema，
+        走 PG 真实的 ``FOR UPDATE`` 行锁 + ``WHERE balance>=amount`` 守卫。两笔并发 spend：先
+        者把 100 扣到 30 并提交；后者锁重整后余额不足 → 抛 BizError，恰一笔成功。
         """
-        import tempfile
-
+        from sqlalchemy import text
         from sqlalchemy.ext.asyncio import create_async_engine
         from sqlalchemy.pool import NullPool
 
-        fd, dbfile = tempfile.mkstemp(suffix=".db")
-        os.close(fd)
+        from app.core.config import settings
+
+        url = settings.database_url
+        # 先以默认连接干净建 schema
+        boot = create_async_engine(url)
+        async with boot.begin() as conn:
+            await conn.execute(text('DROP SCHEMA IF EXISTS "pts" CASCADE'))
+            await conn.execute(text('CREATE SCHEMA "pts"'))
+        await boot.dispose()
+        # NullPool 每会话独立连接（server_settings 让每条都落 pts）
+        engine: AsyncEngine = create_async_engine(
+            url,
+            poolclass=NullPool,
+            connect_args={"server_settings": {"search_path": "pts"}},
+        )
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        # 种子同 schema；points 只用裸 int user_id（无 identity/FK 依赖）→ 用字面 int 直接发分
+        async with factory() as seed:
+            uid = 1
+            await reward(seed, uid, 100, "test", "cc", "0")
+            await seed.commit()
+        results = await asyncio.gather(
+            _spend_in_session(factory, uid, 70, "cc", "1"),
+            _spend_in_session(factory, uid, 70, "cc", "2"),
+            return_exceptions=True,
+        )
+        succ = [x for x in results if not isinstance(x, Exception)]
+        fail = [x for x in results if isinstance(x, Exception)]
+        assert len(succ) == 1
+        assert len(fail) == 1
+        # 用一个新会话查余额 = 100 - 70 = 30（只有一个 70 成功）
+        async with factory() as s:
+            assert await get_balance(s, uid) == 30
+        await engine.dispose()
+        # 清场：drop 一次性 schema
+        _clean = create_async_engine(url)
         try:
-            engine: AsyncEngine = create_async_engine(
-                f"sqlite+aiosqlite:///{dbfile}",
-                poolclass=NullPool,
-            )
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
-            factory = async_sessionmaker(engine, expire_on_commit=False)
-            # 种子与本线程同库同表：points 只用裸 int user_id（无 identity/FK 依赖），
-            # 且并发自建文件库仅 Base.metadata（无 users/profile）→ 用字面 int 直接发分。
-            async with factory() as seed:
-                uid = 1
-                await reward(seed, uid, 100, "test", "cc", "0")
-                await seed.commit()
-            results = await asyncio.gather(
-                _spend_in_session(factory, uid, 70, "cc", "1"),
-                _spend_in_session(factory, uid, 70, "cc", "2"),
-                return_exceptions=True,
-            )
-            succ = [x for x in results if not isinstance(x, Exception)]
-            fail = [x for x in results if isinstance(x, Exception)]
-            assert len(succ) == 1
-            assert len(fail) == 1
-            # 用一个新会话查余额 = 100 - 70 = 30（只有一个 70 成功）
-            async with factory() as s:
-                assert await get_balance(s, uid) == 30
-            await engine.dispose()
+            async with _clean.begin() as conn:
+                await conn.execute(text('DROP SCHEMA IF EXISTS "pts" CASCADE'))
         finally:
-            await asyncio.to_thread(
-                lambda: os.remove(dbfile) if os.path.exists(dbfile) else None
-            )
+            await _clean.dispose()
 
 
 class TestLeaderboard:

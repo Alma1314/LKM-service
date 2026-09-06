@@ -20,11 +20,13 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
-from sqlalchemy import event, func, select
+from sqlalchemy import event, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 import app.modules.auth.models  # noqa: F401  确保 User/Profile 模型元数据可见
+from app.core.config import settings
+from app.db.auth_base import auth_metadata
 from app.db.base import Base
 from app.db.model_registry import ensure_all_models
 from app.db.user_dim import UserDim
@@ -37,15 +39,42 @@ from app.modules.auth.user_dim_sync import (
 
 
 async def _mk_engine():
-    """ensure 全量模型(含 user_dim)后建独立内存库(AsyncEngine)；返回用于挂 sync 层事件。"""
+    """S5 拆后「宽表归属 auth」融合库：单 PG schema 内 create_all Base+auth 双 metadata。
+
+    - 源 User/Profile 在 auth_metadata(AuthBase)；目标 user_dim 在 Base.metadata —— 本测试
+      以**融合单一 schema**（无表名冲突）让 ``user_dim_sync`` 的单会话读写同时可见二者，
+      等价拆库收尾后的“user_dim 归 auth”终局态（见 admin/dim_report 注释）。
+    - 用 ``connect_args.server_settings.search_path`` 让引擎每根连接都落该 schema，跨会话稳定。
+    """
     ensure_all_models()
-    return create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+    url = settings.database_url
+    schema = "uds"
+    # (1) 干净建 schema（默认 schema 连接）
+    boot = create_async_engine(url)
+    async with boot.begin() as conn:
+        await conn.execute(text('DROP SCHEMA IF EXISTS "uds" CASCADE'))
+        await conn.execute(text('CREATE SCHEMA "uds"'))
+    await boot.dispose()
+    # (2) 目标引擎：search_path=uds 后 create_all 双 metadata（Base 业务表 + auth 用户表无冲突）
+    eng = create_async_engine(
+        url,
+        poolclass=StaticPool,
+        connect_args={"server_settings": {"search_path": schema}},
+    )
+    async with eng.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(auth_metadata.create_all)
+    return eng
 
 
 async def _make_session(engine: Any):
-    """由(异步)engine 造独立会话，并建全表。expire_on_commit=False 防 commit 后惰性重载。"""
+    """由(异步)engine 造会话并建全表。expire_on_commit=False 防 commit 后惰性重载。
+
+    引擎已带 ``server_settings.search_path=uds``，故任何会话自动落隔离 schema；此处再幂等
+    create_all Base + auth 双 metadata（供独立调用路径，保证表已就绪）。"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(auth_metadata.create_all)
     maker = async_sessionmaker(
         autocommit=False, autoflush=False, bind=engine, expire_on_commit=False
     )

@@ -1,6 +1,5 @@
 """Admin 端点：死信消息列表 / 重投 / 丢弃。"""
 
-import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -41,7 +40,7 @@ async def list_dlq(
                 "attempts": m.attempts,
                 "reason": m.reason,
                 "created_at": m.created_at.isoformat() if m.created_at else None,
-                "payload": json.loads(m.payload_json),
+                "payload": m.payload_json,
             }
             for m in rows
         ]

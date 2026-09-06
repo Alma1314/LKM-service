@@ -4,10 +4,9 @@
 报表读接线（B0.3）都是独立后续任务，此处**不做**。本表是 auth 源的 read-only 反范式副本，
 **禁止**任何在线读路径使用（在线一致性走 ``user:snap``/``auth.snapshot``）。
 
-与 conftest 的默认 db fixture（仅由已 import 模型建 schema）解耦：本文件自带
-sqlite+aiosqlite+StaticPool 内存库，并在建表前显式 ``ensure_all_models()`` —— 保证含
-``user_dim``（由 `app.db.model_registry` 导入注册）的真实全量 metadata 参与 create_all，
-从而让断言看到此表（镜像 test_outbox 的自足 engine 范式）。
+与 conftest 的默认 db fixture 解耦：本文件自带隔离 PG schema 引擎，并在建表前显式
+``ensure_all_models()`` —— 保证含 ``user_dim``（由 `app.db.model_registry` 导入注册）的
+真实全量 metadata 参与 create_all，从而让断言看到此表（镜像 test_outbox 的自足 engine 范式）。
 
 迁移链验证直接按文件读入各迁移模块（alembic/versions 非 import 包，故用
 ``importlib.util.spec_from_file_location`` 从物理路径加载），不依赖 alembic head 命令，
@@ -21,10 +20,10 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from app.core.config import settings
 from app.db.base import Base
 from app.db.model_registry import ensure_all_models
 
-_HEAD = "a3f5b6c7d8e9afae"
 _REV_FILE_NAME = "f1a2e3d4c5b6a7f8_add_user_dim.py"
 
 
@@ -38,10 +37,18 @@ def _load_migration_module(path: Path):
 
 
 async def _build_engine():
-    """ensure 全量模型（含 user_dim）后建独立内存库返回其 engine。"""
+    """ensure 全量模型（含 user_dim）后建独立 PG schema 返回该引擎。
+
+    schema 落在 settings.database_url 上的一次性 schema，静态结果；测毕不回收（孤立 schema
+    由运维/CI 库重建兜底），避免与 conftest 计数耦合。"""
     ensure_all_models()
-    eng = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+    url = settings.database_url
+    eng = create_async_engine(url, poolclass=StaticPool)
+    schema = "s_user_dim"
     async with eng.begin() as conn:
+        await conn.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        await conn.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
+        await conn.execute(sa.text(f'SET search_path TO "{schema}"'))
         await conn.run_sync(Base.metadata.create_all)
     return eng
 
@@ -122,7 +129,7 @@ def test_user_dim_migration_chained_to_single_head():
         module = _load_migration_module(f)
         mods[module.revision] = {"module": module, "down_revision": module.down_revision}
 
-    # (b1) 新文件在 versions 目录，且其 revision 不与链上其它既有文件撞号（每个迁移 revision 全局唯一）
+    # (b1) user_dim 迁移文件在 versions 目录，且其 revision 不与链上其它文件撞号（每个迁移 revision 全局唯一）
     its_path = versions_dir / _REV_FILE_NAME
     assert its_path.exists(), "user_dim 迁移文件应存在"
     rev_module = _load_migration_module(its_path)
@@ -131,16 +138,26 @@ def test_user_dim_migration_chained_to_single_head():
         f"user_dim migration revision {rev_module.revision} 与既有 revision 撞号"
     )
 
-    # (b2) down_revision 精确指向现头 a3f5b6c7d8e9afae（单头线性链新末端）
-    assert rev_module.down_revision == _HEAD, (
-        f"user_dim 迁移应 down_revision={_HEAD}（现链头），得 {rev_module.down_revision}"
-    )
+    # (b2) 全链线性且单头（不硬编码 user_dim 即头——其后可能新增合法迁移）：
+    #      从“真链头”（不被任何文件作为 down_revision 的 revision = 唯一顶）沿 down_revision
+    #      一路回走，不遇分支/缺环/环，且恰好盖上全部 revision；root(down_revision=None) 有且仅一个。
+    #      这样即便在 user_dim 之后再追加新迁移，也仍然把整条线性链走满、保证可逆。
+    all_revs = set(mods)
+    child_of = {d for m in mods.values() for d in (
+        [m["down_revision"]] if not isinstance(m["down_revision"], (list, tuple))
+        else list(m["down_revision"])
+    ) if d is not None}
+    head_revs = all_revs - child_of
+    assert len(head_revs) == 1, f"迁移链应单头，实得 {sorted(head_revs)}"
+    head = head_revs.pop()
+    assert rev_module.revision in all_revs  # user_dim 是链中一环(可达)
 
-    # (b3) 全链线性：自 user_dim 沿 down_revision 一路回走不遇分支/缺环，且恰好盖上全部 revision
-    #      （过一遍即隐含链单头致无"未来头"分叉；root 的 down_revision=None 属合法链起点）
+    roots = {r for r, m in mods.items() if m["down_revision"] is None}
+    assert len(roots) == 1, f"应恰一个根 revision(down=None)，实得 {sorted(roots)}"
+
     reachable: set[str] = set()
     seen: set[str] = set()
-    node: str | None = rev_module.revision
+    node: str | None = head
     while node is not None:
         assert node not in seen, f"迁移链出现环 at {node}"
         seen.add(node)
@@ -148,8 +165,8 @@ def test_user_dim_migration_chained_to_single_head():
         assert nxt is None or not isinstance(nxt, (list, tuple, set)), f"{node} 出现多父分支: {nxt}"
         reachable.add(node)
         node = nxt
-    assert reachable == set(mods), (
-        "user_dim 向后应能沿 down_revision 覆盖全部历史 revision（保证链完整可逆）"
+    assert reachable == all_revs, (
+        "自当前链头沿 down_revision 应覆盖全部历史 revision（保证链完整可逆）"
     )
     assert [m["down_revision"] for m in mods.values()].count(None) == 1, (
         "应恰有一个根 revision（down_revision=None）；多于一个即历史分叉，破坏可逆回滚线性"
