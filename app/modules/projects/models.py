@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 import datetime
-from typing import TYPE_CHECKING
 
 from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, UTCDateTime, now_iso  # 注意 db.base 而非 db.models
-
-if TYPE_CHECKING:
-    from app.modules.auth.models import User
 
 
 class Project(Base):
@@ -19,7 +15,7 @@ class Project(Base):
     title: Mapped[str] = mapped_column(String(100), nullable=False)
     summary: Mapped[str] = mapped_column(String(300), nullable=False)
     description: Mapped[str] = mapped_column(String(500), nullable=False)
-    applicant_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    applicant_id: Mapped[int] = mapped_column(Integer, nullable=False)  # S5: auth user_id
     is_incubated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # ———————— 项目广场展示字段（后端扩充，供 GET /projects 展示） ————————
     type: Mapped[str] = mapped_column(
@@ -47,7 +43,6 @@ class Project(Base):
         UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
     )
 
-    applicant: Mapped[User] = relationship(foreign_keys=[applicant_id])
     members: Mapped[list[ProjectMember]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
@@ -57,7 +52,7 @@ class ProjectApplication(Base):
     __tablename__: str = "project_applications"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    applicant_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    applicant_id: Mapped[int] = mapped_column(Integer, nullable=False)  # S5: auth user_id
     title: Mapped[str] = mapped_column(String(100), nullable=False)
     summary: Mapped[str] = mapped_column(String(300), nullable=False)
     description: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -66,9 +61,7 @@ class ProjectApplication(Base):
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="pending"
     )  # pending|approved|rejected
-    reviewer_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True
-    )
+    reviewer_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
@@ -77,21 +70,15 @@ class ProjectApplication(Base):
         UTCDateTime, nullable=True
     )
 
-    applicant: Mapped[User] = relationship(foreign_keys=[applicant_id])
-    reviewer: Mapped[User | None] = relationship(foreign_keys=[reviewer_id])
-
 
 class ProjectMember(Base):
     __tablename__: str = "project_members"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False)
-    user_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True
-    )  # 空 = 非注册成员，仅 display_name
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # S5: auth user_id
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
     role_in_project: Mapped[str] = mapped_column(String(100), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     project: Mapped[Project] = relationship(back_populates="members")
-    user: Mapped[User | None] = relationship(foreign_keys=[user_id])

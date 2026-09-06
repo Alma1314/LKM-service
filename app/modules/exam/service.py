@@ -294,7 +294,9 @@ async def _apply_unlock(db: AsyncSession, exam: Exam, user_id: int) -> None:
 
     if not exam.unlock_level and not exam.unlock_role:
         return
-    await service_authz.grant_exam_unlock(
+    # M3.B S5 C：拆库后业务 DB 无 users/profiles——升权经 auth seam 落 auth realm
+    # （seam 开→auth 内部写端点；关→回落实本 grant 蓝绿/单库，语义零漂移）。
+    await service_authz.grant_exam_unlock_from_business(
         db,
         user_id,
         unlock_level=exam.unlock_level,

@@ -184,3 +184,62 @@ async def authorize_via_seam(
         "account_level": payload.get("account_level"),
         "role": payload.get("role"),
     }
+
+
+# —— 升权写面 seam（M3.B S5 C）：业务把单向升权（解锁考试/纳入成员）交给 auth 权威写 ——
+#
+# S5 拆库后业务库不再有 users/profiles（auth 是身份词表唯一 owner，含写）。当业务进程确需把
+# 用户"单向升权"（exam 通过→exam_unlock；projects 审核通过→incubation）落为 auth 真值时，只能
+# 经 AUTH 内部写端点 ``/auth/internal/grant`` 打到 auth 进程（auth 自持库事务内 execute+commit）。
+# 本函数是该写面 HTTP client：URL/作法与 :func:`authorize_via_seam` 一致；不触业务 DB 会话。
+#
+# **fail-closed**（写不可静默流失）：调用方只在 ``enabled()``（url+token 都配齐）时进入本函数；
+# 任一网络/超时/4xx/5xx/畸形 → 抛 ``UserHttpUnavailable``，由 supplier 向上传播，绝不让"升权落空"
+# 被当成成功（否则审核标记 approved 而用户未真升权 → 语义漂移）。调用方负责按信封取 ``changed``。
+
+_GRANT_FIELDS: tuple[str, ...] = ("changed",)
+
+
+async def grant_via_seam(
+    *,
+    kind: str,
+    user_id: int,
+    unlock_level: str | None = None,
+    unlock_role: str | None = None,
+) -> int:
+    """经 AUTH internal 写端点执行一次单向升权，返回 ``changed``（0=无真实改动/1=已升权并 bump token）。
+
+    ``kind`` ∈ {"exam_unlock", "incubation"}（与 ``/auth/internal/grant`` 的 ``_GrantIn.kind`` 同源）。
+    调用方应已先行判断 ``enabled()``（拆库写只有 seam 路径可用）；本函数不带回退本地 DB。
+    """
+    url = f"{settings.auth_http_url}{settings.api_prefix}/auth/internal/grant"
+    headers = {
+        "Authorization": f"Bearer {settings.auth_http_token}",
+        "Accept": "application/json",
+    }
+    body: dict[str, object] = {"kind": kind, "user_id": int(user_id)}
+    if unlock_level is not None:
+        body["unlock_level"] = unlock_level
+    if unlock_role is not None:
+        body["unlock_role"] = unlock_role
+    try:
+        async with _build_client() as client:
+            resp = await client.post(url, headers=headers, json=body)
+    except httpx.HTTPError as exc:
+        raise UserHttpUnavailable(f"auth_http grant request failed: {exc}") from None
+
+    if resp.status_code != 200:
+        raise UserHttpUnavailable(
+            f"auth_http grant unexpected status {resp.status_code}"
+        )
+
+    payload = _coerce_json(resp)
+    for f in _GRANT_FIELDS:
+        if f not in payload:
+            raise UserHttpUnavailable(f"auth_http grant missing field {f}")
+    try:
+        return int(payload["changed"])
+    except (TypeError, ValueError):
+        raise UserHttpUnavailable(
+            f"auth_http grant malformed changed={payload['changed']!r}"
+        ) from None

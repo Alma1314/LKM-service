@@ -26,6 +26,8 @@ def ensure_all_models() -> None:
     import app.db.user_dim  # 离线报表宽表(user_dim)，auth源只读反范式副本；B0.1 纯建表
     import app.modules.admin.models
     import app.modules.articles.models
+
+    # S5 拆库：auth 表挂独立 auth 元数据（AuthBase），不混入 Base.metadata（业务库）。
     import app.modules.auth.models
     import app.modules.blog.models
     import app.modules.content.models
@@ -38,3 +40,7 @@ def ensure_all_models() -> None:
 
     if not getattr(_base_module.Base.registry, "_configured", False):
         _base_module.Base.registry.configure()
+    from app.db.auth_base import AuthBase
+
+    if not getattr(AuthBase.registry, "_configured", False):
+        AuthBase.registry.configure()

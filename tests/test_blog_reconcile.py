@@ -3,10 +3,12 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.blog import git_svc
 from app.modules.blog import tasks as reconcile_blog_repos
 from app.modules.blog.models import BlogRepoQuarantine
+from tests.conftest import auth_user_uid
 
 
 @pytest.fixture
@@ -24,23 +26,12 @@ async def _no_redis():
     return None
 
 
-async def _owner_user(db) -> int:
-    """建真实 owner user。本文件在 conftest 的 db 上直接落 BlogSeries(owner_id=1) 是
-    孤儿 FK 行——PG 强制外键必败，sqlite 不强制故此前宽松；改为插真实 User+Profile 取
-    其自增 id，PG/sqlite 双绿。"""
-    from app.modules.auth.models import Profile, User
-
-    user = User(
-        username="owner",
-        email="owner@example.com",
-        hashed_password="secret",
-        account_level="normal",
+async def _owner_user(auth_db: AsyncSession) -> int:
+    """blog_series.owner_id 拆库后为引用 auth realm 用户的裸 int(business 无 users,不再造
+    User/Profile)。在 auth_db(auth_user_uid)建 owner 取其 id,满足系列归属的数字主键语义。"""
+    return int(
+        (await auth_user_uid(auth_db, username="owner", email="owner@example.com")).id
     )
-    db.add(user)
-    await db.flush()
-    db.add(Profile(user_id=user.id))
-    await db.flush()
-    return user.id
 
 
 async def _factory(db):
@@ -90,11 +81,11 @@ async def test_delete_quarantined_after_grace(db, repo_dir, inject_session):
     assert rows == []
 
 
-async def test_skip_when_series_exists(db, repo_dir, inject_session):
+async def test_skip_when_series_exists(db, auth_db, repo_dir, inject_session):
     from app.modules.blog.models import BlogSeries
 
     _mk_repo(repo_dir, "live")
-    owner_id = await _owner_user(db)
+    owner_id = await _owner_user(auth_db)
     db.add(BlogSeries(owner_id=owner_id, title="t", repo_name="live"))
     await db.flush()
 

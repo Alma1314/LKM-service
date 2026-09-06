@@ -1,24 +1,20 @@
 from __future__ import annotations
 
 import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
     Float,
-    ForeignKey,
     Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, UTCDateTime, now_iso  # 注意 db.base 而非 db.models
-
-if TYPE_CHECKING:
-    from app.modules.auth.models import User
 
 
 class Report(Base):
@@ -35,7 +31,7 @@ class Report(Base):
     type: Mapped[str] = mapped_column(String(20), nullable=False)  # post/comment/file
     target_id: Mapped[str] = mapped_column(String(64), nullable=False)
     target_title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
-    reporter_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reporter_id: Mapped[int] = mapped_column(Integer, nullable=True)  # S5: auth user_id
     reporter_name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
     reason: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
@@ -45,8 +41,6 @@ class Report(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
     )
-
-    reporter: Mapped[User | None] = relationship(foreign_keys=[reporter_id])
 
 
 class RolePermission(Base):

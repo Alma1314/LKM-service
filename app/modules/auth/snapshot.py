@@ -184,14 +184,42 @@ async def get_user_snapshot_batch(
     """按 id 列表批量取快照；不存在的 id 不在结果里。空列表返回空 dict。"""
     if not user_ids:
         return {}
-    rows = (
-        await db.execute(
-            select(User)
-            .where(User.id.in_(user_ids))
-            .options(selectinload(User.profile))
-        )
-    ).scalars()
-    return {u.id: _to_snap(u) for u in rows}
+    fields_map = await _retrieve_fields_batch(list(set(user_ids)), db)
+    return {uid: UserSnapshot(**f) for uid, f in fields_map.items()}
+
+
+async def _retrieve_fields_batch(
+    user_ids: list[int], db: AsyncSession
+) -> dict[int, dict[str, Any]]:
+    """批量取回填源**冻结字段 dict**（跨 realm 语义，同单读）。
+
+    - seam 打开（``user_http.enabled()``）：对每个 id 走 seam（``fetch_user_http_payload``，
+      读到的是 auth realm 真值）；权威缺(this=404/data=null)或 seam 瞬时不可用 → **跳过该 id**
+      （不入结果，配合业务展示读取方自己的 ``.get(id,"")`` 语义降级为空白展示）；**绝不让该 id
+      回落业务 db 查 User**（M3.B S5 拆库后业务 realm 无 users，读了会 UndefinedTable）。
+      （不逐 id 抛错：跨 realm 下"批量展示读"无本地回退可抛，纪律=缺行跳过 ≠ 故障。）
+    - seam 关闭（默认）：就地 **SQL 单查询批量**读本进程 db（既有 A6 原路径、非 N+1）。
+    """
+    if not user_http.enabled():
+        rows = (
+            await db.execute(
+                select(User)
+                .where(User.id.in_(user_ids))
+                .options(selectinload(User.profile))
+            )
+        ).scalars()
+        return {u.id: _snap_to_dict(_to_snap(u)) for u in rows}
+
+    out: dict[int, dict[str, Any]] = {}
+    for uid in user_ids:
+        try:
+            fields, _version = await user_http.fetch_user_http_payload(uid)
+        except user_http.UserHttpUnavailable:
+            logger.warning("auth_http batch read failed uid=%s; skip row", uid)
+            continue
+        if fields is not None:
+            out[uid] = fields
+    return out
 
 
 def profile_info_from_snap(snap: UserSnapshot) -> ProfileInfo | None:

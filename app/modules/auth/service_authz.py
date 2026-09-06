@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.base import now_iso
-from app.modules.auth import events
+from app.modules.auth import events, user_http
 from app.modules.auth.models import Profile, User
 
 # account_level / Profile.role 的“单向提升”单调序。auth 是身份词表 owner，故把 exam/service、
@@ -221,3 +221,45 @@ async def grant_incubation(db: AsyncSession, user_id: int) -> int:
         await events.notify_user_updated(db, user_id)
         return 1
     return 0
+
+
+# —— 跨 realm 升权写 seam 调度（M3.B S5 C，供 exam/projects 等业务 supplier 调用） ——
+#
+# S5 拆库后 auth 是 users/profiles 唯一 owner（含写），业务库不再有 auth 行。故业务侧在触发
+# 单向升权时**不能把自己的业务会话塞给 auth 的 grant 例程**（那样 UPDATE 会落到不存在的 users 表/
+# 语义错位）。本 dispatch 把 auth 写路由到正确 realm：
+#
+# - ``user_http.enabled()``（auth HTTP 缝，production 拆库态 + 测试 auth_seam_realm）
+#   → 经 ``user_http.grant_via_seam`` 走 auth 内部写端点，由 auth 进程在自持库/自测 auth realm 执行；
+# - seam OFF（蓝绿同库态/本地单库）→ 回落本模块 :func:`grant_incubation`/`grant_exam_unlock`，
+#   此时传入的 ``db`` 即含 auth 表的本地库会话（保存既有本地直写行为，零语义漂移）。
+#
+# 本 dispatch 保持业务 ↔ auth.service_authz 的既有依赖方向（exam/projects 已 import service_authz），
+# auth 真值归属不变（写始终落在 auth realm 对应会话）。返回与底层原语同义的 ``changed``(0/1)。
+
+
+async def grant_incubation_from_business(db: AsyncSession, user_id: int) -> int:
+    """business supplier 触发"纳入成员升级"的单向升权（auth realm 权威写）。"""
+    if user_http.enabled():
+        return await user_http.grant_via_seam(kind="incubation", user_id=user_id)
+    return await grant_incubation(db, user_id)
+
+
+async def grant_exam_unlock_from_business(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    unlock_level: str | None,
+    unlock_role: str | None,
+) -> int:
+    """business supplier 触发"考试通过解锁"的单向升权（auth realm 权威写）。"""
+    if user_http.enabled():
+        return await user_http.grant_via_seam(
+            kind="exam_unlock",
+            user_id=user_id,
+            unlock_level=unlock_level,
+            unlock_role=unlock_role,
+        )
+    return await grant_exam_unlock(
+        db, user_id, unlock_level=unlock_level, unlock_role=unlock_role
+    )

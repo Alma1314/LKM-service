@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 import datetime
-from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, UTCDateTime, now_iso  # 注意 db.base 而非 db.models
-
-if TYPE_CHECKING:
-    from app.modules.auth.models import User
 
 
 class Exam(Base):
@@ -80,9 +76,7 @@ class ExamAttempt(Base):
     exam_id: Mapped[int] = mapped_column(
         ForeignKey("exams.id"), nullable=False, index=True
     )
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
-    )
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="in_progress"
     )
@@ -98,8 +92,6 @@ class ExamAttempt(Base):
     )
     time_spent_s: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
-    user: Mapped[User] = relationship(back_populates="exam_attempts")
-
 
 class ExamCertificate(Base):
     __tablename__: str = "exam_certificates"
@@ -108,9 +100,7 @@ class ExamCertificate(Base):
     exam_id: Mapped[int] = mapped_column(
         ForeignKey("exams.id"), nullable=False, index=True
     )
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
-    )
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     passed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     cert_no: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
@@ -119,4 +109,3 @@ class ExamCertificate(Base):
     )
 
     exam: Mapped[Exam] = relationship()
-    user: Mapped[User] = relationship(back_populates="exam_certificates")

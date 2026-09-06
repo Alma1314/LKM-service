@@ -9,7 +9,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, UTCDateTime, now_iso  # 注意 db.base 而非 db.models
 
 if TYPE_CHECKING:
-    from app.modules.auth.models import User
     from app.modules.content.models import Board
 
 
@@ -29,20 +28,13 @@ class UserFollow(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    follower_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-    following_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    follower_id: Mapped[int] = mapped_column(Integer, nullable=False)  # S5: auth user_id
+    following_id: Mapped[int] = mapped_column(Integer, nullable=False)  # S5: auth user_id
     deleted_at: Mapped[datetime.datetime | None] = mapped_column(
         UTCDateTime, nullable=True
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
-    )
-
-    follower: Mapped[User] = relationship(
-        back_populates="following", foreign_keys=[follower_id]
-    )
-    following: Mapped[User] = relationship(
-        back_populates="followers", foreign_keys=[following_id]
     )
 
 
@@ -56,7 +48,7 @@ class BoardFollow(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    follower_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    follower_id: Mapped[int] = mapped_column(Integer, nullable=False)  # S5: auth user_id
     board_id: Mapped[int] = mapped_column(ForeignKey("boards.id"), nullable=False)
     deleted_at: Mapped[datetime.datetime | None] = mapped_column(
         UTCDateTime, nullable=True
@@ -65,7 +57,4 @@ class BoardFollow(Base):
         UTCDateTime, nullable=False, default=now_iso
     )
 
-    follower: Mapped[User] = relationship(
-        back_populates="board_follows", foreign_keys=[follower_id]
-    )
     board: Mapped[Board] = relationship(back_populates="followers")

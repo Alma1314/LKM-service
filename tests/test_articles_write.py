@@ -37,8 +37,7 @@ from app.modules.articles.service import (
     update_article_ex,
     update_category_ex,
 )
-from app.modules.auth.models import Profile, User
-from app.modules.auth.security import create_access_token, hashpwd
+from tests.conftest import AuthUser, auth_user_uid
 
 
 async def _category(db: AsyncSession, slug: str = "news") -> int:
@@ -62,30 +61,21 @@ async def _article(db: AsyncSession, category_id: int, slug: str = "a1") -> str:
     return slug
 
 
-async def _user(
-    db: AsyncSession,
-    username: str = "alice",
-    email: str | None = None,
-    level: str = "admin",
-    role: str = "super_admin",
-    *,
-    commit: bool = False,
-) -> int:
-    """建用户 + Profile，返回用户 id。默认直接够超级管理员门禁所需（admin + super_admin），
-    传 level/role 可构造普通 / admin-非-super 等档案以测 403。"""
-    user = User(
+async def _au(
+    auth_db: AsyncSession,
+    username: str,
+    level: str,
+    role: str,
+) -> AuthUser:
+    """在 auth realm 建一线用户并 mint 对应 (account_level, role) 的 token。"""
+    return await auth_user_uid(
+        auth_db,
         username=username,
-        email=email or f"{username}@example.com",
-        hashed_password=await hashpwd("secret123456"),
+        email=f"{username}@example.com",
+        nickname=username,
         account_level=level,
+        role=role,
     )
-    db.add(user)
-    await db.flush()
-    db.add(Profile(user_id=user.id, nickname=username, role=role))
-    await db.flush()
-    if commit:
-        await db.commit()
-    return user.id
 
 
 class TestArticleWrite:
@@ -287,12 +277,19 @@ class TestArticlePermission:
         ],
     )
     async def test_write_endpoint_forbidden(
-        self, db: AsyncSession, client: AsyncClient, level: str, role: str
+        self,
+        db: AsyncSession,
+        client: AsyncClient,
+        auth_db: AsyncSession,
+        auth_seam_realm: None,
+        level: str,
+        role: str,
     ) -> None:
         """非 super_admin（普通用户或 admin 非 super_admin）调写端点 → 403。"""
-        uid = await _user(db, username=f"u-{role}-{level}", level=level, role=role)
-        token = create_access_token(user_id=uid, account_level=level, role=role)
-        headers = {"Authorization": f"Bearer {token}"}
+        au = await _au(
+            auth_db, username=f"u-{role}-{level}", level=level, role=role
+        )
+        headers = {"Authorization": f"Bearer {au.token}"}
         resp = await client.post(
             "/api/v1/articles",
             headers=headers,
@@ -302,7 +299,11 @@ class TestArticlePermission:
         assert resp.json().get("code") == CommonErr.FORBIDDEN
 
     async def test_write_endpoint_super_admin_ok(
-        self, db: AsyncSession, client: AsyncClient
+        self,
+        db: AsyncSession,
+        client: AsyncClient,
+        auth_db: AsyncSession,
+        auth_seam_realm: None,
     ) -> None:
         """super_admin（DB 档 account_level=admin + profile.role=super_admin，且授予 articles.publish）→ 创建 200。"""
         # RBAC 迁移后写端点由 RequirePermission(articles.publish) 把关：官方文章仅 super_admin。
@@ -312,11 +313,8 @@ class TestArticlePermission:
         )
         await db.flush()
         cid = await _category(db, slug="news")
-        uid = await _user(db, username="root", level="admin", role="super_admin")
-        token = create_access_token(
-            user_id=uid, account_level="admin", role="super_admin"
-        )
-        headers = {"Authorization": f"Bearer {token}"}
+        au = await _au(auth_db, username="root", level="admin", role="super_admin")
+        headers = {"Authorization": f"Bearer {au.token}"}
         resp = await client.post(
             "/api/v1/articles",
             headers=headers,

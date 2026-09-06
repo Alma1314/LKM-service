@@ -18,7 +18,7 @@ from app.core.cache import (
 from app.core.common import PageData, paginate_offset, paginate_pages
 from app.core.err import BizError
 from app.db.base import now_iso
-from app.modules.auth.models import Profile, User
+from app.modules.auth.snapshot import get_user_snapshot_batch
 from app.modules.points.errors import PointsErr
 from app.modules.points.models import (
     Achievement,
@@ -310,66 +310,78 @@ async def leaderboard(
     """
 
     async def load() -> list[dict[str, Any]]:
+        # M3.B S5 拆库：业务库不再含 users/profiles（auth 真值迁 auth realm）。榜单只从
+        # **业务 points 表**取裸 int user_id + 分数，身份展示交由 auth 缝
+        # ``snapshot.get_user_snapshot_batch``（seam/HTTP 时读 auth realm，绝不查业务 users），
+        # 排序（分数降序、同分按 raw 昵称升序 nullsfirst、user_id 稳定）在服务端 Python 完成，
+        # 保原先 fused SQL join+ORDER 的排列契约。
         if period == "total":
-            rows = (
-                await db.execute(
-                    select(User, Profile.nickname, UserBalance.balance)
-                    .outerjoin(Profile, Profile.user_id == User.id)
-                    .join(UserBalance, UserBalance.user_id == User.id)
-                    .where(UserBalance.balance > 0)
-                    # 主序余额降序；同余额按 display_name（昵称）升序，昵称可空，
-                    # nullsfirst 让无昵称者（退化为 username）排在前面；User.id 作最终稳定序。
-                    .order_by(
-                        UserBalance.balance.desc(),
-                        Profile.nickname.asc().nullsfirst(),
-                        User.id.asc(),
+            raw = (
+                (
+                    await db.execute(
+                        select(UserBalance.user_id, UserBalance.balance).where(
+                            UserBalance.balance > 0
+                        )
                     )
-                )
-            ).all()
-            result: list[dict[str, Any]] = []
-            for user, nickname, balance in rows:
-                result.append(
-                    {
-                        "user_id": user.id,
-                        "display_name": nickname or user.username or "",
-                        "balance": int(balance or 0),
-                    }
-                )
-            # 一次批量查询补齐 title，与 balance 一并落入缓存，避免榜上 N+1 且保证一致
-            await _fill_titles(db, result)
-            return result
-        if period in ("daily", "weekly"):
+                ).all()
+            )
+            rows = [(uid, int(balance), uid, "") for uid, balance in raw]
+        elif period in ("daily", "weekly"):
             days = 1 if period == "daily" else 7
             since = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days)
-            agg_rows = (
+            agg = (
                 await db.execute(
                     select(
-                        User.id,
-                        Profile.nickname,
+                        PointsLedger.user_id,
                         func.sum(PointsLedger.delta).label("total"),
                     )
-                    .join(PointsLedger, PointsLedger.user_id == User.id)
-                    .outerjoin(Profile, Profile.user_id == User.id)
-                    .where(PointsLedger.created_at >= since, PointsLedger.delta > 0)
-                    .group_by(User.id, Profile.nickname)
-                    .order_by(
-                        func.sum(PointsLedger.delta).desc(),
-                        Profile.nickname.asc().nullsfirst(),
-                        User.id.asc(),
+                    .where(
+                        PointsLedger.created_at >= since, PointsLedger.delta > 0
                     )
+                    .group_by(PointsLedger.user_id)
                 )
             ).all()
-            result = [
+            # display fallback 对周期榜原为 str(uid)，恒等放兜底表沿用
+            rows = [(uid, int(t), uid, str(uid)) for uid, t in agg]
+        else:
+            raise BizError(PointsErr.INVALID_PERIOD)
+
+        snaps = await get_user_snapshot_batch(
+            db, user_ids=[r[0] for r in rows]
+        )
+        # 计算型行：(user_id, score)；display 逻辑分开，sort 助手不落入缓存
+        ranked: list[dict[str, Any]] = []
+        for uid, score, _stable, fallback in rows:
+            snap = snaps.get(uid)
+            # display_name 原 total= nickname or username；snap.username 权威代业务 User
+            display = (
+                (snap.nickname or snap.username) if snap is not None else fallback
+            )
+            ranked.append(
                 {
                     "user_id": uid,
-                    "display_name": nickname or str(uid),
-                    "balance": int(total),
+                    "score": score,
+                    "display_name": display or "",
+                    "_nick": snap.nickname if snap is not None else None,
                 }
-                for uid, nickname, total in agg_rows
-            ]
-            await _fill_titles(db, result)
-            return result
-        raise BizError(PointsErr.INVALID_PERIOD)
+            )
+        # 主序分数降序；同分按 raw 昵称升序（无昵称 → None 恒等先排，原 nullsfirst）；
+        # user_id 最终稳定序（等价原 SQL 三键）。
+        ranked.sort(
+            key=lambda r: (
+                -r["score"],
+                r["_nick"] is not None,
+                r["_nick"] or "",
+                r["user_id"],
+            )
+        )
+        result = [
+            {"user_id": r["user_id"], "display_name": r["display_name"], "balance": r["score"]}
+            for r in ranked
+        ]
+        # 批量补齐 title（UserAchievement 属业务 points 表，留在本进程读），与分数一并落缓存。
+        await _fill_titles(db, result)
+        return result
 
     ver = await collection_version("points")
     payload = await cached_read(make_key("points:leaderboard", ver, period), 60, load)

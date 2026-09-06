@@ -16,8 +16,6 @@ from sqlalchemy.ext.asyncio import (
 
 from app.core.err import BizError
 from app.db.base import Base
-from app.modules.auth.models import Profile, User
-from app.modules.auth.security import hashpwd
 from app.modules.points.errors import PointsErr
 from app.modules.points.service import (
     get_balance,
@@ -27,6 +25,7 @@ from app.modules.points.service import (
     spend,
     transfer,
 )
+from tests.conftest import auth_user_uid
 
 
 async def _spend_in_session(
@@ -43,65 +42,59 @@ async def _spend_in_session(
 
 
 async def _user(
-    db: AsyncSession, username: str = "alice", nickname: str | None = None
+    auth_db: AsyncSession, username: str = "alice", nickname: str | None = None
 ) -> int:
-    u = User(
-        username=username,
-        email=f"{username}@e.com",
-        hashed_password=await hashpwd("secret123"),
-        account_level="normal",
+    """在 auth realm 建一线用户返回其裸 int id（Nickname 落 auth Profile，供榜展示）。"""
+    u = await auth_user_uid(
+        auth_db, username=username, email=f"{username}@e.com", nickname=nickname
     )
-    db.add(u)
-    await db.flush()
-    db.add(Profile(user_id=u.id, nickname=nickname))
-    await db.flush()
-    return u.id
+    return int(u.id)
 
 
 class TestReward:
-    async def test_reward_credits(self, db: AsyncSession):
-        uid = await _user(db)
+    async def test_reward_credits(self, db: AsyncSession, auth_db: AsyncSession):
+        uid = await _user(auth_db)
         entry = await reward(db, uid, 100, "test", "ref_t", "1")
         assert entry.delta == 100
         assert entry.balance_after == 100
         assert await get_balance(db, uid) == 100
 
-    async def test_reward_idempotent(self, db: AsyncSession):
-        uid = await _user(db)
+    async def test_reward_idempotent(self, db: AsyncSession, auth_db: AsyncSession):
+        uid = await _user(auth_db)
         await reward(db, uid, 50, "test", "ref_t", "1")
         second = await reward(db, uid, 50, "test", "ref_t", "1")
         assert second.delta == 50
         assert await get_balance(db, uid) == 50  # 未重复加分
 
-    async def test_reward_duplicate_delta_mismatch(self, db: AsyncSession):
-        uid = await _user(db)
+    async def test_reward_duplicate_delta_mismatch(self, db: AsyncSession, auth_db: AsyncSession):
+        uid = await _user(auth_db)
         await reward(db, uid, 50, "test", "ref_t", "1")
         with pytest.raises(BizError) as e:
             await reward(db, uid, 80, "test", "ref_t", "1")
         assert e.value.errcode == PointsErr.DUPLICATE_REWARD
 
-    async def test_reward_negative_insufficient(self, db: AsyncSession):
-        uid = await _user(db)
+    async def test_reward_negative_insufficient(self, db: AsyncSession, auth_db: AsyncSession):
+        uid = await _user(auth_db)
         await reward(db, uid, 30, "test", "a", "1")
         with pytest.raises(BizError) as e:
             await reward(db, uid, -50, "test", "b", "1")  # 30-50<0
         assert e.value.errcode == PointsErr.INSUFFICIENT_BALANCE
 
-    async def test_reward_negative_allowed(self, db: AsyncSession):
-        uid = await _user(db)
+    async def test_reward_negative_allowed(self, db: AsyncSession, auth_db: AsyncSession):
+        uid = await _user(auth_db)
         await reward(db, uid, -10, "penalty", "c", "1", allow_negative=True)
         assert await get_balance(db, uid) == -10
 
 
 class TestSpend:
-    async def test_spend_ok(self, db: AsyncSession):
-        uid = await _user(db)
+    async def test_spend_ok(self, db: AsyncSession, auth_db: AsyncSession):
+        uid = await _user(auth_db)
         await reward(db, uid, 100, "test", "x", "1")
         await spend(db, uid, 40, "consume", "x", "2")
         assert await get_balance(db, uid) == 60
 
-    async def test_spend_insufficient(self, db: AsyncSession):
-        uid = await _user(db)
+    async def test_spend_insufficient(self, db: AsyncSession, auth_db: AsyncSession):
+        uid = await _user(auth_db)
         await reward(db, uid, 10, "test", "x", "1")
         with pytest.raises(BizError) as e:
             await spend(db, uid, 20, "consume", "x", "2")
@@ -109,9 +102,9 @@ class TestSpend:
 
 
 class TestTransfer:
-    async def test_transfer_moves_balances(self, db: AsyncSession):
-        a = await _user(db, "a")
-        b = await _user(db, "b")
+    async def test_transfer_moves_balances(self, db: AsyncSession, auth_db: AsyncSession):
+        a = await _user(auth_db, "a")
+        b = await _user(auth_db, "b")
         await reward(db, a, 100, "test", "z", "1")
         out_e, in_e = await transfer(db, a, b, 40, "pay", "trx", "1")
         assert out_e.delta == -40
@@ -119,9 +112,9 @@ class TestTransfer:
         assert await get_balance(db, a) == 60
         assert await get_balance(db, b) == 40
 
-    async def test_transfer_idempotent(self, db: AsyncSession):
-        a = await _user(db, "a")
-        b = await _user(db, "b")
+    async def test_transfer_idempotent(self, db: AsyncSession, auth_db: AsyncSession):
+        a = await _user(auth_db, "a")
+        b = await _user(auth_db, "b")
         await reward(db, a, 100, "test", "z", "1")
         await transfer(db, a, b, 40, "pay", "trx", "1")
         # 重复同 ref → from 侧 transfer_out 行触发 (user, ref_type, ref_id) 唯一约束。
@@ -129,16 +122,16 @@ class TestTransfer:
         with pytest.raises(IntegrityError):
             await transfer(db, a, b, 40, "pay", "trx", "1")
 
-    async def test_transfer_insufficient(self, db: AsyncSession):
-        a = await _user(db, "a")
-        b = await _user(db, "b")
+    async def test_transfer_insufficient(self, db: AsyncSession, auth_db: AsyncSession):
+        a = await _user(auth_db, "a")
+        b = await _user(auth_db, "b")
         with pytest.raises(BizError) as e:
             await transfer(db, a, b, 40, "pay", "trx", "2")
         assert e.value.errcode == PointsErr.INSUFFICIENT_BALANCE
 
 
 class TestConcurrency:
-    async def test_concurrent_spend_no_overdraw(self, db: AsyncSession):
+    async def test_concurrent_spend_no_overdraw(self, db: AsyncSession, auth_db: AsyncSession):
         """两个独立会话（各自事务）在该文件库上并发扣款 → 只有余额足够的那笔成功。
 
         目的：每个 spend 都跑在独立的 AsyncSession 上，让其在本进程的真实并发
@@ -165,9 +158,10 @@ class TestConcurrency:
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
             factory = async_sessionmaker(engine, expire_on_commit=False)
-            # 种子与本线程同库同表
+            # 种子与本线程同库同表：points 只用裸 int user_id（无 identity/FK 依赖），
+            # 且并发自建文件库仅 Base.metadata（无 users/profile）→ 用字面 int 直接发分。
             async with factory() as seed:
-                uid = await _user(seed, "alice", "n")
+                uid = 1
                 await reward(seed, uid, 100, "test", "cc", "0")
                 await seed.commit()
             results = await asyncio.gather(
@@ -190,9 +184,9 @@ class TestConcurrency:
 
 
 class TestLeaderboard:
-    async def test_leaderboard_orders(self, db: AsyncSession):
-        a = await _user(db, "a", "甲")
-        b = await _user(db, "b", "乙")
+    async def test_leaderboard_orders(self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None):
+        a = await _user(auth_db, "a", "甲")
+        b = await _user(auth_db, "b", "乙")
         await reward(db, a, 50, "test", "l", "1")
         await reward(db, b, 100, "test", "l", "2")
         items, total = await leaderboard(db)
@@ -201,10 +195,10 @@ class TestLeaderboard:
         assert items[0].display_name == "乙"
         assert items[1].user_id == a
 
-    async def test_leaderboard_tiebreak_by_display_name(self, db: AsyncSession):
+    async def test_leaderboard_tiebreak_by_display_name(self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None):
         """余额相等时按 display_name（昵称）字典序升序排。"""
-        a = await _user(db, "aaa", "Zebra")
-        b = await _user(db, "bbb", "Apple")
+        a = await _user(auth_db, "aaa", "Zebra")
+        b = await _user(auth_db, "bbb", "Apple")
         await reward(db, a, 50, "test", "tb", "1")
         await reward(db, b, 50, "test", "tb", "2")
         items, _total = await leaderboard(db)
@@ -213,8 +207,8 @@ class TestLeaderboard:
         )  # Apple < Zebra
         assert items[1].user_id == a and items[1].display_name == "Zebra"
 
-    async def test_ledger_pagination(self, db: AsyncSession):
-        uid = await _user(db)
+    async def test_ledger_pagination(self, db: AsyncSession, auth_db: AsyncSession):
+        uid = await _user(auth_db)
         await reward(db, uid, 1, "test", "pg", "1")
         await reward(db, uid, 2, "test", "pg", "2")
         udata = await list_ledger(db, uid, page=1, limit=1)

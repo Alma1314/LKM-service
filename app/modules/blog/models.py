@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, UTCDateTime, now_iso
-
-if TYPE_CHECKING:
-    from app.modules.auth.models import User
 
 
 class BlogSeriesStatus(StrEnum):
@@ -69,7 +66,7 @@ class BlogSeries(Base):
     __tablename__: str = "blog_series"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)  # S5: auth user_id
     title: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     cover_url: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -84,7 +81,6 @@ class BlogSeries(Base):
         UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
     )
 
-    owner: Mapped[User] = relationship(back_populates="blog_series")
     comments: Mapped[list[BlogComment]] = relationship(
         back_populates="series", cascade="all, delete-orphan"
     )
@@ -99,7 +95,7 @@ class BlogSeries(Base):
 class BlogStar(Base):
     __tablename__: str = "blog_stars"
 
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)  # S5: auth user_id
     series_id: Mapped[int] = mapped_column(
         ForeignKey("blog_series.id"), primary_key=True
     )
@@ -107,7 +103,6 @@ class BlogStar(Base):
         UTCDateTime, nullable=False, default=now_iso
     )
 
-    user: Mapped[User] = relationship()
     series: Mapped[BlogSeries] = relationship(back_populates="stars")
 
 
@@ -115,7 +110,7 @@ class BlogComment(Base):
     __tablename__: str = "blog_comments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)  # S5: auth user_id
     series_id: Mapped[int] = mapped_column(ForeignKey("blog_series.id"), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     parent_id: Mapped[int | None] = mapped_column(
@@ -128,7 +123,6 @@ class BlogComment(Base):
         UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
     )
 
-    user: Mapped[User] = relationship()
     series: Mapped[BlogSeries] = relationship(back_populates="comments")
     parent: Mapped[BlogComment | None] = relationship(
         remote_side=[id], back_populates="replies"

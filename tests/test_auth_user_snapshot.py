@@ -22,6 +22,20 @@ from app.modules.auth.snapshot import (
 )
 from tests.conftest import DB
 
+
+@pytest.fixture
+async def db(auth_db: AsyncSession) -> AsyncSession:
+    """本文件读缝直对 auth realm（M3.B S5 拆库）。
+
+    conftest 的 ``db`` 现只建 Base（53 表、**无 users**）；``auth_db`` 才建 AuthBase（18
+    表，含 users/profiles）。本模块是 auth/snapshot 读缝的核心测试，User/Profile 归属 auth
+    realm → 把本模块内所有 ``db``（签名里的 fixture 名）重绑定到 conftest ``auth_db``：
+    造数(_mk_user)与读缝(get_user_snapshot/_batch)同一 auth session，SQL 落在真实 AuthBase，
+    语义=跨 realm 取 auth 真值。business ``db`` 本模块用不到。
+    """
+    return auth_db
+
+
 # ---- 基础冻结类型存在性 (brief Step 1) ----
 
 

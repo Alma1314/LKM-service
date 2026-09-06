@@ -22,6 +22,7 @@
 
 import os
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from typing import Annotated, Any
 
 # 确保测试始终以 test 标志运行，允许弱 JWT 密钥
@@ -31,7 +32,6 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
-    AsyncConnection,
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
@@ -41,7 +41,7 @@ from sqlalchemy.pool import NullPool, StaticPool
 
 from app.core.config import settings
 from app.db.auth_base import auth_metadata
-from app.db.base import Base
+from app.db.base import Base, now_iso
 from app.db.session import get_read_session, get_session
 from app.main import app
 
@@ -194,3 +194,209 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient]:
     finally:
         app.dependency_overrides.pop(get_session, None)
         app.dependency_overrides.pop(get_read_session, None)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# auth_user：跨 realm 身份工厂（M3.B S5 拆库后业务测试的生产者）
+#
+# S5 把 users/profiles 物理迁出 monolith Base.metadata：业务库不再有 users 表，
+# 业务行只能引用一个**逻辑 int user_id**（FK→users 已断成裸 int）。本 fixture 让
+# 测试先在"该测试专属的 auth 库 schema"（经 auth_db, AuthBase=18 表）写入一个真实
+# User(+可选 Profile)，返回其稳定 int id；业务测再把该 id 写进业务表的 int 列。
+# 每测 auth schema 独立（Alembic/conftest schema-per-test）→ id 自 1 对齐。
+#
+# 使用：
+#     async def t(auth_db: DB, db: DB):
+#         uid = await auth_user_uid(auth_db, username="bob", nickname="Bobby")
+#         await db.execute(insert(BizTbl).values(uploader_id=uid, ...))
+#
+# 对"需展示名/身份存在"的业务读：跨库不许同事务 join → 业务 service 须走
+# auth.snapshot 或 auth HTTP seam（auth_http_url/token 启用），不侧挂 auth engine
+# 同事务。测试即可用 auth_http 替身 seam（见测试层 HTTP 替身），或直接断言 int 列。
+# -----------------------------------------------------------------------------
+@dataclass
+class AuthUser:
+    """在 auth 独立库 schema 建立的用户身份（S5 拆库常驻）。"""
+
+    id: int  # auth 库稳定 int：业务行 FK 引用此值
+    username: str
+    account_level: str
+    token: str  # 该用户在 auth 库 mint 的 Web Bearer access token（需会话鉴权时代用）
+
+
+async def auth_user_uid(
+    auth_db: AsyncSession,
+    *,
+    username: str = "alice",
+    account_level: str = "normal",
+    email: str | None = None,
+    nickname: str | None = None,
+    avatar: str | None = None,
+    role: str = "member",
+    with_token: bool = True,
+) -> AuthUser:
+    """在 auth 独立库 schema 建一线用户并返回 :class:`AuthUser`。
+
+    auth_db 是调用测试内连到 auth 独立 metadata/schema 的会话（Alembic/conftest
+    schema-per-test），故该用户 id 以 1 起始且本测内稳定；返回 token 供把该用户作为
+    "current 登录身份"发起业务 HTTP（须 seam 支持跨库裁决，或业务 local seam 直读）。
+    """
+    from app.modules.auth.models import Profile, User
+    from app.modules.auth.security import create_access_token, hashpwd
+
+    user = User(
+        username=username,
+        email=email,
+        hashed_password=await hashpwd("secret123456"),
+        account_level=account_level,
+    )
+    auth_db.add(user)
+    await auth_db.flush()
+    auth_db.add(
+        Profile(
+            user_id=user.id,
+            nickname=nickname,
+            avatar=avatar,
+            role=role,
+        )
+    )
+    await auth_db.flush()
+    token: str | None = None
+    if with_token:
+        token = create_access_token(
+            user_id=int(user.id),
+            account_level=str(user.account_level),
+            role=role,
+            token_version=user.token_version,
+        )
+    return AuthUser(id=int(user.id), username=username, account_level=account_level, token=token or "")
+
+
+@pytest.fixture
+async def auth_user_factory(
+    auth_db: AsyncSession,
+) -> "Any":
+    """返回 :func:`auth_user_uid` 绑定到本测 auth schema 的便捷闭包。"""
+
+    async def _make(**kw: Any) -> AuthUser:
+        return await auth_user_uid(auth_db, **kw)
+
+    return _make
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# auth seam realm double（M3.B S5 C）：拆库后业务“display_name/existence”读的跨 realm 落点
+#
+# 拆库后业务进程不该（也不能）经 `select(User)` 读业务 db 的 users（users 已迁 auth realm）。
+# 业务代码的身份/展示读一律走 auth 缝（auth.snapshot + auth HTTP seam：`user_http.enabled()`
+# 开启时 deps 鉴权→`authorize_via_seam`、snapshot 单/批读→`fetch_user_http_payload`）。
+# 测试要为真正跑业务 HTTP 鉴权 + display-name 可读找一个“指向本测 auth schema 的替身”：
+# 本 fixture **开启** seam（配齐 url+token），并把 seam 两个入口 monkeypatch 成按 user_id 直读
+# 本测 conftest ``auth_db``（AuthBase 里该测试刚用 auth_user_uid/auth_user_factory 造的真用户）：
+#    - ``user_http.authorize_via_seam``：按 auth_db 的 User(+Profile) 裁 is_locked/token_version/
+#      account_level/role → verdict（等价 AUTH 进程内 service_authz，不触业务 db）。
+#    - ``user_http.fetch_user_http_payload``：按 auth_db 的 User(+Profile) 产出冻结字段 dict +
+#      sv（等价 AUTH 读端点 /auth/internal/.../{id}/snapshot，不触业务 db）。
+# 于是业务 service 收到的 auth_db 会话无关紧要：seam 已把它们引到 auth realm 真值。每测完毕后
+# monkeypatch 自动复原。业务域测试文件把本 fixture 名放进签名即逐个激活（opt-in，勿 autouse——
+# auth 域局部 seam OFF 测试须保持 OFF）。
+#
+# 配合：业务行只写裸 int user_id（= auth_user_uid 返回的 .id）；登录/current 身份请求带
+# AuthUser.token。本缝 is ON → 业务 HTTP 鉴权(RBAC/auth)与 display 读都不会落业务 users。
+# -----------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def auth_seam_realm(
+    auth_db: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """把 auth HTTP seam 在测试内指到本测 auth schema（跨 realm 业务读/鉴权替身）。"""
+    from app.core.config import settings as _cfg
+    from app.modules.auth import user_http as uh
+
+    # —— 开启 seam（url+token 都配齐才真正 enabled()）——
+    monkeypatch.setattr(_cfg, "auth_http_url", "http://auth-realm-test")
+    monkeypatch.setattr(_cfg, "auth_http_token", "internal-test-secret")
+    monkeypatch.setattr(_cfg, "auth_http_timeout_s", 1.0)
+
+    async def _authz(*, user_id: int, **_: object) -> dict[str, object]:
+        from sqlalchemy import select
+
+        from app.modules.auth.models import Profile, User
+
+        state: dict[str, object] = {
+            "ok": False,
+            "cause": None,
+            "account_level": None,
+            "role": None,
+        }
+        u = (
+            await auth_db.execute(select(User).where(User.id == int(user_id)))
+        ).scalar_one_or_none()
+        if u is None:
+            state["cause"] = "not_found"
+            return state
+        # 锁判定沿用 deps 本地语义（is_locked 且锁未过期为锁）
+        now = now_iso()
+        if u.is_locked and u.locked_until and u.locked_until > now:
+            state["cause"] = "locked"
+            return state
+        prof = (
+            await auth_db.execute(select(Profile).where(Profile.user_id == int(user_id)))
+        ).scalar_one_or_none()
+        state["ok"] = True
+        state["account_level"] = u.account_level
+        state["role"] = prof.role if prof else "member"
+        return state
+
+    async def _fetch(user_id: int) -> Any:
+        from sqlalchemy import select
+
+        from app.modules.auth.models import Profile, User
+        from app.modules.auth.snapshot import UserSnapshot, _snap_to_dict
+
+        u = (
+            await auth_db.execute(select(User).where(User.id == int(user_id)))
+        ).scalar_one_or_none()
+        if u is None:  # 权威不存在 → data null（不回落、不缓存缺行）
+            return None, None
+        p = (
+            await auth_db.execute(
+                select(Profile).where(Profile.user_id == int(user_id))
+            )
+        ).scalar_one_or_none()
+        snap = UserSnapshot(
+            user_id=int(u.id),
+            username=u.username,
+            display_name=(p.nickname or u.username) if p else u.username,
+            avatar=p.avatar if p else None,
+            role=p.role if p else None,
+            account_level=str(u.account_level),
+            banned=bool(u.is_locked),
+            nickname=p.nickname if p else None,
+        )
+        from app.core.user_cache import version_of_updated_at
+
+        version = version_of_updated_at(u.updated_at) if u.updated_at else None
+        return _snap_to_dict(snap), version
+
+    # 升权写缝替身：业务拆库后触发单向升权（exam_unlock/incubation，如 projects 审核通过纳入
+    # 成员、exam 通过解锁）经 user_http.grant_via_seam 打到 auth 内部写端点。测试把该写缝替身为
+    # 在**本测 auth realm**(auth_db，auth_user_uid 刚建的真用户) 上执行真实 service_authz 原语，
+    # 使升权落 auth 真值、不触业务 db（users 已不在业务 realm）。返回与端点同义信封语义。
+    async def _grant(*, kind: str, user_id: int, **kw: object) -> int:
+        from app.modules.auth import service_authz
+
+        if kind == "incubation":
+            return await service_authz.grant_incubation(auth_db, int(user_id))
+        return await service_authz.grant_exam_unlock(
+            auth_db,
+            int(user_id),
+            unlock_level=kw.get("unlock_level"),
+            unlock_role=kw.get("unlock_role"),
+        )
+
+    monkeypatch.setattr(uh, "authorize_via_seam", _authz)
+    monkeypatch.setattr(uh, "fetch_user_http_payload", _fetch)
+    monkeypatch.setattr(uh, "grant_via_seam", _grant)

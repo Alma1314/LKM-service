@@ -1,30 +1,31 @@
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.err import CommonErr
-from app.modules.auth.models import Profile, User
-from app.modules.auth.security import create_access_token, hashpwd
+from tests.conftest import auth_user_uid
 
 
-async def _setup_user(db, username="tester") -> tuple[int, str]:
-    user = User(
+async def _setup_user(auth_db: AsyncSession, username="tester") -> tuple[int, str]:
+    """在 auth realm(business 无 users)建 normal/member 用户，返回 (id, access token)。"""
+    au = await auth_user_uid(
+        auth_db,
         username=username,
         email=f"{username}@x.com",
-        hashed_password=await hashpwd("secret123456"),
+        nickname=username,
         account_level="normal",
+        role="member",
     )
-    db.add(user)
-    await db.flush()
-    db.add(Profile(user_id=user.id))
-    await db.flush()
-    token = create_access_token(user_id=user.id, account_level="normal", role="member")
-    return user.id, token
+    return int(au.id), au.token
 
 
 class TestStarHopeRoutes:
-    async def test_pull_requires_auth(self, client, db):
+    async def test_pull_requires_auth(self, client):
         resp = await client.get("/api/v1/starhope/questions")
         assert resp.status_code == 403
 
-    async def test_push_and_pull_roundtrip(self, client, db):
-        _, token = await _setup_user(db)
+    async def test_push_and_pull_roundtrip(
+        self, client, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ):
+        _, token = await _setup_user(auth_db)
         upserts = [
             {
                 "id": "q1",
@@ -56,8 +57,10 @@ class TestStarHopeRoutes:
         assert data["items"][0]["id"] == "q1"
         assert data["items"][0]["answer"] == "2"
 
-    async def test_invalid_entity_returns_422(self, client, db):
-        _, token = await _setup_user(db)
+    async def test_invalid_entity_returns_422(
+        self, client, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ):
+        _, token = await _setup_user(auth_db)
         resp = await client.get(
             "/api/v1/starhope/nope",
             headers={"Authorization": f"Bearer {token}"},

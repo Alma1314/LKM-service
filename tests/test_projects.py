@@ -1,14 +1,20 @@
-"""projects 模块：模型建表与审批流、升级、展示服务测试。"""
+"""projects 模块（行为）：模型建表与审批流、升级、展示服务测试。
+
+拆库(M3.B S5 dual 真 PG)：users/profiles 已迁 auth realm，业务库(Base)无 auth 表。任一建
+auth 用户 / 走审批(含 author 升级 auth grant 写、成员 user 存在性快照读) / 业务 HTTP 的用例
+均注入 ``auth_db``(+``auth_seam_realm``)：- ``_mk_au(auth_db,…)`` 建 auth realm 用户返回稳定
+AuthUser(id)；申请人/成员 account_level·role·token_version 读改于 auth_db；业务
+Project/Application/Member 仍落 db。approve 路径的孵化升级经 grant seam 落 auth realm。
+"""
 
 import json
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
 from app.modules.auth.models import Profile, User
-from app.modules.auth.security import create_access_token, hashpwd
 from app.modules.projects.errors import ProjectErr
 from app.modules.projects.models import Project, ProjectApplication, ProjectMember
 from app.modules.projects.schemas import (
@@ -21,27 +27,50 @@ from app.modules.projects.service import (
     review_application,
     submit_application,
 )
+from tests.conftest import AuthUser, auth_user_uid
 
 
-async def _user(
-    db: AsyncSession, username: str = "alice", level: str = "normal"
-) -> int:
-    u = User(
-        username=username,
-        email=f"{username}@e.com",
-        hashed_password=await hashpwd("secret123"),
+async def _mk_au(
+    auth_db: AsyncSession,
+    uname: str = "alice",
+    level: str = "normal",
+    role: str = "member",
+) -> AuthUser:
+    return await auth_user_uid(
+        auth_db,
+        username=uname,
+        email=f"{uname}@e.com",
+        nickname=uname,
         account_level=level,
+        role=role,
+        with_token=False,
     )
-    db.add(u)
-    await db.flush()
-    db.add(Profile(user_id=u.id, nickname=username))
-    await db.flush()
-    return u.id
 
 
-async def test_models_can_be_created(db: AsyncSession):
+async def _user_level(auth_db: AsyncSession, user_id: int) -> str:
+    return str(
+        (await auth_db.execute(select(User.account_level).where(User.id == user_id)))
+        .scalars()
+        .one()
+    )
+
+
+async def _profile_role(auth_db: AsyncSession, user_id: int) -> str | None:
+    return (
+        await auth_db.execute(select(Profile.role).where(Profile.user_id == user_id))
+    ).scalars().first()
+
+
+async def _token_version(auth_db: AsyncSession, user_id: int) -> int:
+    v = (
+        await auth_db.execute(select(User.token_version).where(User.id == user_id))
+    ).scalars().first()
+    return int(v or 0)
+
+
+async def test_models_can_be_created(db: AsyncSession, auth_db: AsyncSession):
     """三张新表可写可读（冒烟）。"""
-    applicant = await _user(db)
+    applicant = (await _mk_au(auth_db)).id
     app = ProjectApplication(
         applicant_id=applicant,
         title="LKM",
@@ -80,8 +109,8 @@ async def test_models_can_be_created(db: AsyncSession):
 
 
 class TestProjectApplicationService:
-    async def test_submit_application(self, db: AsyncSession):
-        applicant = await _user(db)
+    async def test_submit_application(self, db: AsyncSession, auth_db: AsyncSession):
+        applicant = (await _mk_au(auth_db)).id
         app = await submit_application(
             db,
             applicant,
@@ -97,8 +126,10 @@ class TestProjectApplicationService:
         assert app.status == "pending"
         assert len(app.member_claims) == 1
 
-    async def test_duplicate_pending_rejected(self, db: AsyncSession):
-        applicant = await _user(db)
+    async def test_duplicate_pending_rejected(
+        self, db: AsyncSession, auth_db: AsyncSession
+    ):
+        applicant = (await _mk_au(auth_db)).id
         await submit_application(
             db,
             applicant,
@@ -112,10 +143,12 @@ class TestProjectApplicationService:
             )
         assert e.value.errcode == ProjectErr.DUPLICATE_APPLICATION
 
-    async def test_review_bad_member_user_rejected(self, db: AsyncSession):
+    async def test_review_bad_member_user_rejected(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ):
         """member_claims 引用不存在的 user_id → 申请不落地、报错。"""
-        applicant = await _user(db)
-        reviewer = await _user(db, "rv", level="admin")
+        applicant = (await _mk_au(auth_db)).id
+        reviewer = (await _mk_au(auth_db, "rv", level="admin")).id
         app = await submit_application(
             db,
             applicant,
@@ -138,10 +171,12 @@ class TestProjectApplicationService:
         assert e.value.errcode == ProjectErr.MEMBER_USER_NOT_FOUND
         assert await db.scalar(select(Project.id)) is None
 
-    async def test_review_approve_creates_project_and_upgrades(self, db: AsyncSession):
-        applicant = await _user(db)  # normal
-        reviewer = await _user(db, "rv", level="admin")
-        member_uid = await _user(db, "mem")
+    async def test_review_approve_creates_project_and_upgrades(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ):
+        applicant = (await _mk_au(auth_db, "ap0")).id  # normal → 升 admin
+        reviewer = (await _mk_au(auth_db, "rv", level="admin")).id
+        member_uid = (await _mk_au(auth_db, "mem")).id
         app = await submit_application(
             db,
             applicant,
@@ -191,26 +226,16 @@ class TestProjectApplicationService:
         assert by_name["艾尔"].user_id == member_uid
         assert by_name["外援"].user_id is None
 
-        # 申请人升级
-        applicant_row = (
-            (await db.execute(select(User).where(User.id == applicant)))
-            .scalars()
-            .first()
-        )
-        assert applicant_row is not None
-        assert applicant_row.account_level == "admin"
-        assert applicant_row.token_version >= 1
-        uprof = (
-            (await db.execute(select(Profile).where(Profile.user_id == applicant)))
-            .scalars()
-            .first()
-        )
-        assert uprof is not None
-        assert uprof.role == "incubated_member"
+        # 申请人升级（auth realm）
+        assert await _user_level(auth_db, applicant) == "admin"
+        assert await _token_version(auth_db, applicant) >= 1
+        assert await _profile_role(auth_db, applicant) == "incubated_member"
 
-    async def test_review_twice_rejected(self, db: AsyncSession):
-        applicant = await _user(db)
-        reviewer = await _user(db, "rv", level="admin")
+    async def test_review_twice_rejected(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ):
+        applicant = (await _mk_au(auth_db)).id
+        reviewer = (await _mk_au(auth_db, "rv", level="admin")).id
         app = await submit_application(
             db,
             applicant,
@@ -225,9 +250,11 @@ class TestProjectApplicationService:
             )
         assert e.value.errcode == ProjectErr.APPLICATION_ALREADY_REVIEWED
 
-    async def test_review_reject_does_not_create(self, db: AsyncSession):
-        applicant = await _user(db)
-        reviewer = await _user(db, "rv", level="admin")
+    async def test_review_reject_does_not_create(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ):
+        applicant = (await _mk_au(auth_db)).id
+        reviewer = (await _mk_au(auth_db, "rv", level="admin")).id
         app = await submit_application(
             db,
             applicant,
@@ -241,84 +268,59 @@ class TestProjectApplicationService:
         )
         assert out.status == "rejected"
         assert await db.scalar(select(Project.id)) is None
-        applicant_row = (
-            (await db.execute(select(User).where(User.id == applicant)))
-            .scalars()
-            .first()
-        )
-        assert applicant_row is not None
-        assert applicant_row.account_level == "normal"  # 未升级
+        assert await _user_level(auth_db, applicant) == "normal"  # 未升级
 
-    async def test_upgrade_preserves_higher_role(self, db: AsyncSession):
+    async def test_upgrade_preserves_higher_role(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ):
         """已有 author 角色的申请人，孵化升级不降其角色。"""
-        applicant = await _user(db)
-        from sqlalchemy import update
-
-        await db.execute(
-            update(Profile).where(Profile.user_id == applicant).values(role="author")
+        applicant_au = await _mk_au(auth_db, "a1")
+        await auth_db.execute(
+            update(Profile)
+            .where(Profile.user_id == applicant_au.id)
+            .values(role="author")
         )
-        await db.flush()
-        reviewer = await _user(db, "rv", level="admin")
+        await auth_db.flush()
+        reviewer = (await _mk_au(auth_db, "rv", level="admin")).id
         app = await submit_application(
             db,
-            applicant,
+            applicant_au.id,
             ProjectApplicationCreate(title="a", summary="s", description="d"),
         )
         await review_application(
             db, app.id, reviewer, ReviewProjectApplicationRequest(approve=True)
         )
-        uprof = (
-            (await db.execute(select(Profile).where(Profile.user_id == applicant)))
-            .scalars()
-            .first()
-        )
-        assert uprof is not None
-        assert uprof.role == "author"
+        assert await _profile_role(auth_db, applicant_au.id) == "author"
 
-    async def test_already_admin_does_not_bump_token(self, db: AsyncSession):
-        """申请人已是 admin 且非 member 角色时，孵化通过不应重复递增 token_version。
+    async def test_already_admin_does_not_bump_token(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ):
+        """申请人已是 admin 且非 member 角色时，孵化通过不应重复递增 token_version。"""
+        au = await _mk_au(auth_db, "a2", level="admin", role="author")
+        before_token = await _token_version(auth_db, au.id)
 
-        覆盖 _apply_incubation 的「无改动则不 bump」分支：account_level 不降、role 不覆盖
-        更高档，故旧令牌保持有效。
-        """
-        applicant = await _user(db)
-        from sqlalchemy import update
-
-        await db.execute(
-            update(User).where(User.id == applicant).values(account_level="admin")
-        )
-        await db.execute(
-            update(Profile).where(Profile.user_id == applicant).values(role="author")
-        )
-        await db.flush()
-        before_token = (
-            await db.scalar(select(User.token_version).where(User.id == applicant))
-        ) or 0
-
-        reviewer = await _user(db, "rv", level="admin")
+        reviewer = (await _mk_au(auth_db, "rv", level="admin")).id
         app = await submit_application(
             db,
-            applicant,
+            au.id,
             ProjectApplicationCreate(title="a", summary="s", description="d"),
         )
         await review_application(
             db, app.id, reviewer, ReviewProjectApplicationRequest(approve=True)
         )
 
-        after = (
-            await db.scalar(select(User.token_version).where(User.id == applicant))
-        ) or 0
-        assert after == before_token  # 无改动则不升版本
-        level = await db.scalar(select(User.account_level).where(User.id == applicant))
-        assert level == "admin"  # 仍为 admin，未被降级
+        assert await _token_version(auth_db, au.id) == before_token  # 无改动则不升
+        assert await _user_level(auth_db, au.id) == "admin"  # 仍为 admin，未被降级
 
 
-async def _make_approved(db: AsyncSession, username: str = "alice"):
-    applicant = await _user(db, username)
-    reviewer = await _user(db, f"rv_{username}", level="admin")
+async def _make_approved(
+    db: AsyncSession, auth_db: AsyncSession, username: str = "alice"
+) -> int:
+    applicant_au = await _mk_au(auth_db, username)
+    reviewer = (await _mk_au(auth_db, f"rv_{username}", level="admin")).id
     app = await submit_application(
         db,
-        applicant,
+        applicant_au.id,
         ProjectApplicationCreate(
             title="P",
             summary="s",
@@ -331,12 +333,14 @@ async def _make_approved(db: AsyncSession, username: str = "alice"):
     await review_application(
         db, app.id, reviewer, ReviewProjectApplicationRequest(approve=True)
     )
-    return applicant
+    return applicant_au.id
 
 
 class TestProjectReadService:
-    async def test_list_and_detail(self, db: AsyncSession):
-        await _make_approved(db)
+    async def test_list_and_detail(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ):
+        await _make_approved(db, auth_db)
         projects = await list_projects(db)
         assert len(projects) == 1
         assert projects[0].is_incubated is True
@@ -365,19 +369,25 @@ class TestProjectRoute:
         assert "errors" not in body, body.get("errors")
         assert body["data"]["projects"]["items"] == []
 
-    async def test_submit_requires_auth(self, client, db):
+    async def test_submit_requires_auth(
+        self, client, db, auth_db: AsyncSession, auth_seam_realm: None
+    ):
         # 未登录 → 403
         resp = await client.post("/api/v1/projects/applications", json={})
         assert resp.status_code == 403
 
         # local 用户 → 权限不足（ACCOUNT_LEVEL_INSUFFICIENT）
-        locale_user = await _user(db, "loc", level="local")
-        token = create_access_token(
-            user_id=locale_user, account_level="local", role="member"
+        loc = await auth_user_uid(
+            auth_db,
+            username="loc",
+            email="loc@e.com",
+            nickname="loc",
+            account_level="local",
+            with_token=True,
         )
         resp = await client.post(
             "/api/v1/projects/applications",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"Authorization": f"Bearer {loc.token}"},
             json={"title": "t", "summary": "s", "description": "d"},
         )
         assert resp.status_code == 403
@@ -392,31 +402,42 @@ class TestProjectRoute:
             )
         )
         await db.flush()
-        n_user = await _user(db, "norm", level="normal")
-        token = create_access_token(
-            user_id=n_user, account_level="normal", role="member"
+        n_user = await auth_user_uid(
+            auth_db,
+            username="norm",
+            email="norm@e.com",
+            nickname="norm",
+            account_level="normal",
+            with_token=True,
         )
         resp = await client.post(
             "/api/v1/projects/applications",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"Authorization": f"Bearer {n_user.token}"},
             json={"title": "t", "summary": "s", "description": "d"},
         )
         assert resp.status_code == 200
         assert resp.json()["data"]["status"] == "pending"
 
-    async def test_review_requires_admin(self, client, db):
-        n_user = await _user(db, "norm", level="normal")
+    async def test_review_requires_admin(
+        self, client, db, auth_db: AsyncSession, auth_seam_realm: None
+    ):
+        n_user = await _mk_au(auth_db, "norm", level="normal")
         app = await submit_application(
             db,
-            n_user,
+            n_user.id,
             ProjectApplicationCreate(title="t", summary="s", description="d"),
         )
-        token = create_access_token(
-            user_id=n_user, account_level="normal", role="member"
+        token = await auth_user_uid(
+            auth_db,
+            username="norm2",
+            email="norm2@e.com",
+            nickname="norm2",
+            account_level="normal",
+            with_token=True,
         )
         resp = await client.post(
             f"/api/v1/projects/applications/{app.id}/review",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"Authorization": f"Bearer {token.token}"},
             json={"approve": True},
         )
         assert resp.status_code == 403

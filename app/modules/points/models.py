@@ -20,7 +20,7 @@ from app.db.base import Base, UTCDateTime, now_iso  # 注意 db.base 而非 db.m
 class UserBalance(Base):
     __tablename__: str = "user_balances"
 
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)  # S5: auth user_id
     balance: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     updated_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
@@ -37,7 +37,7 @@ class PointsLedger(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)  # S5: auth user_id
     delta: Mapped[int] = mapped_column(Integer, nullable=False)
     balance_after: Mapped[int] = mapped_column(Integer, nullable=False)
     reason: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -50,7 +50,7 @@ class PointsLedger(Base):
 
 class UserBehaviorStat(Base):
     __tablename__: str = "user_behavior_stats"
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)  # S5: auth user_id
     stats: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     last_checkin_date: Mapped[str | None] = mapped_column(
         String(10), nullable=True
@@ -80,7 +80,7 @@ class Achievement(Base):
 class UserAchievement(Base):
     __tablename__: str = "user_achievements"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)  # S5: auth user_id
     achievement_id: Mapped[int] = mapped_column(
         ForeignKey("achievements.id"), nullable=False
     )
@@ -111,7 +111,7 @@ class Task(Base):
 class UserTaskProgress(Base):
     __tablename__: str = "user_task_progress"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)  # S5: auth user_id
     task_id: Mapped[int] = mapped_column(
         ForeignKey("task_definitions.id"), nullable=False
     )

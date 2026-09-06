@@ -168,13 +168,15 @@ async def review_application(
 async def _apply_incubation(db: AsyncSession, applicant_id: int) -> None:
     """纳入成员升级：account_level→admin / member role→incubated_member（auth 域权威写面）。
 
-    M3.B S4：把单向派升 + token_version 失效收敛到 auth 的 :func:`grant_incubation`（拆库后
-    auth 是 users/profiles 唯一写者）。同库蓝绿阶段与项目事务在同一 DB 会话执行，语义与旧实现
-    一一对等并发出 user.updated。
+    M3.B S5 C：拆库后本项目 DB 会话（业务 realm）已无 users/profiles——auth 是身份词表唯一
+    owner（含写）。故不再把业务 ``db`` 直塞 auth 的 grant 例程；改经 seam 调度
+    ``service_authz.grant_incubation_from_business(db, …)``：seam 开时（生产拆库 + 测试
+    auth_seam_realm）由 auth 内部写端点把升权落地 auth realm；seam 关时回落本地同库会话执行
+    （蓝绿/单库，语义与旧实现一一对等并发出 user.updated）。
     """
     from app.modules.auth import service_authz
 
-    await service_authz.grant_incubation(db, applicant_id)
+    await service_authz.grant_incubation_from_business(db, applicant_id)
 
 
 def _project_options() -> tuple[Any, ...]:

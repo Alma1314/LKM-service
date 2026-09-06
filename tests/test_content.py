@@ -1,5 +1,14 @@
 """统一内容模型（content_items 收敛五套旧内容表）。
 
+拆库后业务库(Base 无 users)不再有 User/Profile；content_items.author_id/owner_id 是
+auth realm 稳定裸 int。凡"需要作者身份 / 读回作者名 author_name / 属主裁决/评论"的用例：
+- ``_au(auth_db,...)`` 建 auth realm 用户并以裸 ``.id`` 给业务行；
+- ``auth_seam_realm``：content service 的 create/list/get/comment 会跨 realm 回填
+  author_name（display），须 seam 开 (指本测 auth_db) 才能读到——否则业务端直查 users 报错。
+显示名回填 seam 已开启 → ``author_name == nickname``。
+
+真双 PG(lkm/lkm_auth) schema-per-test 跑绿；sqlite 双库分裂复刻同 realm 亦可。
+
 覆盖：
 - 讨论帖 discussion 创建 / 列表按板过滤 / 详情 bump_view
 - column_post 需挂 column_id，否则报 COLUMN_NOT_FOUND
@@ -15,8 +24,6 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
-from app.modules.auth.models import User
-from app.modules.auth.security import hashpwd
 from app.modules.content.boards.schemas import BoardCreate
 from app.modules.content.boards.service import create_board_ex
 from app.modules.content.errors import ContentErr
@@ -37,18 +44,20 @@ from app.modules.content.service import (
     publish_blog_item,
     unlike_item,
 )
+from tests.conftest import AuthUser, auth_user_uid
 
 
-async def _user(db: AsyncSession, username: str = "alice") -> int:
-    user = User(
+async def _au(
+    auth_db: AsyncSession, username: str = "alice", nickname: str | None = None
+) -> AuthUser:
+    """在 auth realm 建一线用户并返回其稳定 AuthUser（裸 .id 作业务 author）；nickname 即展示名。"""
+    return await auth_user_uid(
+        auth_db,
         username=username,
         email=f"{username}@example.com",
-        hashed_password=await hashpwd("secret123456"),
+        nickname=nickname or username,
         account_level="normal",
     )
-    db.add(user)
-    await db.flush()
-    return user.id
 
 
 async def _make_board(db: AsyncSession, slug: str, owner_id: int | None = None) -> int:
@@ -72,8 +81,11 @@ async def _make_column(db: AsyncSession, owner_id: int, board_id: int) -> int:
     return col.id
 
 
-async def test_discussion_create_and_list(db: AsyncSession) -> None:
-    uid = await _user(db)
+async def test_discussion_create_and_list(
+    db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+) -> None:
+    au = await _au(auth_db, "alice")
+    uid = au.id
     bid = await _make_board(db, "math")
     item = await create_item(
         db,
@@ -83,7 +95,7 @@ async def test_discussion_create_and_list(db: AsyncSession) -> None:
         ),
     )
     assert item.content_type == "discussion"
-    assert item.author_name == "alice"
+    assert item.author_name == "alice"  # author_name 自 seam(auth realm nickname) 回填
     assert item.status == "published"  # 讨论帖无审稿
 
     page = await list_items(db, board_id=bid)
@@ -91,8 +103,10 @@ async def test_discussion_create_and_list(db: AsyncSession) -> None:
     assert page.items[0].title == "黎曼猜想"
 
 
-async def test_column_post_requires_column(db: AsyncSession) -> None:
-    uid = await _user(db)
+async def test_column_post_requires_column(
+    db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+) -> None:
+    uid = (await _au(auth_db, "col_u")).id
     bid = await _make_board(db, "physics")
     with pytest.raises(BizError) as e:
         await create_item(
@@ -122,8 +136,10 @@ async def test_column_post_requires_column(db: AsyncSession) -> None:
     assert item.column_id == cid
 
 
-async def test_article_slug_unique_and_official_fields(db: AsyncSession) -> None:
-    uid = await _user(db)
+async def test_article_slug_unique_and_official_fields(
+    db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+) -> None:
+    uid = (await _au(auth_db, "art_u")).id
     bid = await _make_board(db, "official")
     await create_item(
         db,
@@ -153,8 +169,10 @@ async def test_article_slug_unique_and_official_fields(db: AsyncSession) -> None
     assert e.value.errcode == ContentErr.SLUG_TAKEN
 
 
-async def test_like_idempotent_and_unlike(db: AsyncSession) -> None:
-    uid = await _user(db)
+async def test_like_idempotent_and_unlike(
+    db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+) -> None:
+    uid = (await _au(auth_db, "lk")).id
     bid = await _make_board(db, "physics")
     item = await create_item(
         db, uid, ContentItemCreate(board_id=bid, title="t", content="c")
@@ -166,8 +184,10 @@ async def test_like_idempotent_and_unlike(db: AsyncSession) -> None:
     assert n3 == 0
 
 
-async def test_comment_floor_and_count(db: AsyncSession) -> None:
-    uid = await _user(db)
+async def test_comment_floor_and_count(
+    db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+) -> None:
+    uid = (await _au(auth_db, "cc")).id
     bid = await _make_board(db, "cs")
     item = await create_item(
         db, uid, ContentItemCreate(board_id=bid, title="t", content="c")
@@ -183,9 +203,11 @@ async def test_comment_floor_and_count(db: AsyncSession) -> None:
     assert page.total == 2
 
 
-async def test_discussion_pinned_sorts_first(db: AsyncSession) -> None:
+async def test_discussion_pinned_sorts_first(
+    db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+) -> None:
     """讨论帖 pinned 置顶排序（从 forum 迁移：pinned 在前）。"""
-    uid = await _user(db)
+    uid = (await _au(auth_db, "pin")).id
     bid = await _make_board(db, "news")
     await create_item(
         db, uid, ContentItemCreate(board_id=bid, title="普通帖", content="a")
@@ -204,9 +226,11 @@ async def test_discussion_pinned_sorts_first(db: AsyncSession) -> None:
     assert page.items[1].title == "普通帖"
 
 
-async def test_discussion_view_count_bumps(db: AsyncSession) -> None:
+async def test_discussion_view_count_bumps(
+    db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+) -> None:
     """GET 详情两次 → view_count 递增 1（从 forum 迁移：view_count 自增）。"""
-    uid = await _user(db)
+    uid = (await _au(auth_db, "view")).id
     bid = await _make_board(db, "math")
     item = await create_item(
         db, uid, ContentItemCreate(board_id=bid, title="t", content="c")
@@ -219,9 +243,11 @@ async def test_discussion_view_count_bumps(db: AsyncSession) -> None:
     assert second.view_count == 2
 
 
-async def test_get_nonexistent_item_raises(db: AsyncSession) -> None:
+async def test_get_nonexistent_item_raises(
+    db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+) -> None:
     """详情缺失 → CONTENT_NOT_FOUND（从 forum 迁移：不存在帖子报错）。"""
-    uid = await _user(db)
+    uid = (await _au(auth_db, "nope")).id
     bid = await _make_board(db, "math")
     await create_item(db, uid, ContentItemCreate(board_id=bid, title="t", content="c"))
 
@@ -231,7 +257,10 @@ async def test_get_nonexistent_item_raises(db: AsyncSession) -> None:
 
 
 async def test_bump_item_view_makes_write_session_commit(
-    db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    db: AsyncSession,
+    auth_db: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    auth_seam_realm: None,
 ) -> None:
     """bump_item_view 自建独立写会话原子 +1 并 commit（GraphQL 只读会话不可写）。
 
@@ -240,7 +269,7 @@ async def test_bump_item_view_makes_write_session_commit(
     from sqlalchemy import select
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
-    uid = await _user(db)
+    uid = (await _au(auth_db, "bump")).id
     bid = await _make_board(db, "math")
     item = await create_item(
         db, uid, ContentItemCreate(board_id=bid, title="t", content="c")
@@ -266,9 +295,11 @@ async def test_bump_item_view_makes_write_session_commit(
     assert row.view_count == 1
 
 
-async def test_delete_own_item(db: AsyncSession) -> None:
+async def test_delete_own_item(
+    db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+) -> None:
     """删除自己发的内容项 → 再查应 CONTENT_NOT_FOUND（从 forum 迁移：删帖）。"""
-    uid = await _user(db)
+    uid = (await _au(auth_db, "del_own")).id
     bid = await _make_board(db, "math")
     item = await create_item(
         db, uid, ContentItemCreate(board_id=bid, title="t", content="c")
@@ -281,9 +312,11 @@ async def test_delete_own_item(db: AsyncSession) -> None:
     assert e.value.errcode == ContentErr.CONTENT_NOT_FOUND
 
 
-async def test_list_items_paginated(db: AsyncSession) -> None:
+async def test_list_items_paginated(
+    db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+) -> None:
     """列表分页参数（从 forum 迁移：分页 total/pages）。"""
-    uid = await _user(db)
+    uid = (await _au(auth_db, "pg")).id
     bid = await _make_board(db, "math")
     await create_item(db, uid, ContentItemCreate(board_id=bid, title="一", content="x"))
     await create_item(db, uid, ContentItemCreate(board_id=bid, title="二", content="y"))
@@ -296,9 +329,11 @@ async def test_list_items_paginated(db: AsyncSession) -> None:
     assert page.items[0].title == "二"  # 新帖在前（id desc）
 
 
-async def test_list_items_filter_by_board(db: AsyncSession) -> None:
+async def test_list_items_filter_by_board(
+    db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+) -> None:
     """列表按板块过滤（从 forum 迁移：board 过滤）。"""
-    uid = await _user(db)
+    uid = (await _au(auth_db, "fb")).id
     math_bid = await _make_board(db, "math")
     phys_bid = await _make_board(db, "physics")
     await create_item(
@@ -315,8 +350,10 @@ async def test_list_items_filter_by_board(db: AsyncSession) -> None:
     assert page.items[0].title == "数学帖"
 
 
-async def test_publish_blog_item_idempotent(db: AsyncSession) -> None:
-    uid = await _user(db)
+async def test_publish_blog_item_idempotent(
+    db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+) -> None:
+    uid = (await _au(auth_db, "blog_u")).id
     bid = await _make_board(db, "blog")
     cid1 = await publish_blog_item(
         db,
@@ -342,5 +379,6 @@ async def test_publish_blog_item_idempotent(db: AsyncSession) -> None:
     )
     assert cid1 == cid2  # 同 slug 幂等更新
     item = await db.get(ContentItem, cid1)
+    assert item is not None
     assert item.status == "published"
     assert item.content_type == "blog_post"

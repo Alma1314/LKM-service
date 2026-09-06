@@ -4,8 +4,6 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.auth.models import User
-from app.modules.auth.security import hashpwd
 from app.modules.points.models import (
     Achievement,
     Task,
@@ -14,18 +12,13 @@ from app.modules.points.models import (
     UserTaskProgress,
 )
 from app.modules.points.service import do_checkin, get_balance
+from tests.conftest import auth_user_uid
 
 
-async def _user(db: AsyncSession, username: str = "checkin_user") -> int:
-    u = User(
-        username=username,
-        email=f"{username}@e.com",
-        hashed_password=await hashpwd("secret123"),
-        account_level="normal",
-    )
-    db.add(u)
-    await db.flush()
-    return u.id
+async def _user(auth_db: AsyncSession, username: str = "checkin_user") -> int:
+    """在 auth realm 建一线用户，返回其裸 int id（业务 points 表以 int 引用）。"""
+    u = await auth_user_uid(auth_db, username=username, email=f"{username}@e.com")
+    return int(u.id)
 
 
 async def _achievement(db: AsyncSession, key: str, type_: str, threshold: int) -> int:
@@ -65,9 +58,9 @@ async def _task(
 
 
 @pytest.mark.asyncio
-async def test_first_checkin_earns_reward_and_streak(db: AsyncSession):
+async def test_first_checkin_earns_reward_and_streak(db: AsyncSession, auth_db: AsyncSession):
     """首次打卡：earned=5, streak=1，且写入 last_checkin_date。"""
-    uid = await _user(db)
+    uid = await _user(auth_db)
     r = await do_checkin(db, uid)
     assert r["success"] is True
     assert r["earned"] == 5
@@ -82,9 +75,9 @@ async def test_first_checkin_earns_reward_and_streak(db: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_checkin_idempotent_same_day(db: AsyncSession):
+async def test_checkin_idempotent_same_day(db: AsyncSession, auth_db: AsyncSession):
     """同日再打：today_checked=True, earned=0，不重复发分。"""
-    uid = await _user(db)
+    uid = await _user(auth_db)
     r1 = await do_checkin(db, uid)
     assert r1["earned"] == 5
     r2 = await do_checkin(db, uid)
@@ -94,9 +87,9 @@ async def test_checkin_idempotent_same_day(db: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_checkin_advances_checkin_task(db: AsyncSession):
+async def test_checkin_advances_checkin_task(db: AsyncSession, auth_db: AsyncSession):
     """打卡推进 t1（checkin, req=1）任务：当日完成并发额外 5 分。"""
-    uid = await _user(db)
+    uid = await _user(auth_db)
     await _task(db, "t1", "checkin", requirement_count=1, reward_points=5)
     await do_checkin(db, uid)
     up = (
@@ -118,9 +111,9 @@ async def test_checkin_advances_checkin_task(db: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_checkin_achievement_progress(db: AsyncSession):
+async def test_checkin_achievement_progress(db: AsyncSession, auth_db: AsyncSession):
     """成就 a9（checkin_streak 阈值 7）：首次打卡后 progress=1 但未解锁。"""
-    uid = await _user(db)
+    uid = await _user(auth_db)
     await _achievement(db, "a9", "checkin_streak", threshold=7)
     await do_checkin(db, uid)
     ach = (
@@ -149,10 +142,12 @@ async def test_checkin_achievement_progress(db: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_checkin_fail_open_when_redis_unavailable(
-    db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    db: AsyncSession,
+    auth_db: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     """Redis 操作时不可用（get/set/incr 抛错）→ 打卡的缓存读写仍 fail-open 不崩。"""
-    uid = await _user(db)
+    uid = await _user(auth_db)
 
     class _DownRedis:
         async def get(self, key):
@@ -182,9 +177,9 @@ async def test_checkin_fail_open_when_redis_unavailable(
 
 
 @pytest.mark.asyncio
-async def test_checkin_idempotent_streak_not_double_incremented(db: AsyncSession):
+async def test_checkin_idempotent_streak_not_double_incremented(db: AsyncSession, auth_db: AsyncSession):
     """同日二次调用返回 0 且 streak 保持 1（幂等返回语义，防 streak 重入重复 +1）。"""
-    uid = await _user(db)
+    uid = await _user(auth_db)
     r1 = await do_checkin(db, uid)
     assert r1["earned"] == 5 and r1["checkin_streak"] == 1
     # 第二次调用在同日已打 → 直接返回，不复读不改 streak

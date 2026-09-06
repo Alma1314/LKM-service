@@ -1,11 +1,19 @@
-"""boards 模块 service 层测试：CRUD、板块申请/审核、禁言、发言准入。"""
+"""boards 模块 service 层测试：CRUD、板块申请/审核、禁言、发言准入。
+
+（M3.B S5 拆库 dual 真 PG 迁移版）拆库后业务库(Base 无 users)不再有 User/Profile；
+users/profiles 迁 auth 库(AuthBase)。凡 service 需要用户身份的用例注入 ``auth_db``：
+- ``_au(auth_db,...)`` 建 auth realm 用户返回稳定 ``AuthUser``，以其裸 ``.id`` 作
+  业务行 owner_id/applicant_id/reviewer/user_id（业务库只存裸 int，不存 User）。
+这些 boards.* service 纯按 int user_id 行事（属主/申请/审核/禁言比对 id + 业务 realm
+RolePermission 权限点），不跨 realm 读展示名，故**无需** auth_seam_realm。
+真双 PG(lkm / lkm_auth) schema-per-test 跑绿；sqlite 双库分裂复刻同 realm 亦可。
+"""
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
-from app.modules.auth.models import User
 from app.modules.content.boards.errors import BoardErr
 from app.modules.content.boards.schemas import (
     BanRequest,
@@ -27,30 +35,30 @@ from app.modules.content.boards.service import (
     update_board_ex,
 )
 from app.modules.content.models import Board
+from tests.conftest import AuthUser, auth_user_uid
 
 
-async def _user(
-    db: AsyncSession, username: str = "alice", level: str = "normal"
-) -> int:
-    from app.modules.auth.models import Profile
-    from app.modules.auth.security import hashpwd
-
-    u = User(
+async def _au(
+    auth_db: AsyncSession,
+    username: str = "alice",
+    account_level: str = "normal",
+    role: str = "member",
+) -> AuthUser:
+    """在 auth realm 建一线用户并返回其稳定 AuthUser（裸 .id 供业务行引用）。"""
+    return await auth_user_uid(
+        auth_db,
         username=username,
-        email=f"{username}@e.com",
-        hashed_password=await hashpwd("secret123"),
-        account_level=level,
+        nickname=username,
+        account_level=account_level,
+        role=role,
     )
-    db.add(u)
-    await db.flush()
-    db.add(Profile(user_id=u.id, nickname=username))
-    await db.flush()
-    return u.id
 
 
 class TestBoardService:
-    async def test_create_board_and_slug_conflict(self, db: AsyncSession):
-        owner = await _user(db, "alice")
+    async def test_create_board_and_slug_conflict(
+        self, db: AsyncSession, auth_db: AsyncSession
+    ):
+        owner = (await _au(auth_db, "alice")).id
         b = await create_board_ex(db, BoardCreate(slug="math", title="数学"), owner)
         assert b.slug == "math"
         assert b.owner_id == owner
@@ -58,15 +66,17 @@ class TestBoardService:
             await create_board_ex(db, BoardCreate(slug="math", title="重复"), owner)
         assert e.value.errcode == BoardErr.SLUG_CONFLICT
 
-    async def test_list_boards(self, db: AsyncSession):
-        owner = await _user(db)
+    async def test_list_boards(self, db: AsyncSession, auth_db: AsyncSession):
+        owner = (await _au(auth_db)).id
         await create_board_ex(db, BoardCreate(slug="math", title="M"), owner)
         boards = await list_boards(db)
         assert len(boards) == 1
 
-    async def test_update_board_owner_only(self, db: AsyncSession):
-        owner = await _user(db, "a")
-        other = await _user(db, "b")
+    async def test_update_board_owner_only(
+        self, db: AsyncSession, auth_db: AsyncSession
+    ):
+        owner = (await _au(auth_db, "a")).id
+        other = (await _au(auth_db, "b")).id
         b = await create_board_ex(db, BoardCreate(slug="m", title="M"), owner)
         with pytest.raises(BizError) as e:
             await update_board_ex(db, b.id, other, BoardUpdate(title="改"))
@@ -75,28 +85,32 @@ class TestBoardService:
         await update_board_ex(db, b.id, owner, BoardUpdate(title="新标题"))
         assert (await get_board_ex(db, b.id)).title == "新标题"
 
-    async def test_application_review_creates_board(self, db: AsyncSession):
-        applicant = await _user(db, "app")
+    async def test_application_review_creates_board(
+        self, db: AsyncSession, auth_db: AsyncSession
+    ):
+        applicant = await _au(auth_db, "app")
         app = await submit_application(
             db,
-            applicant,
+            applicant.id,
             BoardApplicationCreate(
                 title="板", description="d", reason="r", slug="newb"
             ),
         )
         assert app.status == "pending"
-        reviewer = await _user(db, "admin_", level="admin")
+        reviewer = (await _au(auth_db, "admin_", account_level="admin")).id
         out = await review_application(
             db, app.id, reviewer, ReviewBoardApplicationRequest(approve=True)
         )
         assert out.status == "approved"
         board = await db.scalar(select(Board).where(Board.slug == "newb"))
         assert board is not None
-        assert board.owner_id == applicant
+        assert board.owner_id == applicant.id
 
-    async def test_review_twice_rejected(self, db: AsyncSession):
-        applicant = await _user(db)
-        reviewer = await _user(db, "rv", level="admin")
+    async def test_review_twice_rejected(
+        self, db: AsyncSession, auth_db: AsyncSession
+    ):
+        applicant = (await _au(auth_db)).id
+        reviewer = (await _au(auth_db, "rv", account_level="admin")).id
         app = await submit_application(
             db,
             applicant,
@@ -111,9 +125,11 @@ class TestBoardService:
             )
         assert e.value.errcode == BoardErr.APPLICATION_ALREADY_REVIEWED
 
-    async def test_ban_and_is_banned(self, db: AsyncSession):
-        owner = await _user(db, "o")
-        target = await _user(db, "t")
+    async def test_ban_and_is_banned(
+        self, db: AsyncSession, auth_db: AsyncSession
+    ):
+        owner = (await _au(auth_db, "o")).id
+        target = (await _au(auth_db, "t")).id
         b = await create_board_ex(db, BoardCreate(slug="x", title="X"), owner)
         board = await get_board_ex(db, b.id)
         await ban_user(db, board, owner, BanRequest(user_id=target, hours=24))
@@ -121,13 +137,18 @@ class TestBoardService:
         await unban_user(db, board, owner, target)
         assert await is_banned(db, b.id, target) is False
 
-    async def test_check_post_allowed_daily_limit(self, db: AsyncSession):
-        owner = await _user(db)
+    async def test_check_post_allowed_daily_limit(
+        self,
+        db: AsyncSession,
+        auth_db: AsyncSession,
+        auth_seam_realm: None,
+    ):
+        owner = (await _au(auth_db)).id
         # 先建一张 Board 限 1 条
         b = await create_board_ex(
             db, BoardCreate(slug="lim", title="L", daily_post_limit=1), owner
         )
-        user = await _user(db, "u")
+        user = (await _au(auth_db, "u")).id
         from app.modules.content.schemas import ContentItemCreate
         from app.modules.content.service import create_item
 
@@ -145,8 +166,10 @@ class TestBoardService:
 class TestBoardHierarchy:
     """板块父/子层级：子板块挂父板块，板块广场可嵌套展示。"""
 
-    async def test_create_child_under_parent(self, db: AsyncSession) -> None:
-        owner = await _user(db, "h")
+    async def test_create_child_under_parent(
+        self, db: AsyncSession, auth_db: AsyncSession
+    ) -> None:
+        owner = (await _au(auth_db, "h")).id
         parent = await create_board_ex(
             db, BoardCreate(slug="basic-science", title="基础学科"), owner
         )
@@ -158,12 +181,15 @@ class TestBoardHierarchy:
         assert child.parent_id == parent.id
 
         board = await db.get(Board, child.id)
+        assert board is not None
         assert board.parent_id == parent.id
         parent_rel = await db.get(Board, board.parent_id)
         assert parent_rel is not None and parent_rel.slug == "basic-science"
 
-    async def test_board_out_exposes_parent_id(self, db: AsyncSession) -> None:
-        owner = await _user(db, "hp")
+    async def test_board_out_exposes_parent_id(
+        self, db: AsyncSession, auth_db: AsyncSession
+    ) -> None:
+        owner = (await _au(auth_db, "hp")).id
         parent = await create_board_ex(
             db, BoardCreate(slug="applied-science", title="应用学科"), owner
         )

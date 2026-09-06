@@ -1,41 +1,30 @@
 """自动审校规则测试端点验证。
 
+拆库(M3.B S5 dual 真 PG)：后台管理员用户身份迁 auth realm（business 无 users）。HTTP 用例经
+``auth_seam_realm`` 把后台 cookie 裁决缝指到本测 auth_db(user 建此处,account_level=admin/
+profile.role=super_admin)；``admin.moderation_manage`` 权限点(RolePermission)仍落业务 realm。
+
 覆盖：
 - mod_service.test_rules：命中/未命中、derank 累加 penalty、hide 触发 should_hide
 - HTTP POST /admin/moderation/rules/test（require_admin_2fa）：无 2FA 信任报 MFA_REQUIRED，
   带 2FA 信任管理 cookie 后返回命中明细。
 """
 
+from types import SimpleNamespace
+
 import pytest
 from httpx import AsyncClient
 
 from app.modules.admin.deps import COOKIE_NAME, COOKIE_PATH, create_admin_access_token
-from app.modules.admin.models import RolePermission
 from app.modules.admin.moderation import service as mod_service
 from app.modules.admin.moderation.schemas import RuleCreate
-from app.modules.auth.models import Profile, User
-from tests.conftest import DB
+from tests.conftest import DB, auth_user_uid
 
 
-async def _admin(db: DB, username: str) -> User:
-    u = User(
-        username=username,
-        email=f"{username}@ex.com",
-        hashed_password="mod-test-placeholder-not-a-real-hash",
-        account_level="admin",
-    )
-    db.add(u)
-    await db.flush()
-    db.add(Profile(user_id=u.id, role="super_admin", nickname=username))
-    # 授予 moderation 权限点，使叠加了 require_permission 的端点可放行
-    db.add(
-        RolePermission(
-            role_name="admin:super_admin",
-            permission="admin.moderation_manage",
-        )
-    )
-    await db.flush()
-    return u
+def _admin_cookie_tok(user_id: int, *, mfa_verified: bool) -> str:
+    """给 auth realm 建好的 admin(id) 签发后台 access cookie(token_version=0,acct=admin)。"""
+    fake = SimpleNamespace(id=user_id, account_level="admin", token_version=0)
+    return create_admin_access_token(fake, mfa_verified=mfa_verified)
 
 
 class TestTestRulesService:
@@ -70,11 +59,35 @@ class TestTestRulesService:
 
 
 class TestTestRulesHttp:
+    async def _mk_admin(
+        self, db: DB, auth_db, username: str = "root"
+    ) -> int:
+        """auth realm 建 super_admin；业务 realm 授 moderation 权限点。返回其 id。"""
+        from app.modules.admin.models import RolePermission
+
+        au = await auth_user_uid(
+            auth_db,
+            username=username,
+            email=f"{username}@ex.com",
+            nickname=username,
+            account_level="admin",
+            role="super_admin",
+            with_token=False,
+        )
+        db.add(
+            RolePermission(
+                role_name="admin:super_admin",
+                permission="admin.moderation_manage",
+            )
+        )
+        await db.flush()
+        return int(au.id)
+
     async def test_requires_2fa_trusted_admin(
-        self, db: DB, client: AsyncClient
+        self, db: DB, auth_db, auth_seam_realm: None, client: AsyncClient
     ) -> None:
-        admin = await _admin(db, "root")
-        tok = create_admin_access_token(admin, mfa_verified=False)
+        admin_id = await self._mk_admin(db, auth_db)
+        tok = _admin_cookie_tok(admin_id, mfa_verified=False)
         client.cookies.set(COOKIE_NAME, tok, path=COOKIE_PATH)
         resp = await client.post(
             "/api/v1/admin/moderation/rules/test", json={"text": "hello"}
@@ -83,10 +96,12 @@ class TestTestRulesHttp:
         assert resp.status_code == 401
         assert resp.json()["code"] == 4
 
-    async def test_returns_hit_detail(self, db: DB, client: AsyncClient) -> None:
+    async def test_returns_hit_detail(
+        self, db: DB, auth_db, auth_seam_realm: None, client: AsyncClient
+    ) -> None:
         await mod_service.create_rule(db, RuleCreate(pattern="敏感", weight=0.5))
-        admin = await _admin(db, "root")
-        tok = create_admin_access_token(admin, mfa_verified=True)
+        admin_id = await self._mk_admin(db, auth_db)
+        tok = _admin_cookie_tok(admin_id, mfa_verified=True)
         client.cookies.set(COOKIE_NAME, tok, path=COOKIE_PATH)
         resp = await client.post(
             "/api/v1/admin/moderation/rules/test", json={"text": "本段含敏感字"}

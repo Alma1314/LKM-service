@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 
-from sqlalchemy import Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, UTCDateTime, now_iso  # 注意 db.base 而非 db.models
@@ -12,9 +12,7 @@ class StarHopeQuestion(Base):
     __tablename__: str = "starhope_questions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
-    )
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     type: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     options: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -38,9 +36,7 @@ class StarHopeFolder(Base):
     __tablename__: str = "starhope_folders"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
-    )
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     parent_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     sort: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -59,9 +55,7 @@ class StarHopePracticeSession(Base):
     __tablename__: str = "starhope_practice_sessions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
-    )
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     type: Mapped[str] = mapped_column(String(20), nullable=False)
     mode: Mapped[str] = mapped_column(String(20), nullable=False)
     question_ids: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
@@ -91,9 +85,7 @@ class StarHopeAiAgent(Base):
     __tablename__: str = "starhope_ai_agents"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
-    )
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     avatar: Mapped[str | None] = mapped_column(Text, nullable=True)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -15,24 +15,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base, UTCDateTime, now_iso
-
-if TYPE_CHECKING:
-    # 跨模块字符串 relationship 目标类型（运行时由 registry 解析，仅类型注解用）
-    from app.modules.blog.models import BlogSeries
-    from app.modules.content.models import (
-        Column,
-        ColumnApplication,
-        ColumnPost,
-        ContentComment,
-        ContentItem,
-    )
-    from app.modules.exam.models import ExamAttempt, ExamCertificate
-    from app.modules.feed.models import BoardFollow, UserFollow
-    from app.modules.files.models import LibraryFile
+from app.db.auth_base import AuthBase
+from app.db.base import UTCDateTime, now_iso
 
 
-class RefreshToken(Base):
+class RefreshToken(AuthBase):
     __tablename__: str = "refresh_tokens"
     __table_args__: tuple[Any, ...] = (
         Index("ix_refresh_tokens_user_revoked", "user_id", "revoked_at"),
@@ -59,7 +46,7 @@ class RefreshToken(Base):
     user: Mapped[User] = relationship(back_populates="refresh_tokens")
 
 
-class EmailVerification(Base):
+class EmailVerification(AuthBase):
     __tablename__: str = "email_verifications"
     __table_args__: tuple[Any, ...] = (
         Index(
@@ -80,7 +67,7 @@ class EmailVerification(Base):
     )
 
 
-class PhoneVerification(Base):
+class PhoneVerification(AuthBase):
     __tablename__: str = "phone_verifications"
     __table_args__: tuple[Any, ...] = (
         Index(
@@ -101,7 +88,7 @@ class PhoneVerification(Base):
     )
 
 
-class MagicLink(Base):
+class MagicLink(AuthBase):
     __tablename__: str = "magic_links"
     __table_args__: tuple[Any, ...] = (
         Index("ix_magic_links_hash_purpose", "token_hash", "purpose"),
@@ -118,7 +105,7 @@ class MagicLink(Base):
     )
 
 
-class UserOAuth(Base):
+class UserOAuth(AuthBase):
     __tablename__: str = "user_oauths"
     __table_args__: tuple[Any, ...] = (
         UniqueConstraint("provider", "provider_user_id", name="uq_oauth_provider_user"),
@@ -138,7 +125,7 @@ class UserOAuth(Base):
     user: Mapped[User] = relationship(back_populates="oauth_bindings")
 
 
-class TOTP(Base):
+class TOTP(AuthBase):
     __tablename__: str = "totp"
 
     user_id: Mapped[int] = mapped_column(
@@ -158,7 +145,7 @@ class TOTP(Base):
     user: Mapped[User] = relationship(back_populates="totp")
 
 
-class RecoveryCode(Base):
+class RecoveryCode(AuthBase):
     __tablename__: str = "recovery_codes"
     __table_args__: tuple[Any, ...] = (
         Index("ix_recovery_codes_user_hash", "user_id", "code_hash"),
@@ -178,7 +165,7 @@ class RecoveryCode(Base):
     user: Mapped[User] = relationship(back_populates="recovery_codes")
 
 
-class TempTokenUsage(Base):
+class TempTokenUsage(AuthBase):
     """跟踪用于 2FA 验证的一次性临时令牌。"""
 
     __tablename__: str = "temp_token_usages"
@@ -196,7 +183,7 @@ class TempTokenUsage(Base):
     )
 
 
-class SetupTransaction(Base):
+class SetupTransaction(AuthBase):
     """绑定到设置临时令牌的一次性 TOTP 设置事务。"""
 
     __tablename__: str = "setup_transactions"
@@ -213,7 +200,7 @@ class SetupTransaction(Base):
     )
 
 
-class PendingRegistration(Base):
+class PendingRegistration(AuthBase):
     """存储待处理的普通注册数据，直到联系方式被验证。"""
 
     __tablename__: str = "pending_registrations"
@@ -231,7 +218,7 @@ class PendingRegistration(Base):
     )
 
 
-class RecoveryTransaction(Base):
+class RecoveryTransaction(AuthBase):
     """专用的管理员密码恢复事务，支持双重验证。"""
 
     __tablename__: str = "recovery_transactions"
@@ -269,7 +256,7 @@ class RecoveryTransaction(Base):
     )
 
 
-class PasskeyCredential(Base):
+class PasskeyCredential(AuthBase):
     __tablename__: str = "passkey_credentials"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -287,7 +274,7 @@ class PasskeyCredential(Base):
     user: Mapped[User] = relationship(back_populates="passkey_credentials")
 
 
-class AuditLog(Base):
+class AuditLog(AuthBase):
     __tablename__: str = "audit_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -302,7 +289,7 @@ class AuditLog(Base):
     )
 
 
-class PasskeyChallenge(Base):
+class PasskeyChallenge(AuthBase):
     """WebAuthn 挑战码，跨 worker 共享，过期自动失效。"""
 
     __tablename__: str = "passkey_challenges"
@@ -317,7 +304,7 @@ class PasskeyChallenge(Base):
     )
 
 
-class OAuthState(Base):
+class OAuthState(AuthBase):
     """临时的 OAuth 状态令牌，用于 CSRF 保护。"""
 
     __tablename__: str = "oauth_states"
@@ -337,7 +324,7 @@ class OAuthState(Base):
     )
 
 
-class OnboardingProgress(Base):
+class OnboardingProgress(AuthBase):
     """注册后四步引导向导的分步持久化进度（每用户一行）。
 
     ``data`` 为以步骤号为 key 的分步合并数据，如 ``{1: {...}, 2: {...}}``。
@@ -360,7 +347,7 @@ class OnboardingProgress(Base):
     )
 
 
-class User(Base):
+class User(AuthBase):
     __tablename__: str = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -389,11 +376,6 @@ class User(Base):
     profile: Mapped[Profile] = relationship(
         back_populates="user", uselist=False, cascade="all, delete-orphan"
     )
-    column_applications: Mapped[list[ColumnApplication]] = relationship(
-        back_populates="user", foreign_keys="ColumnApplication.user_id"
-    )
-    owned_columns: Mapped[list[Column]] = relationship(back_populates="owner")
-    posts: Mapped[list[ColumnPost]] = relationship(back_populates="author")
     refresh_tokens: Mapped[list[RefreshToken]] = relationship(back_populates="user")
     oauth_bindings: Mapped[list[UserOAuth]] = relationship(back_populates="user")
     totp: Mapped[TOTP | None] = relationship(back_populates="user", uselist=False)
@@ -401,34 +383,9 @@ class User(Base):
     passkey_credentials: Mapped[list[PasskeyCredential]] = relationship(
         back_populates="user"
     )
-    blog_series: Mapped[list[BlogSeries]] = relationship(back_populates="owner")
-    content_items: Mapped[list[ContentItem]] = relationship(
-        back_populates="author", foreign_keys="ContentItem.author_id"
-    )
-    content_comments: Mapped[list[ContentComment]] = relationship(back_populates="user")
-    uploaded_files: Mapped[list[LibraryFile]] = relationship(back_populates="uploader")
-    exam_attempts: Mapped[list[ExamAttempt]] = relationship(back_populates="user")
-    exam_certificates: Mapped[list[ExamCertificate]] = relationship(
-        back_populates="user"
-    )
-    following: Mapped[list[UserFollow]] = relationship(
-        back_populates="follower",
-        foreign_keys="UserFollow.follower_id",
-        cascade="all, delete-orphan",
-    )
-    followers: Mapped[list[UserFollow]] = relationship(
-        back_populates="following",
-        foreign_keys="UserFollow.following_id",
-        cascade="all, delete-orphan",
-    )
-    board_follows: Mapped[list[BoardFollow]] = relationship(
-        back_populates="follower",
-        foreign_keys="BoardFollow.follower_id",
-        cascade="all, delete-orphan",
-    )
 
 
-class Profile(Base):
+class Profile(AuthBase):
     __tablename__: str = "profiles"
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)

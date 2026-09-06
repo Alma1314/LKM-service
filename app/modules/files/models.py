@@ -2,15 +2,11 @@ from __future__ import annotations
 
 import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, UTCDateTime, now_iso
-
-if TYPE_CHECKING:
-    from app.modules.auth.models import User
 
 
 class FileStatus(StrEnum):
@@ -48,7 +44,7 @@ class LibraryFile(Base):
     __tablename__: str = "library_files"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    uploader_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    uploader_id: Mapped[int] = mapped_column(Integer, nullable=False)  # S5: auth user_id
     original_name: Mapped[str] = mapped_column(String(255), nullable=False)
     stored_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     # 内容寻址哈希（SHA3-256，16 进制 64 字符）
@@ -72,5 +68,3 @@ class LibraryFile(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
     )
-
-    uploader: Mapped[User] = relationship(back_populates="uploaded_files")

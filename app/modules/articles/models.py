@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 import datetime
-from typing import TYPE_CHECKING
 
 from sqlalchemy import ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, UTCDateTime, now_iso
-
-if TYPE_CHECKING:
-    from app.modules.auth.models import User
 
 
 class ArticleCategory(Base):
@@ -85,9 +81,7 @@ class ArticleComment(Base):
     article_id: Mapped[int] = mapped_column(
         ForeignKey("articles.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
-    )
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     parent_id: Mapped[int | None] = mapped_column(
         ForeignKey("article_comments.id"), nullable=True
@@ -100,7 +94,6 @@ class ArticleComment(Base):
     )
 
     article: Mapped[Article] = relationship(back_populates="comment_records")
-    user: Mapped[User] = relationship()
     parent: Mapped[ArticleComment | None] = relationship(
         remote_side=[id], back_populates="replies"
     )
@@ -117,13 +110,12 @@ class ArticleLike(Base):
     article_id: Mapped[int] = mapped_column(
         ForeignKey("articles.id", ondelete="CASCADE"), primary_key=True
     )
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
     )
 
     article: Mapped[Article] = relationship(back_populates="like_records")
-    user: Mapped[User] = relationship()
 
 
 class Tag(Base):

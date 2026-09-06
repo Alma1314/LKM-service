@@ -3,39 +3,43 @@
 由 forum 测试迁移（test_boards_forum / test_forum_rbac）承接，URL/权限点/字段对齐
 content 端点（/api/v1/content/items）与 content schema（discussion 发帖不带专栏）。
 
-覆盖：
-- normal 用户发帖需 content.create 权限点
-- local 用户无 content.create → 403
-- require_certified 板块未通过通识考试发帖 → CERTIFICATION_REQUIRED
-- 删除他人内容项 → 403（check_owner/content.owner_delete）
-- 删除自建内容项 → 200
+拆库后业务库(Base 无 users)不再有 User/Profile：任一走 HTTP 鉴权 / 认证判定 / 属主
+裁决 / 展示读的用例注入 ``auth_db``+``auth_seam_realm``：
+- ``_mk_au(auth_db,...)`` 建 auth realm 用户返回稳定 ``AuthUser(id/token)``；
+- ``_h(au)`` 用 AuthUser.token 作 Web Bearer（claim 已含该用户 account_level/role）；
+- 业务内容项/考试/认证行（author_id/owner_id/user_id）只写 auth realm 的裸 int .id；
+- 权限点 RolePermission + Exam/ExamCertificate 仍落业务 realm(Base, 符合生产)。
 """
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import CommonErr
 from app.modules.admin.models import RolePermission
-from app.modules.auth.models import Profile, User
-from app.modules.auth.security import create_access_token
 from app.modules.content.boards.errors import BoardErr
 from app.modules.content.models import Board
 from app.modules.exam.models import Exam, ExamCertificate
-from tests.conftest import DB, Client
+from tests.conftest import DB, AuthUser, Client, auth_user_uid
 
 
-async def _mk_user(
-    db: DB, uname: str, level: str = "normal", role: str = "member"
-) -> User:
-    user = User(
+async def _mk_au(
+    auth_db: AsyncSession,
+    uname: str,
+    account_level: str = "normal",
+    role: str = "member",
+) -> AuthUser:
+    """在 auth realm 建一线用户并返回其稳定 AuthUser(id/username/account_level/token)。"""
+    return await auth_user_uid(
+        auth_db,
         username=uname,
-        account_level=level,
-        hashed_password="content-rbac-test-placeholder-not-a-real-hash",
+        nickname=uname,
+        account_level=account_level,
+        role=role,
     )
-    db.add(user)
-    await db.flush()
-    db.add(Profile(user_id=user.id, role=role, nickname=uname))
-    await db.flush()
-    return user
+
+
+def _h(au: AuthUser) -> dict[str, str]:
+    return {"Authorization": f"Bearer {au.token}"}
 
 
 async def _mk_board(db: DB, *, owner_id: int | None = None) -> int:
@@ -57,20 +61,30 @@ async def _seed_perm(db: DB, role: str, permission: str) -> None:
         await db.flush()
 
 
-def _headers(user: User, role: str = "member") -> dict[str, str]:
-    tok = create_access_token(
-        user_id=user.id, account_level=user.account_level, role=role
+async def _certified_user(auth_db: AsyncSession, cert_db: DB, uname: str) -> AuthUser:
+    """建 auth realm 用户 + 在业务 realm 给 TA 一张通识课通过证书(裸 int user_id)。"""
+    u = await _mk_au(auth_db, uname)
+    exam = Exam(type="exam", title="初级", unlock_level="normal")
+    cert_db.add(exam)
+    await cert_db.flush()
+    cert_db.add(
+        ExamCertificate(
+            user_id=u.id, exam_id=exam.id, passed=True, cert_no=f"CERT-C-{uname}"
+        )
     )
-    return {"Authorization": f"Bearer {tok}"}
+    await cert_db.flush()
+    return u
 
 
-async def test_normal_can_post(db: DB, client: Client) -> None:
+async def test_normal_can_post(
+    db: DB, client: Client, auth_db: AsyncSession, auth_seam_realm: None
+) -> None:
     await _seed_perm(db, "normal:member", "content.create")
     board = await _mk_board(db)
-    user = await _mk_user(db, "nomo", level="normal", role="member")
+    user = await _mk_au(auth_db, "nomo", account_level="normal", role="member")
     r = await client.post(
         "/api/v1/content/items",
-        headers=_headers(user),
+        headers=_h(user),
         json={"board_id": board, "title": "t", "content": "c"},
     )
     assert r.status_code == 200
@@ -79,22 +93,26 @@ async def test_normal_can_post(db: DB, client: Client) -> None:
     assert r.json()["data"]["content_type"] == "discussion"
 
 
-async def test_local_cannot_post(db: DB, client: Client) -> None:
+async def test_local_cannot_post(
+    db: DB, client: Client, auth_db: AsyncSession, auth_seam_realm: None
+) -> None:
     await _seed_perm(db, "normal:member", "content.create")
     board = await _mk_board(db)
-    user = await _mk_user(db, "local_u", level="local", role="member")
+    user = await _mk_au(auth_db, "local_u", account_level="local", role="member")
     r = await client.post(
         "/api/v1/content/items",
-        headers=_headers(user),
+        headers=_h(user),
         json={"board_id": board, "title": "t", "content": "c"},
     )
     assert r.status_code == 403
 
 
-async def test_uncertified_blocked_on_certified_board(db: DB, client: Client) -> None:
+async def test_uncertified_blocked_on_certified_board(
+    db: DB, client: Client, auth_db: AsyncSession, auth_seam_realm: None
+) -> None:
     """require_certified 板块 + 未通过通识考试用户发帖 → CERTIFICATION_REQUIRED。"""
     await _seed_perm(db, "normal:member", "content.create")
-    owner = await _mk_user(db, "owner", role="member")
+    owner = await _mk_au(auth_db, "owner", role="member")
     board = Board(
         slug="cert",
         title="C",
@@ -104,11 +122,11 @@ async def test_uncertified_blocked_on_certified_board(db: DB, client: Client) ->
     )
     db.add(board)
     await db.flush()
-    novice = await _mk_user(db, "novice", role="member")
+    novice = await _mk_au(auth_db, "novice", role="member")
 
     r = await client.post(
         "/api/v1/content/items",
-        headers=_headers(novice),
+        headers=_h(novice),
         json={"board_id": int(board.id), "title": "t", "content": "c"},
     )
 
@@ -116,10 +134,12 @@ async def test_uncertified_blocked_on_certified_board(db: DB, client: Client) ->
     assert r.json()["code"] == BoardErr.CERTIFICATION_REQUIRED
 
 
-async def test_certified_allowed_on_certified_board(db: DB, client: Client) -> None:
+async def test_certified_allowed_on_certified_board(
+    db: DB, client: Client, auth_db: AsyncSession, auth_seam_realm: None
+) -> None:
     """通过通识考试的用户可在 require_certified 板块发帖。"""
     await _seed_perm(db, "normal:member", "content.create")
-    owner = await _mk_user(db, "owner", role="member")
+    owner = await _mk_au(auth_db, "owner2", role="member")
     board = Board(
         slug="cert2",
         title="C2",
@@ -129,20 +149,11 @@ async def test_certified_allowed_on_certified_board(db: DB, client: Client) -> N
     )
     db.add(board)
     await db.flush()
-    cert_user = await _mk_user(db, "certified", role="member")
-    exam = Exam(type="exam", title="初级", unlock_level="normal")
-    db.add(exam)
-    await db.flush()
-    db.add(
-        ExamCertificate(
-            user_id=cert_user.id, exam_id=exam.id, passed=True, cert_no="CERT-C-1"
-        )
-    )
-    await db.flush()
+    cert_user = await _certified_user(auth_db, db, "certified")
 
     r = await client.post(
         "/api/v1/content/items",
-        headers=_headers(cert_user),
+        headers=_h(cert_user),
         json={"board_id": int(board.id), "title": "t", "content": "c"},
     )
 
@@ -150,31 +161,35 @@ async def test_certified_allowed_on_certified_board(db: DB, client: Client) -> N
     assert r.json()["code"] == 0
 
 
-async def test_foreign_cannot_delete(db: DB, client: Client) -> None:
+async def test_foreign_cannot_delete(
+    db: DB, client: Client, auth_db: AsyncSession, auth_seam_realm: None
+) -> None:
     await _seed_perm(db, "normal:member", "content.create")
     board = await _mk_board(db)
-    a = await _mk_user(db, "fred", role="member")
-    b = await _mk_user(db, "alice", role="member")
+    a = await _mk_au(auth_db, "fred", role="member")
+    b = await _mk_au(auth_db, "alice", role="member")
     rp = await client.post(
         "/api/v1/content/items",
-        headers=_headers(a),
+        headers=_h(a),
         json={"board_id": board, "title": "t", "content": "c"},
     )
     item_id = rp.json()["data"]["id"]
-    r = await client.delete(f"/api/v1/content/items/{item_id}", headers=_headers(b))
+    r = await client.delete(f"/api/v1/content/items/{item_id}", headers=_h(b))
     assert r.status_code == 403
     assert r.json()["code"] == CommonErr.FORBIDDEN
 
 
-async def test_owner_can_delete(db: DB, client: Client) -> None:
+async def test_owner_can_delete(
+    db: DB, client: Client, auth_db: AsyncSession, auth_seam_realm: None
+) -> None:
     await _seed_perm(db, "normal:member", "content.create")
     board = await _mk_board(db)
-    a = await _mk_user(db, "owner_u", role="member")
+    a = await _mk_au(auth_db, "owner_u", role="member")
     rp = await client.post(
         "/api/v1/content/items",
-        headers=_headers(a),
+        headers=_h(a),
         json={"board_id": board, "title": "t", "content": "c"},
     )
     item_id = rp.json()["data"]["id"]
-    r = await client.delete(f"/api/v1/content/items/{item_id}", headers=_headers(a))
+    r = await client.delete(f"/api/v1/content/items/{item_id}", headers=_h(a))
     assert r.status_code == 200

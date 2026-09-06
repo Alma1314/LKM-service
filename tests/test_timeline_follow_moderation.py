@@ -1,5 +1,10 @@
 """follow 关注 + 时间线 read-time 合流 + 自动审校降权 集成测试。
 
+拆库(M3.B S5 dual 真 PG)：关注/内容作者 user_id 均为引用 auth realm 用户的裸 int(business 无
+users)。建用户走 auth_user_uid(auth_db) 取 id；follow 目标存在(follow_user 单读)/时间线作者名
+(get_timeline→_fill_authors 批读)均经 auth snapshot 缝，故本域用例逐测显式开 ``auth_seam_realm``
+把缝指到本测 auth_db 真值(seam 关则回落就地 select(User)打已拆走的业务 users)。
+
 覆盖：
 - follow_user/unfollow_user 幂等、软删墓碑、不能关注自己
 - get_following_ids / get_followed_board_ids（redis fail-open 下直接落库，功能正确）
@@ -16,28 +21,30 @@ from app.modules.admin.moderation import service as mod_service
 from app.modules.admin.moderation.engine import Rule, evaluate, load_active_rules
 from app.modules.admin.moderation.schemas import RuleCreate, RuleUpdate
 from app.modules.articles.models import Article, ArticleCategory
-from app.modules.auth.models import Profile, User
-from app.modules.auth.security import hashpwd
 from app.modules.content.boards.schemas import BoardCreate
 from app.modules.content.boards.service import create_board_ex
 from app.modules.content.models import ContentItem
 from app.modules.feed import service as follow_service
 from app.modules.feed.models import UserFollow
 from app.modules.feed.service import get_timeline
+from tests.conftest import auth_user_uid
 
 
-async def _user(db: AsyncSession, username: str) -> int:
-    user = User(
-        username=username,
-        email=f"{username}@ex.com",
-        hashed_password=await hashpwd("secret123456"),
-        account_level="normal",
+async def _user(auth_db: AsyncSession, username: str) -> int:
+    """在 auth realm(business 无 users) 建 normal/member 用户，返回裸 int user_id。"""
+    return int(
+        (
+            await auth_user_uid(
+                auth_db,
+                username=username,
+                email=f"{username}@ex.com",
+                nickname=username,
+                account_level="normal",
+                role="member",
+                with_token=False,
+            )
+        ).id
     )
-    db.add(user)
-    await db.flush()
-    db.add(Profile(user_id=user.id, nickname=username))
-    await db.flush()
-    return user.id
 
 
 async def _board(db: AsyncSession, slug: str) -> int:
@@ -98,18 +105,22 @@ async def _blog_item(
 
 
 class TestFollow:
-    async def test_follow_idempotent_and_list(self, db: AsyncSession) -> None:
-        a = await _user(db, "alice")
-        b = await _user(db, "bob")
+    async def test_follow_idempotent_and_list(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ) -> None:
+        a = await _user(auth_db, "alice")
+        b = await _user(auth_db, "bob")
         await follow_service.follow_user(db, a, b)
         # 重复关注幂等 → 仍只有一条活动关注
         await follow_service.follow_user(db, a, b)
         ids = await follow_service.get_following_ids(db, a)
         assert ids == [b]
 
-    async def test_unfollow_soft_delete(self, db: AsyncSession) -> None:
-        a = await _user(db, "alice")
-        b = await _user(db, "bob")
+    async def test_unfollow_soft_delete(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ) -> None:
+        a = await _user(auth_db, "alice")
+        b = await _user(auth_db, "bob")
         await follow_service.follow_user(db, a, b)
         await follow_service.unfollow_user(db, a, b)
         assert await follow_service.get_following_ids(db, a) == []
@@ -117,8 +128,10 @@ class TestFollow:
         await follow_service.follow_user(db, a, b)
         assert await follow_service.get_following_ids(db, a) == [b]
 
-    async def test_cannot_follow_self(self, db: AsyncSession) -> None:
-        a = await _user(db, "alice")
+    async def test_cannot_follow_self(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ) -> None:
+        a = await _user(auth_db, "alice")
         try:
             await follow_service.follow_user(db, a, a)
         except Exception as e:
@@ -126,9 +139,11 @@ class TestFollow:
         else:
             raise AssertionError("应拒绝关注自己")
 
-    async def test_follow_unfollow_then_refollow_no_dup(self, db: AsyncSession) -> None:
-        a = await _user(db, "alice")
-        b = await _user(db, "bob")
+    async def test_follow_unfollow_then_refollow_no_dup(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ) -> None:
+        a = await _user(auth_db, "alice")
+        b = await _user(auth_db, "bob")
         for _ in range(3):
             await follow_service.follow_user(db, a, b)
             await follow_service.unfollow_user(db, a, b)
@@ -139,8 +154,10 @@ class TestFollow:
 
 
 class TestTimeline:
-    async def test_hot_merges_sources(self, db: AsyncSession) -> None:
-        author = await _user(db, "alice")
+    async def test_hot_merges_sources(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ) -> None:
+        author = await _user(auth_db, "alice")
         board = await _board(db, "tech")
         await _forum_post(db, author, board, "hot帖")
         await _article(db, "art1", "hot文章")
@@ -150,9 +167,11 @@ class TestTimeline:
         assert "discussion" in types
         assert "article" in types
 
-    async def test_hot_includes_blog_post(self, db: AsyncSession) -> None:
+    async def test_hot_includes_blog_post(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ) -> None:
         """博客发布产物（content_items/blog_post）应进入 hot 流（无分表源覆盖）。"""
-        author = await _user(db, "bob")
+        author = await _user(auth_db, "bob")
         board = await _board(db, "blog")
         await _blog_item(db, author, board, "博客发布")
 
@@ -160,11 +179,13 @@ class TestTimeline:
         blogs = [it for it in feed.items if it.item_type == "blog"]
         assert any(it.title == "博客发布" for it in blogs)
 
-    async def test_follow_filters_blog_by_author(self, db: AsyncSession) -> None:
+    async def test_follow_filters_blog_by_author(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ) -> None:
         """blog_post 在 follow 模式按关注作者过滤。"""
-        me = await _user(db, "me")
-        friend = await _user(db, "friend")
-        stranger = await _user(db, "stranger")
+        me = await _user(auth_db, "me")
+        friend = await _user(auth_db, "friend")
+        stranger = await _user(auth_db, "stranger")
         board = await _board(db, "blog")
         await _blog_item(db, friend, board, "关注人的博客")
         await _blog_item(db, stranger, board, "陌生人的博客")
@@ -175,10 +196,12 @@ class TestTimeline:
         assert "关注人的博客" in blogs
         assert "陌生人的博客" not in blogs
 
-    async def test_follow_filters_by_author(self, db: AsyncSession) -> None:
-        me = await _user(db, "me")
-        friend = await _user(db, "friend")
-        stranger = await _user(db, "stranger")
+    async def test_follow_filters_by_author(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ) -> None:
+        me = await _user(auth_db, "me")
+        friend = await _user(auth_db, "friend")
+        stranger = await _user(auth_db, "stranger")
         board = await _board(db, "tech")
         await _forum_post(db, friend, board, "关注的人帖")
         await _forum_post(db, stranger, board, "陌生人的帖")
@@ -189,9 +212,11 @@ class TestTimeline:
         assert "关注的人帖" in titles
         assert "陌生人的帖" not in titles
 
-    async def test_follow_filters_by_board(self, db: AsyncSession) -> None:
-        me = await _user(db, "me")
-        author = await _user(db, "author")
+    async def test_follow_filters_by_board(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ) -> None:
+        me = await _user(auth_db, "me")
+        author = await _user(auth_db, "author")
         b1 = await _board(db, "tech")
         b2 = await _board(db, "nontech")
         await _forum_post(db, author, b1, "已关注版块的帖")
@@ -203,16 +228,20 @@ class TestTimeline:
         assert "已关注版块的帖" in titles
         assert "未关注版块的帖" not in titles
 
-    async def test_follow_no_empty_early(self, db: AsyncSession) -> None:
+    async def test_follow_no_empty_early(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ) -> None:
         """关注为空时按计划直接返回空流（不查空 IN）。"""
-        me = await _user(db, "me")
+        me = await _user(auth_db, "me")
         feed = await get_timeline(db, user_id=me, mode="follow", cursor=None, limit=20)
         assert feed.items == []
 
-    async def test_article_hidden_from_follow(self, db: AsyncSession) -> None:
+    async def test_article_hidden_from_follow(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ) -> None:
         """Article 无作者外键：follow 模式不出现。"""
-        me = await _user(db, "me")
-        friend = await _user(db, "friend")
+        me = await _user(auth_db, "me")
+        friend = await _user(auth_db, "friend")
         board = await _board(db, "tech")
         await _forum_post(db, friend, board, "帖")
         await _article(db, "artX", "文章")
@@ -231,9 +260,11 @@ class TestModeration:
         assert res_derank.should_hide is False
         assert res_derank.penalty == pytest.approx(0.6)
 
-    async def test_hide_removes_from_feed(self, db: AsyncSession) -> None:
+    async def test_hide_removes_from_feed(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ) -> None:
         await mod_service.create_rule(db, RuleCreate(pattern="违禁词", action="hide"))
-        author = await _user(db, "alice")
+        author = await _user(auth_db, "alice")
         board = await _board(db, "tech")
         await _forum_post(db, author, board, "正常标题")
         await _forum_post(db, author, board, "含违禁词标题")
@@ -244,11 +275,13 @@ class TestModeration:
         assert "正常标题" in titles
         assert "含违禁词标题" not in titles
 
-    async def test_derank_lowers_score(self, db: AsyncSession) -> None:
+    async def test_derank_lowers_score(
+        self, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
+    ) -> None:
         await mod_service.create_rule(
             db, RuleCreate(pattern="敏感", action="derank", weight=0.8)
         )
-        author = await _user(db, "alice")
+        author = await _user(auth_db, "alice")
         board = await _board(db, "tech")
         await _forum_post(db, author, board, "普通标题")
         await _forum_post(db, author, board, "敏感标题")

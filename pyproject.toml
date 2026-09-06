@@ -219,6 +219,7 @@ ignore_imports = [
     "app.modules.projects.service -> app.modules.auth.snapshot",
     "app.modules.blog.service -> app.modules.auth.snapshot",
     "app.modules.articles.service -> app.modules.auth.snapshot",
+    "app.modules.points.service -> app.modules.auth.snapshot",
     # ② routers → auth.deps / auth.auth_router 内部再验证 security·service_* / schemas ProfileInfo DTO：
     "app.modules.content.boards.router -> app.modules.auth.deps",
     "app.modules.content.columns.router -> app.modules.auth.deps",
@@ -269,12 +270,12 @@ ignore_imports = [
     "app.modules.points.seed -> app.modules.auth.models",
     "app.modules.admin.seed -> app.modules.auth.models",
     "app.modules.admin.models -> app.modules.auth.models",
-    # ④ 行为/结构锁定直读 auth.models 的**不可缝迁移例外**：points 积分榜 fused 昵称排序键
-    # （DB 侧 join sort 不可经展示快照迁移，保持直读）；blog/git_http 凭证直读(hashed_password +
+    # ④ 行为/结构锁定直读 auth.models 的**不可缝迁移例外**：blog/git_http 凭证直读(hashed_password +
     # verifypwd，快照缝不含凭证列)。S4 已把 feed/content/exam/projects 的身份存在检查/account_level
-    # 判给 auth.snapshot ① 缝；故其不再 import auth.models。
+    # 判给 auth.snapshot ① 缝；故其不再 import auth.models。points 积分榜 M3.B S5（A段）已由 fused
+    # ``select(User,Profile)`` 服务端 join 收编为业务 points 表取 raw+snapshot 批读组合（python 排序
+    # 保序），故 points.service 亦不再直读 auth.models（改走 ① 的 auth.snapshot）。
     "app.modules.blog.git_http -> app.modules.auth.models",
-    "app.modules.points.service -> app.modules.auth.models",
     # ⑤ admin 治理/授权面 的 router·deps 对 User 直读(admin 管理 + 会话 User 复用 + list_users 治理读 auth.models/User)：
     "app.modules.admin.auth_router -> app.modules.auth.models",
     "app.modules.admin.users_router -> app.modules.auth.models",

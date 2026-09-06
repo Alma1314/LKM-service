@@ -11,8 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.err import BizError
-from app.modules.auth.models import Profile, User
-from app.modules.auth.security import create_access_token, hashpwd
+from app.modules.auth.security import create_access_token
 from app.modules.points.errors import PointsErr
 from app.modules.points.models import (
     Achievement,
@@ -37,21 +36,29 @@ from app.modules.points.service import (
     list_exchange_items,
     list_tasks,
 )
+from tests.conftest import auth_user_uid
 
 
-async def _create_user(db: AsyncSession, username: str, nickname: str = "") -> User:
-    user = User(
-        username=username,
-        email=f"{username}@example.com",
-        hashed_password=await hashpwd("secret123456"),
+async def _create_user(
+    db: AsyncSession,
+    auth_db: AsyncSession,
+    username: str,
+    nickname: str = "",
+) -> int:
+    """在 auth realm 建用户返其裸 int id，并在业务 points 表建 balance=0 行。"""
+    uid = int(
+        (
+            await auth_user_uid(
+                auth_db,
+                username=username,
+                email=f"{username}@example.com",
+                nickname=nickname or None,
+            )
+        ).id
     )
-    db.add(user)
+    db.add(UserBalance(user_id=uid, balance=0))
     await db.flush()
-    if nickname:
-        db.add(Profile(user_id=user.id, nickname=nickname))
-    db.add(UserBalance(user_id=user.id, balance=0))
-    await db.flush()
-    return user
+    return uid
 
 
 async def _mk_ledger(db: AsyncSession, user_id: int, deltas: list[int]) -> None:
@@ -92,13 +99,12 @@ async def test_seed_yields_nonempty_lists(db: AsyncSession) -> None:
     assert items[0].name_key.startswith("contributionData.exchangeItems.e")
 
 
-async def test_leaderboard_total_sort_and_title(db: AsyncSession) -> None:
+async def test_leaderboard_total_sort_and_title(db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None) -> None:
     """total 按 UserBalance 余额降序，且每项带 title（默认 active）。"""
     await seed_achievements(db)
     await db.commit()
-    u_low = await _create_user(db, "money_low", "低")
-    low_id = u_low.id
-    await _create_user(db, "money_high", "高")
+    low_id = await _create_user(db, auth_db, "money_low", "低")
+    await _create_user(db, auth_db, "money_high", "高")
     (await db.get(UserBalance, low_id)).balance = 10
     await db.flush()
 
@@ -109,13 +115,11 @@ async def test_leaderboard_total_sort_and_title(db: AsyncSession) -> None:
     assert all(entry.balance >= 0 for entry in rows)
 
 
-async def test_leaderboard_daily_weekly_aggregate(db: AsyncSession) -> None:
+async def test_leaderboard_daily_weekly_aggregate(db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None) -> None:
     """daily 近 24h / weekly 近 7 天按 points_ledger.delta>0 汇总降序。"""
-    u_a = await _create_user(db, "agg_a", "A")
-    a_id = u_a.id
-    u_b = await _create_user(db, "agg_b", "B")
-    b_id = u_b.id
-    await _create_user(db, "agg_c", "C")
+    a_id = await _create_user(db, auth_db, "agg_a", "A")
+    b_id = await _create_user(db, auth_db, "agg_b", "B")
+    await _create_user(db, auth_db, "agg_c", "C")
     # A 近窗口 +30，B 近窗口 +10，C 无流水（不出现在 daily/weekly 榜）
     await _mk_ledger(db, a_id, [20, 10])
     await _mk_ledger(db, b_id, [10])
@@ -138,11 +142,10 @@ async def test_leaderboard_invalid_period(db: AsyncSession) -> None:
     assert exc.value.errcode == PointsErr.INVALID_PERIOD
 
 
-async def test_leaderboard_daily_filters_stale_ledger(db: AsyncSession) -> None:
+async def test_leaderboard_daily_filters_stale_ledger(db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None) -> None:
     """超出 daily 窗口（长期无流水）的余额用户不进 daily 榜。"""
-    u_old = await _create_user(db, "old_user", "老")
-    old_id = u_old.id
-    await _create_user(db, "new_user", "新")
+    old_id = await _create_user(db, auth_db, "old_user", "老")
+    await _create_user(db, auth_db, "new_user", "新")
     (await db.get(UserBalance, old_id)).balance = 500
     # 老用户一条很久前的流水（超出 7 天窗口）
     old_at = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=30)
@@ -166,12 +169,11 @@ async def test_leaderboard_daily_filters_stale_ledger(db: AsyncSession) -> None:
     assert all(r.user_id != old_id for r in weekly)
 
 
-async def test_leaderboard_title_hardcore(db: AsyncSession) -> None:
+async def test_leaderboard_title_hardcore(db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None) -> None:
     """解锁 a7（accepted_answers）→ title hardcore。"""
     await seed_achievements(db)
     await db.commit()
-    u = await _create_user(db, "answer_master", "大神")
-    uid = u.id
+    uid = await _create_user(db, auth_db, "answer_master", "大神")
     (await db.get(UserBalance, uid)).balance = 50
     a7 = (
         (await db.execute(select(Achievement).where(Achievement.key == "a7")))
@@ -188,18 +190,15 @@ async def test_leaderboard_title_hardcore(db: AsyncSession) -> None:
     assert entry.title == "hardcore"
 
 
-async def test_leaderboard_title_batch_priority(db: AsyncSession) -> None:
+async def test_leaderboard_title_batch_priority(db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None) -> None:
     """批量 title：多用户各按已解锁成就合成，且同用户多成就按优先级取更高级。"""
     await seed_achievements(db)
     await db.commit()
     # 用户 A 仅解锁 a7 → hardcore；用户 B 仅解锁 a8 → fileExpert
-    u_a = await _create_user(db, "batch_a", "甲")
-    a_id = u_a.id
-    u_b = await _create_user(db, "batch_b", "乙")
-    b_id = u_b.id
+    a_id = await _create_user(db, auth_db, "batch_a", "甲")
+    b_id = await _create_user(db, auth_db, "batch_b", "乙")
     # 用户 C 同时解锁 a7+a8 → 仍为 higher 优先级 hardcore
-    u_c = await _create_user(db, "batch_c", "丙")
-    c_id = u_c.id
+    c_id = await _create_user(db, auth_db, "batch_c", "丙")
     for uid in (a_id, b_id, c_id):
         (await db.get(UserBalance, uid)).balance = 100
     a7 = (
@@ -281,12 +280,11 @@ async def test_endpoint_achievements_and_tasks_require_auth(
 
 
 async def test_endpoint_achievements_returns_progress_when_authed(
-    client, db: AsyncSession
+    client, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None
 ) -> None:
     """携带登录 token 的 achievements 返回 200 + 定义列表。"""
     await seed_achievements(db)
-    u = await _create_user(db, "authed_ach", "已登录")
-    uid = u.id
+    uid = await _create_user(db, auth_db, "authed_ach", "已登录")
     await db.commit()
     token = create_access_token(user_id=uid, account_level="local", role="member")
     resp = await client.get(
@@ -299,10 +297,9 @@ async def test_endpoint_achievements_returns_progress_when_authed(
     assert all("progress" in it and "unlocked" in it for it in items)
 
 
-async def test_endpoint_leaderboard_period_param(client, db: AsyncSession) -> None:
+async def test_endpoint_leaderboard_period_param(client, db: AsyncSession, auth_db: AsyncSession, auth_seam_realm: None) -> None:
     """leaderboard 支持 period 参数；非法 period 返 400。"""
-    u = await _create_user(db, "lb_user", "榜")
-    uid = u.id
+    uid = await _create_user(db, auth_db, "lb_user", "榜")
     (await db.get(UserBalance, uid)).balance = 15
     await _mk_ledger(db, uid, [15])
     await db.commit()

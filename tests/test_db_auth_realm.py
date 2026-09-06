@@ -4,6 +4,7 @@
 （S5 才把 auth 表搬上 AuthBase）。全为本地 SQLite，不需真实 PG/Redis。
 """
 
+import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.pool import StaticPool
@@ -14,6 +15,10 @@ from app.db.base import Base
 from app.db.session import create_realm_async_engine
 
 
+@pytest.mark.skipif(
+    settings.auth_db_driver == "postgresql",
+    reason="S5 强制 auth 独立库走真实 PG 时不再默认 sqlite",
+)
 def test_auth_database_url_defaults_to_own_sqlite() -> None:
     """auth 独立库默认独立 SQLite 文件，不与主库 database_url 重合。"""
     assert settings.auth_database_url.startswith("sqlite+aiosqlite:///")

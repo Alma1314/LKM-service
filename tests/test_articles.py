@@ -3,10 +3,11 @@ from typing import Any
 
 from httpx import AsyncClient
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.articles.models import Article, ArticleCategory
-from app.modules.auth.models import Profile, User
-from app.modules.auth.security import create_access_token, hashpwd
+from app.modules.auth.security import create_access_token
+from tests.conftest import AuthUser, auth_user_uid
 
 
 async def _run_graphql(
@@ -61,36 +62,23 @@ async def _make_article(
     return article
 
 
-async def _make_user(
-    db,
+async def _make_au(
+    auth_db: AsyncSession,
     username: str = "cu",
-    email: str = "cu@x.com",
-) -> int:
-    user = User(
+) -> AuthUser:
+    """在 auth realm 建 normal/member 登录用户并返回其稳定 AuthUser(token)。"""
+    return await auth_user_uid(
+        auth_db,
         username=username,
-        email=email,
-        hashed_password=await hashpwd("secret123456"),
+        email=f"{username}@x.com",
+        nickname=username,
         account_level="normal",
+        role="member",
     )
-    db.add(user)
-    await db.flush()
-    db.add(Profile(user_id=user.id))
-    await db.flush()
-    return user.id
 
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
-
-
-async def _login_token(
-    db,
-    username: str = "cu",
-    email: str = "cu@x.com",
-) -> tuple[int, str]:
-    uid = await _make_user(db, username, email)
-    token = create_access_token(user_id=uid, account_level="normal", role="member")
-    return uid, token
 
 
 async def test_list_articles_pagination(db, client):
@@ -189,10 +177,9 @@ async def test_search_requires_q(db, client):
     assert "errors" in body
 
 
-async def test_like_toggle(db, client):
+async def test_like_toggle(db, client, auth_db: AsyncSession, auth_seam_realm: None):
     await _make_article(db, "a-1", "news")
-    _, token = await _login_token(db)
-    h = _auth(token)
+    h = _auth((await _make_au(auth_db)).token)
     r1 = await client.post("/api/v1/articles/a-1/like", headers=h)
     assert r1.status_code == 200
     d1 = r1.json()["data"]
@@ -208,12 +195,14 @@ async def test_like_requires_auth(db, client):
     assert resp.status_code == 403
 
 
-async def test_comment_create_and_count(db, client):
+async def test_comment_create_and_count(
+    db, client, auth_db: AsyncSession, auth_seam_realm: None
+):
     await _make_article(db, "a-1", "news")
-    _, token = await _login_token(db)
+    h = _auth((await _make_au(auth_db)).token)
     r = await client.post(
         "/api/v1/articles/a-1/comments",
-        headers=_auth(token),
+        headers=h,
         json={"content": "好文！"},
     )
     assert r.status_code == 200
@@ -226,10 +215,11 @@ async def test_comment_create_and_count(db, client):
     assert detail["article"]["comments"] == 1
 
 
-async def test_comment_reply(db, client):
+async def test_comment_reply(
+    db, client, auth_db: AsyncSession, auth_seam_realm: None
+):
     await _make_article(db, "a-1", "news")
-    _, token = await _login_token(db)
-    h = _auth(token)
+    h = _auth((await _make_au(auth_db)).token)
     parent = (
         await client.post(
             "/api/v1/articles/a-1/comments",
@@ -259,26 +249,28 @@ async def test_comment_requires_auth(db, client):
     assert resp.status_code == 403
 
 
-async def test_delete_comment_owner_only(db, client):
+async def test_delete_comment_owner_only(
+    db, client, auth_db: AsyncSession, auth_seam_realm: None
+):
     await _make_article(db, "a-1", "news")
-    _, token = await _login_token(db, username="owner")
+    owner = await _make_au(auth_db, username="owner")
     cmt_id = (
         await client.post(
             "/api/v1/articles/a-1/comments",
-            headers=_auth(token),
+            headers=_auth(owner.token),
             json={"content": "x"},
         )
     ).json()["data"]["id"]
-    other_id = await _make_user(db, username="other", email="other@x.com")
+    other = await _make_au(auth_db, username="other")
     other_token = create_access_token(
-        user_id=other_id, account_level="normal", role="member"
+        user_id=other.id, account_level="normal", role="member"
     )
     forbid = await client.delete(
         f"/api/v1/articles/comments/{cmt_id}", headers=_auth(other_token)
     )
     assert forbid.status_code == 403
     ok = await client.delete(
-        f"/api/v1/articles/comments/{cmt_id}", headers=_auth(token)
+        f"/api/v1/articles/comments/{cmt_id}", headers=_auth(owner.token)
     )
     assert ok.status_code == 200
     detail = await _run_graphql(

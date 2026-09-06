@@ -16,7 +16,6 @@ from app.modules.content.column_models import (
 
 if TYPE_CHECKING:
     # 跨模块字符串 relationship 目标类型（运行时由 registry 解析，仅类型注解用）
-    from app.modules.auth.models import User
     from app.modules.feed.models import BoardFollow
 
 
@@ -24,16 +23,15 @@ class ColumnApplication(Base):
     __tablename__: str = "column_applications"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    # S5 拆库后 user FK 断为逻辑 user_id（auth 独立库权威，此处不再物理外键）
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
     title: Mapped[str] = mapped_column(String(80), nullable=False)
     description: Mapped[str] = mapped_column(String(300), nullable=False)
     reason: Mapped[str] = mapped_column(String(500), nullable=False)
     status: Mapped[ColumnApplicationStatus] = mapped_column(
         String(20), nullable=False, default=ColumnApplicationStatus.PENDING
     )
-    reviewer_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True
-    )
+    reviewer_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
@@ -41,10 +39,6 @@ class ColumnApplication(Base):
     reviewed_at: Mapped[datetime.datetime | None] = mapped_column(
         UTCDateTime, nullable=True
     )
-    user: Mapped[User] = relationship(
-        foreign_keys=[user_id], back_populates="column_applications"
-    )
-    reviewer: Mapped[User | None] = relationship(foreign_keys=[reviewer_id])
     column: Mapped[Column | None] = relationship(
         back_populates="application", uselist=False
     )
@@ -54,7 +48,7 @@ class Column(Base):
     __tablename__: str = "columns"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)  # S5: auth user_id 逻辑引用
     application_id: Mapped[int | None] = mapped_column(
         ForeignKey("column_applications.id"), unique=True, nullable=True
     )
@@ -85,7 +79,6 @@ class Column(Base):
         UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
     )
 
-    owner: Mapped[User] = relationship(back_populates="owned_columns")
     application: Mapped[ColumnApplication | None] = relationship(
         back_populates="column"
     )
@@ -99,7 +92,7 @@ class ColumnPost(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     column_id: Mapped[int] = mapped_column(ForeignKey("columns.id"), nullable=False)
-    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    author_id: Mapped[int] = mapped_column(Integer, nullable=False)  # S5: auth user_id 逻辑引用
     title: Mapped[str] = mapped_column(String(120), nullable=False)
     summary: Mapped[str | None] = mapped_column(String(300), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
@@ -121,7 +114,6 @@ class ColumnPost(Base):
     )
 
     column: Mapped[Column] = relationship(back_populates="posts")
-    author: Mapped[User] = relationship(back_populates="posts")
 
 
 class ContentType(StrEnum):
@@ -187,10 +179,8 @@ class ContentItem(Base):
     content_type: Mapped[str] = mapped_column(String(20), nullable=False)
     # 统一分类轴
     board_id: Mapped[int] = mapped_column(ForeignKey("boards.id"), nullable=False)
-    # 作者：user FK 与官方字符串二选一
-    author_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True, index=True
-    )
+    # 作者：user id（S5 拆库后逻辑 user_id，auth 独立库权威）与官方字符串二选一
+    author_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     publisher: Mapped[str | None] = mapped_column(String(100), nullable=True)
     department: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # 专栏连载容器（仅 column_post）
@@ -231,9 +221,6 @@ class ContentItem(Base):
         UTCDateTime, nullable=True
     )
 
-    author: Mapped[User | None] = relationship(
-        back_populates="content_items", foreign_keys=[author_id]
-    )
     board: Mapped[Board] = relationship()
     column: Mapped[Column | None] = relationship()
     qa_question: Mapped[QAQuestion | None] = relationship(foreign_keys=[qa_question_id])
@@ -257,9 +244,7 @@ class ContentComment(Base):
     content_id: Mapped[int] = mapped_column(
         ForeignKey("content_items.id"), nullable=False
     )
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
-    )
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     floor_number: Mapped[int] = mapped_column(Integer, nullable=False)
     parent_id: Mapped[int | None] = mapped_column(
@@ -271,7 +256,6 @@ class ContentComment(Base):
     )
 
     content_item: Mapped[ContentItem] = relationship(back_populates="comments")
-    user: Mapped[User] = relationship(back_populates="content_comments")
     parent: Mapped[ContentComment | None] = relationship(
         remote_side=[id], back_populates="replies"
     )
@@ -288,13 +272,12 @@ class ContentLike(Base):
     content_id: Mapped[int] = mapped_column(
         ForeignKey("content_items.id"), primary_key=True
     )
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
     )
 
     content: Mapped[ContentItem] = relationship(back_populates="like_records")
-    user: Mapped[User] = relationship()
 
 
 class QAQuestion(Base):
@@ -306,7 +289,7 @@ class QAQuestion(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    author_id: Mapped[int] = mapped_column(Integer, nullable=False)  # S5: auth user_id
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     situation: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
@@ -343,7 +326,7 @@ class QAAnswer(Base):
     question_id: Mapped[int] = mapped_column(
         ForeignKey("qa_questions.id"), nullable=False
     )
-    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    author_id: Mapped[int] = mapped_column(Integer, nullable=False)  # S5: auth user_id
     content: Mapped[str] = mapped_column(Text, nullable=False)
     is_accepted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -375,7 +358,7 @@ class Board(Base):
     slug: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     title: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str] = mapped_column(String(500), nullable=False, default="")
-    owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    owner_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # S5: auth user_id
     # 子板块挂父板块（板块广场嵌套展示：父=大分类，子=细分板块）
     parent_id: Mapped[int | None] = mapped_column(
         ForeignKey("boards.id"), nullable=True, index=True
@@ -398,7 +381,6 @@ class Board(Base):
         UTCDateTime, nullable=False, default=now_iso, onupdate=now_iso
     )
 
-    owner: Mapped[User | None] = relationship(foreign_keys=[owner_id])
     parent: Mapped[Board | None] = relationship(
         remote_side=[id], back_populates="children"
     )
@@ -416,7 +398,7 @@ class BoardApplication(Base):
     __tablename__: str = "board_applications"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    applicant_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    applicant_id: Mapped[int] = mapped_column(Integer, nullable=False)  # S5: auth user_id
     title: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str] = mapped_column(String(300), nullable=False)
     reason: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -424,9 +406,7 @@ class BoardApplication(Base):
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="pending"
     )  # pending|approved|rejected
-    reviewer_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True
-    )
+    reviewer_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         UTCDateTime, nullable=False, default=now_iso
@@ -435,9 +415,6 @@ class BoardApplication(Base):
         UTCDateTime, nullable=True
     )
 
-    applicant: Mapped[User] = relationship(foreign_keys=[applicant_id])
-    reviewer: Mapped[User | None] = relationship(foreign_keys=[reviewer_id])
-
 
 class BoardBan(Base):
     __tablename__: str = "board_bans"
@@ -445,8 +422,8 @@ class BoardBan(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     board_id: Mapped[int] = mapped_column(ForeignKey("boards.id"), nullable=False)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)  # S5: auth user_id
+    created_by: Mapped[int] = mapped_column(Integer, nullable=False)  # S5: auth user_id
     reason: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     expires_at: Mapped[datetime.datetime] = mapped_column(UTCDateTime, nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
