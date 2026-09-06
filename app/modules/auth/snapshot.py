@@ -31,6 +31,7 @@ M3.A「读权收束」第一腿（A1，纯增量）+ 管理面腿（A4）+ 单�
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import logging
 from dataclasses import dataclass
@@ -41,6 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 import app.core.user_cache as user_cache
+from app.core.config import settings
 from app.modules.auth import user_http
 from app.modules.auth.models import Profile, User
 from app.modules.auth.schemas import ProfileInfo, ProfileRole
@@ -289,6 +291,7 @@ async def list_user_snapshots(
         count_q = count_q.where(cond)
     total = int((await db.execute(count_q)).scalar_one() or 0)
 
+
     if include_pii:
         # 显式投影 email/phone：PII 只能在 gate 打开时接触这两列
         stmt = select(
@@ -340,3 +343,63 @@ async def list_user_snapshots(
             for r in rows
         ]
     return items, total
+
+
+# ---------------------------------------------------------------------------
+# S5-A2 Step2：后台 admin 数据面板只读计数/趋势（auth authoritative，零 PII）
+#
+# 拆库后 monolith biz admin reader 不再本地跨库 count/分组读 auth ``users``（users 已在
+# auth 库 lkm_auth）。以下两函数是 auth 域的**只读数字缝**：总数 / 按 UTC 日注册增量——
+# 纯聚合**数字**，无 email/phone/凭证 等 PII。由 biz admin reader 以 **auth 库会话**
+# （``app.db.auth_session.get_auth_session`` 産出）调用本缝，取 auth authoritative。
+# 本组函数同 ``list_user_snapshots``：不带鉴权，授权在路由层（require_admin +
+# require_permission）负责；``db`` 形参即调用方传入的 auth 会话（本缝不做 realm 假设——
+# A4 list_user_snapshots 同款，db 由调用方给 auth 的 session）。数字聚合只依赖
+# User.created_at / id 等非 PII 列，PII-safe。
+# ---------------------------------------------------------------------------
+
+
+async def count_active_users(db: AsyncSession) -> int:
+    """注册用户总数（后台 /admin/stats 的 user_count 真值，auth authoritative）。
+
+    只 ``COUNT(User.id)``——纯聚合数字，零 PII。调用方需传 **auth 库会话**。
+    """
+    return int((await db.execute(select(func.count(User.id)))).scalar_one() or 0)
+
+
+async def user_count_by_day(
+    db: AsyncSession,
+    *,
+    start: datetime.date,
+    days: int,
+) -> dict[datetime.date, int]:
+    """按 UTC 日分桶统计注册增量（后台 /admin/stats/trend 的 user_delta 真值）。
+
+    返回 ``{date: 当日新增用户数}``，只覆盖 ``[start, start+days)`` 窗口；窗口内缺日由路由
+    以日期序列循环补 0。
+
+    PG 的 ``func.date(timestamptz)`` 会先按会话时区(本地+08)取日，与“以 UTC 今天为基准”
+    偏移一天，故 PG 先 ``AT TIME ZONE 'UTC'`` 变 naive-UTC 再取日（与单体既有 admin_trend
+    语义一致，跨天不 flaky）；SQLite 直接 ``func.date``（naive-UTC 值解释）。本函数只返回
+    落在窗口内、增量 >0 的日期 → 计数，零 PII。
+    """
+    end = start + datetime.timedelta(days=days)
+    if settings.auth_db_driver == "postgresql":
+        day_expr = func.date(func.timezone("UTC", User.created_at))
+    else:
+        day_expr = func.date(User.created_at)
+    stmt = (
+        select(day_expr.label("d"), func.count())
+        .where(User.created_at >= start, User.created_at < end)
+        .group_by("d")
+    )
+    rows = (await db.execute(stmt)).all()
+    out: dict[datetime.date, int] = {}
+    for r in rows:
+        raw = r[0]
+        if raw is None:
+            continue
+        r0: str = raw if isinstance(raw, str) else str(raw)
+        with contextlib.suppress(ValueError):
+            out[datetime.date.fromisoformat(r0[:10])] = int(r[1] or 0)
+    return out

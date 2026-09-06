@@ -1,297 +1,23 @@
-"""
-后台 cookie 会话端点：/admin/auth/login|refresh|logout|me。
+"""后台登录态只读端点：monolith 保留 /admin/auth/me（S5-A2 Step1）。
+
+4 个会话**写面**（login/refresh/logout/2fa）已迁 AUTH 进程
+（``app.modules.auth.admin_router``，DB 走独立 auth 库，在 auth_http seam 开时 monolith
+不再 serve 该 URL → 自然 404）。本文件现仅余 /me：读取态，用 require_admin(seam-only)
++ require_permission(业务 db 判定复合角色持仓) 返回 id/account_level/role。
 """
 
-import datetime
-from typing import Any
-
-import jwt
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse, Response
-from sqlalchemy import select
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
-from app.core.err import CommonErr, resp_json, respond
-from app.db.base import now_iso
-from app.db.repo import consume_once, get_or_raise
+from app.core.err import respond
 from app.db.session import get_session
 from app.modules.auth.deps import CurrentUser
-from app.modules.auth.errors import AuthErr
-from app.modules.auth.models import RefreshToken, User
-from app.modules.auth.security import verifypwd
-from app.modules.auth.service_2fa import verify_user_totp
-from app.modules.auth.service_auth import generate_refresh_token, hash_refresh_token
-from app.modules.auth.service_verify import check_code_rate_limit
 from app.modules.rbac.permissions import Permission
 
-from .deps import (
-    _ADMIN_AUD,
-    COOKIE_NAME,
-    COOKIE_PATH,
-    MFA_TRUST_SECONDS,
-    REFRESH_NAME,
-    create_admin_access_token,
-    get_real_client_ip,
-    require_admin,
-)
+from .deps import require_admin
 from .permissions import require_permission
-from .schemas import AdminLoginReq, AdminUserOut, AdminVerify2FARequest
 
 router = APIRouter(prefix="/admin", tags=["admin-auth"])
-
-
-def _current_mfa_trust(request: Request) -> tuple[bool, int | None]:
-    """解析当前 access cookie 的 2FA 信任状态，供 refresh 继承（避免信任被 15min cookie 过期截断）。
-
-    返回 (mfa_verified, mfa_at)。token 缺失/失效/非 admin/过期一律视为未信任。
-    """
-    token = request.cookies.get(COOKIE_NAME)
-    if not token:
-        return False, None
-    try:
-        payload = jwt.decode(
-            token,
-            settings.jwt_secret,
-            algorithms=[settings.jwt_algorithm],
-            audience=_ADMIN_AUD,
-        )
-    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, jwt.DecodeError):
-        return False, None
-    if payload.get("type") != "admin" or not payload.get("mfa"):
-        return False, None
-    mfa_at = payload.get("mfa_at")
-    if mfa_at is None:
-        return False, None
-    trusted_until = datetime.datetime.fromtimestamp(
-        float(mfa_at), tz=datetime.UTC
-    ) + datetime.timedelta(seconds=MFA_TRUST_SECONDS)
-    if trusted_until < datetime.datetime.now(datetime.UTC):
-        return False, None
-    return True, int(mfa_at)
-
-
-def _set_access_cookie(resp: Response, token: str) -> None:
-    resp.set_cookie(
-        key=COOKIE_NAME,
-        value=token,
-        httponly=True,
-        secure=settings.is_production,  # 生产 https 强制 Secure；开发 http 免加密
-        samesite="lax",
-        max_age=settings.admin_access_cookie_minutes * 60,
-        path=COOKIE_PATH,
-    )
-
-
-def _set_refresh_cookie(resp: Response, token: str) -> None:
-    resp.set_cookie(
-        key=REFRESH_NAME,
-        value=token,
-        httponly=True,
-        secure=settings.is_production,
-        samesite="lax",
-        max_age=settings.refresh_token_expire_days * 86400,
-        path=COOKIE_PATH,
-    )
-
-
-def _clear_cookies(resp: Response) -> None:
-    resp.delete_cookie(COOKIE_NAME, path=COOKIE_PATH)
-    resp.delete_cookie(REFRESH_NAME, path=COOKIE_PATH)
-
-
-def _admin_user_payload(user: User) -> dict[str, Any]:
-    return AdminUserOut.model_validate(user).model_dump(mode="json")
-
-
-@router.post("/auth/login")
-async def admin_login(
-    body: AdminLoginReq,
-    request: Request,
-    db: AsyncSession = Depends(get_session),
-) -> JSONResponse:
-    """管理员密码登录（httpOnly cookie 会话）。
-
-    频控两把锁（方案 §8.4）：用户名级 5/5min + 真实 IP 级 20/5min。
-    """
-    await check_code_rate_limit(
-        f"admin:login:user:{body.username}", max_count=5, window=300
-    )
-    ip = get_real_client_ip(request)
-    await check_code_rate_limit(f"admin:login:ip:{ip}", max_count=20, window=300)
-
-    result = await db.execute(select(User).where(User.username == body.username))
-    user = result.scalars().first()
-
-    # 统一 401：不区分"用户不存在"与"密码错"，避免枚举账号
-    if not user or not await verifypwd(body.password, user.hashed_password):
-        return resp_json(CommonErr.FORBIDDEN, detail="用户名或密码错误")
-
-    if user.account_level != "admin":
-        return resp_json(CommonErr.FORBIDDEN, detail="无后台访问权限")
-
-    if user.is_locked and user.locked_until and user.locked_until > now_iso():
-        return resp_json(CommonErr.FORBIDDEN, detail="账号已锁定")
-
-    # 会话体在 commit 前快照（避免 commit 后 expire 引发的异步重载）
-    access_token = create_admin_access_token(user)  # 读 user.id/account_level（已加载）
-    payload = _admin_user_payload(user)  # 读 created_at 等（已加载）
-
-    # 组织 refresh：本骨架复用现有 RefreshToken 表存哈希，暂不区分 kind（见下方注释）
-    raw_refresh = generate_refresh_token()
-    db.add(
-        RefreshToken(
-            user_id=user.id,
-            token_hash=hash_refresh_token(raw_refresh),
-            kind="admin",
-            mfa_verified=False,
-            expires_at=now_iso()
-            + datetime.timedelta(days=settings.refresh_token_expire_days),
-            revoked_at=None,
-        )
-    )
-    await db.commit()
-
-    # cookie 设置在最终返回的 JSONResponse 上（注入的 response 会被丢弃，见文件头注释）
-    resp = resp_json(CommonErr.OK, data=payload)
-    _set_access_cookie(resp, access_token)
-    _set_refresh_cookie(resp, raw_refresh)
-    return resp
-
-
-@router.post("/auth/refresh")
-async def admin_refresh(
-    request: Request,
-    db: AsyncSession = Depends(get_session),
-) -> JSONResponse:
-    """用 refresh cookie 换新 access + 旋转新 refresh。
-
-    consume_once 原子撤销：并发下同一 refresh 只能被消费一次（复用检测）。
-    """
-    await check_code_rate_limit("admin:token:refresh:global", max_count=30, window=60)
-
-    raw_refresh = request.cookies.get(REFRESH_NAME)
-    if not raw_refresh:
-        return resp_json(CommonErr.FORBIDDEN, detail="缺少刷新令牌")
-
-    tok_hash = hash_refresh_token(raw_refresh)
-    now = now_iso()
-    if not await consume_once(
-        db,
-        RefreshToken,
-        {"revoked_at": now},
-        RefreshToken.token_hash == tok_hash,
-        RefreshToken.kind == "admin",
-        RefreshToken.revoked_at.is_(None),
-    ):
-        return resp_json(CommonErr.FORBIDDEN, detail="刷新令牌无效")
-
-    stored = await get_or_raise(
-        db,
-        RefreshToken,
-        AuthErr.TOKEN_INVALID,
-        RefreshToken.token_hash == tok_hash,
-    )
-    if stored.expires_at <= now:
-        return resp_json(CommonErr.FORBIDDEN, detail="会话已过期")
-
-    user = await get_or_raise(
-        db,
-        User,
-        AuthErr.USER_NOT_FOUND,
-        User.id == stored.user_id,
-    )
-    if user.account_level != "admin":
-        return resp_json(CommonErr.FORBIDDEN, detail="会话无效")
-
-    # 会话体在 commit 前快照（避免 commit 后 expire 引发异步重载）
-    # 继承当前 access cookie 的 2FA 信任，避免 15min cookie 轮换打断 1h 信任窗口
-    mfa_ok, mfa_at = _current_mfa_trust(request)
-    access_token = create_admin_access_token(user, mfa_verified=mfa_ok, mfa_at=mfa_at)
-    payload = _admin_user_payload(user)
-
-    new_refresh = generate_refresh_token()
-    db.add(
-        RefreshToken(
-            user_id=user.id,
-            token_hash=hash_refresh_token(new_refresh),
-            kind="admin",
-            mfa_verified=mfa_ok,
-            expires_at=now_iso()
-            + datetime.timedelta(days=settings.refresh_token_expire_days),
-            revoked_at=None,
-        )
-    )
-    await db.commit()
-
-    resp = resp_json(CommonErr.OK, data=payload)
-    _set_access_cookie(resp, access_token)
-    _set_refresh_cookie(resp, new_refresh)
-    return resp
-
-
-@router.post("/auth/logout")
-async def admin_logout(
-    request: Request,
-    db: AsyncSession = Depends(get_session),
-) -> JSONResponse:
-    """登出：撤销对应 refresh 令牌并清空 cookie。"""
-    raw_refresh = request.cookies.get(REFRESH_NAME)
-    if raw_refresh:
-        tok_hash = hash_refresh_token(raw_refresh)
-        result = await db.execute(
-            select(RefreshToken).where(
-                RefreshToken.token_hash == tok_hash,
-                RefreshToken.kind == "admin",
-            )
-        )
-        stored = result.scalars().first()
-        if stored is not None and stored.revoked_at is None:
-            stored.revoked_at = now_iso()
-            await db.commit()
-    resp = resp_json(CommonErr.OK, data={"ok": True})
-    _clear_cookies(resp)
-    return resp
-
-
-@router.post("/auth/2fa")
-async def admin_verify_2fa(
-    body: AdminVerify2FARequest,
-    request: Request,
-    cur: CurrentUser = require_admin,
-    db: AsyncSession = Depends(get_session),
-) -> JSONResponse:
-    """危险操作 step-up：验证当前 admin 的 TOTP，通过后签发带 2FA 信任的新 access cookie。
-
-    信任窗口 1 小时（MFA_TRUST_SECONDS），期间危险操作端点（require_admin_2fa）不再重复要求。
-    未通过则不更新信任，仅抛 TOTP_CODE_INVALID。
-    """
-    await verify_user_totp(db, cur.id, body.code)
-
-    user = await get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == cur.id)
-    mfa_at = int(datetime.datetime.now(datetime.UTC).timestamp())
-    access_token = create_admin_access_token(user, mfa_verified=True, mfa_at=mfa_at)
-    payload = _admin_user_payload(user)
-
-    # 同步更新当前会话 refresh 记录的 mfa 状态（保持一致性，供审计/未来扩展）
-    raw_refresh = request.cookies.get(REFRESH_NAME)
-    if raw_refresh:
-        result = await db.execute(
-            select(RefreshToken).where(
-                RefreshToken.token_hash == hash_refresh_token(raw_refresh),
-                RefreshToken.kind == "admin",
-            )
-        )
-        stored_refresh = result.scalars().first()
-        if stored_refresh is not None and stored_refresh.revoked_at is None:
-            stored_refresh.mfa_verified = True
-    await db.commit()
-
-    resp = resp_json(
-        CommonErr.OK, data={**payload, "mfa_verified": True, "mfa_at": mfa_at}
-    )
-    _set_access_cookie(resp, access_token)
-    return resp
 
 
 @router.get("/auth/me")
@@ -300,8 +26,11 @@ async def admin_me(
     cur: CurrentUser = require_admin,
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, int | str]:
-    """当前后台登录态（需有效 admin access cookie），供前端 bootAdminSession 使用。
-    role 判定依赖 DB profile，故走 get_session 注入同一会话后叠加 admin_dashboard 权限点。"""
+    """当前后台登录态（需有效 admin 会话，经 seam-only require_admin + 复合角色持仓权限点）。
+
+    供前端 bootAdminSession 使用；role 判定依赖业务 db 的 RolePermission(super_admin 默认
+    grants)，故走 get_session 注入同一会话后叠加 admin_dashboard 权限点。
+    """
     await require_permission(db, cur, Permission.admin_dashboard)
     return {
         "id": cur.id,

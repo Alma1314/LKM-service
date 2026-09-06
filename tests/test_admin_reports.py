@@ -1,44 +1,57 @@
 """后台举报列表端点 /admin/reports 的 HTTP 集成测试。
 
-覆盖：非 admin 拒绝、admin 登录后列表返回、按 status 过滤、空列表。遵循 conftest 的 db+client 模式。
+覆盖：非 admin 拒绝、admin(经 seam→auth authoritative)列表返回、按 status 过滤、空列表。
+
+S5-A2 Step2：users/profiles 真值在 auth 库；后台鉴权 seam(``auth_seam_realm``) 指 auth_db
+裁决 admin；权限点 RolePermission 落 biz ``db``。举报(Report)本在 biz ``db`` 造。后台 cookie
+以 create_admin_access_token 直接置入 client jar（不触发后台 login HTTP）。
 """
 
-from typing import Any
+from __future__ import annotations
 
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.admin.deps import COOKIE_NAME, COOKIE_PATH, create_admin_access_token
 from app.modules.admin.models import Report, RolePermission
-from app.modules.auth.models import Profile, User
-from app.modules.auth.security import hashpwd
+from app.modules.auth.models import User
 from app.modules.rbac.permissions import Permission
+from tests.conftest import auth_user_uid  # type: ignore[attr-defined]
 
 
-async def _create_user(
-    db: AsyncSession,
-    username: str,
-    password: str = "secret123456",
-    account_level: str = "local",
+async def _mk_admin(
+    auth_db: AsyncSession, username: str = "root"
 ) -> User:
-    user = User(
+    au = await auth_user_uid(
+        auth_db,
         username=username,
-        email=f"{username}@example.com",
-        hashed_password=await hashpwd(password),
-        account_level=account_level,
+        account_level="admin",
+        role="super_admin",
+        with_token=False,
     )
-    db.add(user)
-    await db.flush()
-    # 后台 RBAC：admin 用户缺省为 super_admin 角色（reports 端点需 admin_reports_view）
-    if account_level == "admin":
-        db.add(Profile(user_id=user.id, role="super_admin", nickname=username))
-    await db.commit()
-    await db.refresh(user)
-    return user
+    return (await auth_db.execute(select(User).where(User.id == au.id))).scalar_one()
+
+
+async def _mk_member(
+    auth_db: AsyncSession, username: str
+) -> User:
+    au = await auth_user_uid(
+        auth_db, username=username, account_level="normal", with_token=False
+    )
+    return (await auth_db.execute(select(User).where(User.id == au.id))).scalar_one()
+
+
+def _set_admin_cookie(client: AsyncClient, user: User) -> None:
+    client.cookies.set(
+        COOKIE_NAME,
+        create_admin_access_token(user),
+        path=COOKIE_PATH,
+    )
 
 
 async def _grant(db: AsyncSession, perm: Permission) -> None:
-    """给 admin:super_admin 授指定权限点（幂等，复刻 super_admin DEFAULT_GRANTS）。"""
+    """给 admin:super_admin 授指定权限点（幂等，复刻 super_admin DEFAULT_GRANTS 的 reports 域）。"""
     exists = await db.scalar(
         select(RolePermission.id).where(
             RolePermission.role_name == "admin:super_admin",
@@ -48,14 +61,6 @@ async def _grant(db: AsyncSession, perm: Permission) -> None:
     if exists is None:
         db.add(RolePermission(role_name="admin:super_admin", permission=perm.value))
     await db.flush()
-
-
-def _login(client: AsyncClient, username: str) -> Any:
-    """发起后台登录请求；httpx 会把 Set-Cookie 持久化到 client.cookies。"""
-    return client.post(
-        "/api/v1/admin/auth/login",
-        json={"username": username, "password": "secret123456"},
-    )
 
 
 async def _seed_reports(db: AsyncSession) -> None:
@@ -92,24 +97,28 @@ async def _seed_reports(db: AsyncSession) -> None:
 
 class TestAdminReports:
     async def should_reject_non_admin(
-        self, db: AsyncSession, client: AsyncClient
+        self, client: AsyncClient, auth_db: AsyncSession
     ) -> None:
-        await _create_user(db, username="member1", account_level="normal")
-        await _login(client, "member1")
+        member = await _mk_member(auth_db, "member1")
+        _set_admin_cookie(client, member)
         resp = await client.get("/api/v1/admin/reports")
         assert resp.status_code in (401, 403)
 
     async def should_list_reports_for_admin(
-        self, db: AsyncSession, client: AsyncClient
+        self,
+        db: AsyncSession,
+        client: AsyncClient,
+        auth_db: AsyncSession,
+        auth_seam_realm: None,
     ) -> None:
-        await _create_user(db, username="root", account_level="admin")
+        root = await _mk_admin(auth_db, "root")
         await _seed_reports(db)
         await _grant(db, Permission.admin_reports_view)
-        await _login(client, "root")
+        _set_admin_cookie(client, root)
 
         resp = await client.get("/api/v1/admin/reports")
         assert resp.status_code == 200
-        body: dict[str, Any] = resp.json()
+        body = resp.json()
         assert body["code"] == 0
         assert body["data"]["total"] == 3
         assert len(body["data"]["items"]) == 3
@@ -125,28 +134,36 @@ class TestAdminReports:
         }
 
     async def should_filter_reports_by_status(
-        self, db: AsyncSession, client: AsyncClient
+        self,
+        db: AsyncSession,
+        client: AsyncClient,
+        auth_db: AsyncSession,
+        auth_seam_realm: None,
     ) -> None:
-        await _create_user(db, username="root", account_level="admin")
+        root = await _mk_admin(auth_db, "root")
         await _seed_reports(db)
         await _grant(db, Permission.admin_reports_view)
-        await _login(client, "root")
+        _set_admin_cookie(client, root)
 
         resp = await client.get("/api/v1/admin/reports", params={"status": "pending"})
         assert resp.status_code == 200
-        body: dict[str, Any] = resp.json()
+        body = resp.json()
         assert body["data"]["total"] == 2
         assert all(item["status"] == "pending" for item in body["data"]["items"])
 
     async def should_return_empty_when_no_reports(
-        self, db: AsyncSession, client: AsyncClient
+        self,
+        db: AsyncSession,
+        client: AsyncClient,
+        auth_db: AsyncSession,
+        auth_seam_realm: None,
     ) -> None:
-        await _create_user(db, username="root", account_level="admin")
+        root = await _mk_admin(auth_db, "root")
         await _grant(db, Permission.admin_reports_view)
-        await _login(client, "root")
+        _set_admin_cookie(client, root)
 
         resp = await client.get("/api/v1/admin/reports")
         assert resp.status_code == 200
-        body: dict[str, Any] = resp.json()
+        body = resp.json()
         assert body["data"]["total"] == 0
         assert body["data"]["items"] == []

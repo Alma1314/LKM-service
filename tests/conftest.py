@@ -174,19 +174,33 @@ async def auth_db() -> AsyncGenerator[AsyncSession]:
 
 
 @pytest.fixture
-async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient]:
+async def client(
+    db: AsyncSession, auth_db: AsyncSession
+) -> AsyncGenerator[AsyncClient]:
     """官方异步 HTTP 客户端：httpx.AsyncClient + ASGITransport。
 
     不触发 lifespan（避免 init_db 触碰真实控制面/lkm.db），并把 get_session/get_read_session
     覆盖到 ``db`` 会话（使同一测试内 HTTP 请求与测试体的 service 直呼共享同一长活事务，
-    得以 flush 未 commit 即 POST→GET 同见）。只撤销本测试注入的覆盖键。
+    得以 flush 未 commit 即 POST→GET 同见）。S5-A2 Step2 起 admin **数据面 reader**端点依赖
+    一个 auth 库只读会话（``users_router.get_admin_auth_read_session``），这里同步覆盖到本测
+    ``auth_db`` 会话，使 reader 的 user 列表/总数/趋势读到 auth authoritative（在该测试专属
+    auth schema）——conftest 不启 seam 时该依赖不被其它端点击活，本覆盖对既有测试零副作用。
+    只撤销本测试注入的覆盖键。
     """
 
     async def override_get_session() -> AsyncGenerator[AsyncSession]:
         yield db
 
+    from app.modules.admin.users_router import (
+        get_admin_auth_read_session,
+    )
+
+    async def override_auth_read() -> AsyncGenerator[AsyncSession]:
+        yield auth_db
+
     app.dependency_overrides[get_session] = override_get_session
     app.dependency_overrides[get_read_session] = override_get_session
+    app.dependency_overrides[get_admin_auth_read_session] = override_auth_read
     transport = ASGITransport(app=app)
     try:
         async with AsyncClient(transport=transport, base_url="http://test") as c:
@@ -194,6 +208,35 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient]:
     finally:
         app.dependency_overrides.pop(get_session, None)
         app.dependency_overrides.pop(get_read_session, None)
+        app.dependency_overrides.pop(get_admin_auth_read_session, None)
+
+
+@pytest.fixture
+async def auth_app_client(auth_db: AsyncSession) -> AsyncGenerator[AsyncClient]:
+    """AUTH 独立进程 admin 会话写面相的 HTTP 客户端（S5-A2 Step0）。
+
+    直接起 :data:`app.main_auth.app`（module singleton ``create_auth_app``，**不触发
+    lifespan**——ASGITransport 默认不跑），并把该 AUTH 进程里唯一 auth-库通道
+    ``app.db.auth_session.get_auth_session`` override 到本测传入的 ``auth_db`` 会话，
+    使请求打到 AUTH 进程而 DB 落在 auth 独立库（该测试专属 schema）。
+
+    注意 main_auth 的 ``app`` 与单体的 ``app.main.app`` 是不同实例，各自 dependency_overrides
+    互不污染；测毕只撤销本 fixtest 注入的键。auth 写面端点在 auth_router/respond 都走
+    ``resp_json``/BizError frame，读取与单体 client 一致（body.code / body.data）。
+    """
+    from app.db.auth_session import get_auth_session
+    from app.main_auth import app as auth_app
+
+    async def override_get_auth_session() -> AsyncGenerator[AsyncSession]:
+        yield auth_db
+
+    auth_app.dependency_overrides[get_auth_session] = override_get_auth_session
+    transport = ASGITransport(app=auth_app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
+    finally:
+        auth_app.dependency_overrides.pop(get_auth_session, None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

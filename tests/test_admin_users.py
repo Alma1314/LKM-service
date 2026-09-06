@@ -1,43 +1,65 @@
-"""后台用户管理端点 /admin/users 与 /admin/stats 的专项测试（模块9 测试补盲）。"""
+"""后台用户管理端点 /admin/users 与 /admin/stats(/trend) 的专项测试（模块9 测试补盲）。
 
-from typing import Any
+S5-A2 Step2 版本：users/profiles 真值迁 auth 库后，本文件一律经 **auth realm**(auth_db)
+造 user + admin，权限点 RolePermission 落 **biz realm**(db)。monolith seam(``auth_seam_realm``)
+把鉴权缝指到 auth_db 真值；admin reader(user 列表/数/趋势) 经 biz 端点注入的 auth 只读会话
+(conftest client 覆盖 get_admin_auth_read_session→auth_db) 读到 auth authoritative。
+不触发后台 HTTP login：直接以 create_admin_access_token 在 client jar 置后台 cookie（同源）。
+"""
+
+from __future__ import annotations
 
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.admin.deps import COOKIE_NAME, COOKIE_PATH, create_admin_access_token
 from app.modules.admin.models import RolePermission
-from app.modules.auth.models import Profile, User
-from app.modules.auth.security import hashpwd
-from app.modules.content.models import ContentItem, ContentType
+from app.modules.auth.models import User
+from app.modules.content.models import Board, ContentItem, ContentType
 from app.modules.files.models import LibraryFile
 from app.modules.rbac.permissions import Permission
+from tests.conftest import auth_user_uid  # type: ignore[attr-defined]
 
 
-async def _create_user(
-    db: AsyncSession,
+async def _mk_auth_user(
+    auth_db: AsyncSession,
     username: str,
-    account_level: str = "local",
+    *,
+    account_level: str = "normal",
+    role: str = "member",
     email: str | None = None,
 ) -> User:
-    user = User(
+    """在 auth realm 造 User(+Profile)；返回该 User 的 auth 库 ORM（供 mint admin cookie）。"""
+    au = await auth_user_uid(
+        auth_db,
         username=username,
-        email=email or f"{username}@example.com",
-        hashed_password=await hashpwd("secret123456"),
         account_level=account_level,
+        role=role,
+        email=email,
+        nickname=username,
+        with_token=False,
     )
-    db.add(user)
-    await db.flush()
-    # 后台 RBAC：admin 用户缺省为 super_admin 角色（进入 users/stats/trend 需 admin 域权限点）
-    if account_level == "admin":
-        db.add(Profile(user_id=user.id, role="super_admin", nickname=username))
-    await db.commit()
-    await db.refresh(user)
-    return user
+    return (await auth_db.execute(select(User).where(User.id == au.id))).scalar_one()
+
+
+async def _mk_admin(
+    auth_db: AsyncSession, username: str = "root"
+) -> User:  # account_level=admin + super_admin role
+    return await _mk_auth_user(
+        auth_db, username, account_level="admin", role="super_admin"
+    )
+
+
+def _set_admin_cookie(client: AsyncClient, user: User) -> None:
+    client.cookies.set(
+        COOKIE_NAME,
+        create_admin_access_token(user),
+        path=COOKIE_PATH,
+    )
 
 
 async def _grant_super_admin(db: AsyncSession, *perms: Permission) -> None:
-    """给 admin:super_admin 授指定权限点（幂等，复刻 backend super_admin DEFAULT_GRANTS 的 admin 域）。"""
     for p in perms:
         exists = await db.scalar(
             select(RolePermission.id).where(
@@ -50,51 +72,33 @@ async def _grant_super_admin(db: AsyncSession, *perms: Permission) -> None:
     await db.flush()
 
 
-def _login(client: AsyncClient, username: str) -> Any:
-    return client.post(
-        "/api/v1/admin/auth/login",
-        json={"username": username, "password": "secret123456"},
-    )
-
-
-async def _login_admin(
-    db: AsyncSession,
-    client: AsyncClient,
-    username: str = "root",
-    *perms: Permission,
-) -> Any:
-    """给 admin(默认 super_admin) 授指定权限点后用其登录，供期望 200 的后台用例。"""
-    await _grant_super_admin(db, *perms)
-    return await _login(client, username)
-
-
 class TestAdminUsersList:
     async def should_reject_non_admin(
-        self, db: AsyncSession, client: AsyncClient
+        self, client: AsyncClient, auth_db: AsyncSession
     ) -> None:
-        await _create_user(db, "member1", account_level="normal")
-        await _login(client, "member1")
+        member = await _mk_auth_user(auth_db, "member1")  # normal → seam reject
+        _set_admin_cookie(client, member)
         resp = await client.get("/api/v1/admin/users")
         assert resp.status_code in (401, 403)
 
     async def should_list_users_preview_without_pii(
-        self, db: AsyncSession, client: AsyncClient
+        self,
+        db: AsyncSession,
+        client: AsyncClient,
+        auth_db: AsyncSession,
+        auth_seam_realm: None,
     ) -> None:
-        await _create_user(db, "root", account_level="admin")
-        await _create_user(db, "alice", account_level="normal", email="a@priv.io")
-        await _login_admin(
-            db,
-            client,
-            "root",
-            Permission.admin_users_manage,
-            Permission.admin_dashboard,
+        root = await _mk_admin(auth_db, "root")
+        await _mk_auth_user(auth_db, "alice", email="a@priv.io")
+        await _grant_super_admin(
+            db, Permission.admin_users_manage, Permission.admin_dashboard
         )
+        _set_admin_cookie(client, root)
 
         resp = await client.get("/api/v1/admin/users")
         assert resp.status_code == 200
         body = resp.json()["data"]
         assert body["total"] >= 2
-        # PII 默认隐藏：email/phone 为 None
         alice = next(i for i in body["items"] if i["username"] == "alice")
         assert alice["email"] is None
         assert alice["phone"] is None
@@ -102,11 +106,16 @@ class TestAdminUsersList:
         assert alice["account_level"] == "normal"
 
     async def should_include_pii_when_requested(
-        self, db: AsyncSession, client: AsyncClient
+        self,
+        db: AsyncSession,
+        client: AsyncClient,
+        auth_db: AsyncSession,
+        auth_seam_realm: None,
     ) -> None:
-        await _create_user(db, "root", account_level="admin")
-        await _create_user(db, "bob", account_level="normal", email="bob@priv.io")
-        await _login_admin(db, client, "root", Permission.admin_users_manage)
+        root = await _mk_admin(auth_db, "root")
+        await _mk_auth_user(auth_db, "bob", email="bob@priv.io")
+        await _grant_super_admin(db, Permission.admin_users_manage)
+        _set_admin_cookie(client, root)
 
         resp = await client.get("/api/v1/admin/users", params={"include_pii": "true"})
         assert resp.status_code == 200
@@ -114,36 +123,43 @@ class TestAdminUsersList:
         assert bob["email"] == "bob@priv.io"
 
     async def should_filter_users_by_keyword(
-        self, db: AsyncSession, client: AsyncClient
+        self,
+        db: AsyncSession,
+        client: AsyncClient,
+        auth_db: AsyncSession,
+        auth_seam_realm: None,
     ) -> None:
-        await _create_user(db, "root", account_level="admin")
-        await _create_user(db, "zhangsan", account_level="normal")
-        await _create_user(db, "lisi", account_level="normal")
-        await _login_admin(db, client, "root", Permission.admin_users_manage)
+        root = await _mk_admin(auth_db, "root")
+        await _mk_auth_user(auth_db, "zhangsan")
+        await _mk_auth_user(auth_db, "lisi")
+        await _grant_super_admin(db, Permission.admin_users_manage)
+        _set_admin_cookie(client, root)
 
         resp = await client.get("/api/v1/admin/users", params={"keyword": "zhang"})
+        assert resp.status_code == 200
         items = resp.json()["data"]["items"]
         assert all("zhang" in i["username"] for i in items)
         assert any(i["username"] == "zhangsan" for i in items)
 
 
-async def _seed_stats(db: AsyncSession, n_users: int = 3) -> None:
-    await _create_user(db, "root", account_level="admin")
+async def _seed_stats(
+    db: AsyncSession, auth_db: AsyncSession, *, n_users: int = 3
+) -> User:
+    """root(admin) + u0..u{n-1} 在 auth realm；content/file(biz realm) 引用 auth 裸 id。"""
+    root = await _mk_admin(auth_db, "root")
+    ids: list[int] = []
     for i in range(n_users):
-        await _create_user(db, f"u{i}", account_level="normal")
-    from app.modules.content.models import Board as _models
-
-    board = _models(slug="stats", title="统计", description="", is_public=True)
+        au = await auth_user_uid(
+            auth_db, username=f"u{i}", account_level="local", with_token=False
+        )
+        ids.append(int(au.id))
+    board = Board(slug="stats", title="统计", description="", is_public=True)
     db.add(board)
     await db.flush()
     db.add(
         ContentItem(
             content_type=ContentType.DISCUSSION,
-            author_id=int(
-                (
-                    await db.execute(select(User.id).where(User.username == "u0"))
-                ).scalar_one()
-            ),
+            author_id=int(ids[0]),
             board_id=board.id,
             title="t",
             excerpt="",
@@ -153,11 +169,7 @@ async def _seed_stats(db: AsyncSession, n_users: int = 3) -> None:
     )
     db.add(
         LibraryFile(
-            uploader_id=int(
-                (
-                    await db.execute(select(User.id).where(User.username == "u1"))
-                ).scalar_one()
-            ),
+            uploader_id=int(ids[1]),
             original_name="f.pdf",
             stored_name="f.pdf",
             mime_type="application/pdf",
@@ -166,29 +178,39 @@ async def _seed_stats(db: AsyncSession, n_users: int = 3) -> None:
         )
     )
     await db.commit()
+    return root
 
 
 class TestAdminStats:
     async def should_aggregate_counts(
-        self, db: AsyncSession, client: AsyncClient
+        self,
+        db: AsyncSession,
+        client: AsyncClient,
+        auth_db: AsyncSession,
+        auth_seam_realm: None,
     ) -> None:
-        await _seed_stats(db)
-        await _login_admin(db, client, "root", Permission.admin_dashboard)
+        root = await _seed_stats(db, auth_db)  # root+u0..u2 共4用户(auth) 1帖1文件(biz)
+        await _grant_super_admin(db, Permission.admin_dashboard)
+        _set_admin_cookie(client, root)
 
         resp = await client.get("/api/v1/admin/stats")
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["user_count"] >= 4  # root + u0..u2
+        assert data["user_count"] >= 4  # auth authoritative 总数（含 root+u0..u2）
         assert data["post_count"] >= 1
         assert data["file_count"] >= 1
         assert data["file_pending_count"] >= 1
 
     async def should_be_tolerant_of_missing_tables(
-        self, db: AsyncSession, client: AsyncClient
+        self,
+        db: AsyncSession,
+        client: AsyncClient,
+        auth_db: AsyncSession,
+        auth_seam_realm: None,
     ) -> None:
-        """单表不可用时统计不整体抛 500（_safe_count 兜底）。"""
-        await _create_user(db, "root", account_level="admin")
-        await _login_admin(db, client, "root", Permission.admin_dashboard)
+        root = await _mk_admin(auth_db, "root")
+        await _grant_super_admin(db, Permission.admin_dashboard)
+        _set_admin_cookie(client, root)
         resp = await client.get("/api/v1/admin/stats")
         assert resp.status_code == 200
         assert resp.json()["code"] == 0
@@ -196,35 +218,44 @@ class TestAdminStats:
 
 class TestAdminTrend:
     async def should_reject_non_admin(
-        self, db: AsyncSession, client: AsyncClient
+        self, client: AsyncClient, auth_db: AsyncSession
     ) -> None:
-        await _create_user(db, "member1", account_level="normal")
-        await _login(client, "member1")
+        member = await _mk_auth_user(auth_db, "member1")
+        _set_admin_cookie(client, member)
         resp = await client.get("/api/v1/admin/stats/trend")
         assert resp.status_code in (401, 403)
 
     async def should_return_daily_deltas(
-        self, db: AsyncSession, client: AsyncClient
+        self,
+        db: AsyncSession,
+        client: AsyncClient,
+        auth_db: AsyncSession,
+        auth_seam_realm: None,
     ) -> None:
-        await _seed_stats(db)  # root+u0..u2 共4用户，1帖
-        await _login_admin(db, client, "root", Permission.admin_dashboard)
+        root = await _seed_stats(db, auth_db)  # root+u0..u2 共4用户(auth)，1帖(biz)
+        await _grant_super_admin(db, Permission.admin_dashboard)
+        _set_admin_cookie(client, root)
+
         resp = await client.get("/api/v1/admin/stats/trend", params={"days": 7})
         assert resp.status_code == 200
         data = resp.json()["data"]
         items = data["items"]
         assert len(items) == 7
-        # 找今天所在序列项：user_delta 至少含 _seed_stats 新增的4个同天增量
+        # UTC 基准序列升序、缺日补0；今日(末) user_delta 至少含新增4个同日增量
         today = items[-1]
         assert today["user_delta"] >= 4
         assert today["post_delta"] >= 1
-        # 序列按日期升序、日期连续无缺
         for i in range(1, len(items)):
             assert items[i]["date"] > items[i - 1]["date"]
 
     async def should_validate_days_bounds(
-        self, db: AsyncSession, client: AsyncClient
+        self,
+        db: AsyncSession,
+        client: AsyncClient,
+        auth_db: AsyncSession,
+        auth_seam_realm: None,
     ) -> None:
-        await _create_user(db, "root", account_level="admin")
-        await _login(client, "root")
+        root = await _mk_admin(auth_db, "root")
+        _set_admin_cookie(client, root)
         resp = await client.get("/api/v1/admin/stats/trend", params={"days": 0})
         assert resp.status_code == 422

@@ -247,21 +247,12 @@ ignore_imports = [
     "app.modules.admin.permissions -> app.modules.auth.deps",
     "app.modules.admin.schemas -> app.modules.auth.schemas",
     "app.modules.admin.deps -> app.modules.auth.deps",
+    # S5-A2：admin 会话 cookie/token 纯基元单一事实源收进 auth.admin_session，admin 侧 seam-only
+    # me/danger decode 复用（单向 admin→auth，owner-leaf 之外经本精确条目豁免、非放宽）。
+    "app.modules.admin.deps -> app.modules.auth.admin_session",
     "app.modules.blog.git_http -> app.modules.auth.security",
     "app.modules.admin.content_router -> app.modules.auth.service_auth",
-    "app.modules.admin.auth_router -> app.modules.auth.errors",
-    "app.modules.admin.auth_router -> app.modules.auth.service_2fa",
-    "app.modules.admin.auth_router -> app.modules.auth.service_auth",
-    "app.modules.admin.auth_router -> app.modules.auth.service_verify",
-    "app.modules.admin.auth_router -> app.modules.auth.security",
     # ③ models → auth.models FK/relationship 声明 + seed → auth.models ORM 映射注册：
-    "app.modules.content.models -> app.modules.auth.models",
-    "app.modules.articles.models -> app.modules.auth.models",
-    "app.modules.blog.models -> app.modules.auth.models",
-    "app.modules.exam.models -> app.modules.auth.models",
-    "app.modules.files.models -> app.modules.auth.models",
-    "app.modules.feed.models -> app.modules.auth.models",
-    "app.modules.projects.models -> app.modules.auth.models",
     "app.modules.articles.seed -> app.modules.auth.models",
     "app.modules.content.boards.seed -> app.modules.auth.models",
     "app.modules.content.columns.seed -> app.modules.auth.models",
@@ -269,7 +260,6 @@ ignore_imports = [
     "app.modules.files.seed -> app.modules.auth.models",
     "app.modules.points.seed -> app.modules.auth.models",
     "app.modules.admin.seed -> app.modules.auth.models",
-    "app.modules.admin.models -> app.modules.auth.models",
     # ④ 行为/结构锁定直读 auth.models 的**不可缝迁移例外**：blog/git_http 凭证直读(hashed_password +
     # verifypwd，快照缝不含凭证列)。S4 已把 feed/content/exam/projects 的身份存在检查/account_level
     # 判给 auth.snapshot ① 缝；故其不再 import auth.models。points 积分榜 M3.B S5（A段）已由 fused
@@ -277,11 +267,7 @@ ignore_imports = [
     # 保序），故 points.service 亦不再直读 auth.models（改走 ① 的 auth.snapshot）。
     "app.modules.blog.git_http -> app.modules.auth.models",
     # ⑤ admin 治理/授权面 的 router·deps 对 User 直读(admin 管理 + 会话 User 复用 + list_users 治理读 auth.models/User)：
-    "app.modules.admin.auth_router -> app.modules.auth.models",
-    "app.modules.admin.users_router -> app.modules.auth.models",
     "app.modules.admin.seed -> app.modules.auth.models",
-    "app.modules.admin.deps -> app.modules.auth.models",
-    "app.modules.admin.models -> app.modules.auth.models",
     # ⑥ M3.B S4 过渡：exam/projects 的“单向派升写”由业务本地直改 users/profiles 收敛为调 auth 权威
     # 升权原语 service_authz.grant_*。S5/S6 真拆库后业务不再 import auth 内部，改走 auth HTTP 内部写缝
     #（router_authz /auth/internal/grant 经 client）→ 届时移除这两条 ignore。当前蓝绿同库阶段以内进程

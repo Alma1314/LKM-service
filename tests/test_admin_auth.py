@@ -1,451 +1,208 @@
-"""后台管理系统 cookie 会话认证的 HTTP 集成测试。
+"""后台登录态 seam-only / 危险操作 2FA 门禁的 HTTP 测试（S5-A2 Step1 重组）。
 
-覆盖：登录(成功/非 admin 拒绝/凭证错)、带 cookie 访问 /me、无 cookie 拒绝、
-      refresh 换新 access、logout 清会话。遵循 conftest 的 db+client 内存库模式。
+S5-A2 Step1 后拓扑：
+- **会话写面**（login/refresh/logout/2fa）迁 AUTH 进程（auth_app），语义已在
+  ``test_admin_auth_process.py`` 用 ``auth_app_client`` 逐项覆盖（这里不再机械重复）。
+- **monolith** 只保留 /admin/auth/me 这一登录态读面 + 各后台保护端点，其
+  ``require_admin``/``require_admin_2fa`` 改为 **seam-only**（business 不再本地读 auth
+  users，改经 ``auth_seam_realm`` 把裁决指到 auth 独立库真值）；seam 未启用 → fail-closed。
+
+本文件回归锚（均在 monolith ``client`` + ``auth_seam_realm`` seam realm 上、真 auth_db）：
+- me：无 cookie 403；seam 关闭(未配 seam)即便带有效 admin cookie 也 403（fail-closed）；
+  seam 开 + admin(role super_admin + admin_dashboard 持仓) → 200 返回 id/account_level/role。
+- seam 裁决 revoke(non-ok) → monolith fail-closed 403（会话失效/锁定/改密撤销缝降级握接）。
+- danger（content delete, require_admin_2fa）：无 mfa cookie → 401 code=4；
+  带 mfa(step-up 后) cookie → 越过门禁抵达 service（不存在 item → 404）。
+  会话 2FA/step-up 自身由 test_admin_auth_process 在 auth_app 覆盖；此处验证其产物 mfa
+  cookie 在 monolith seam 侧被采纳为 danger 通过凭据。
+
+RolePermission(super_admin 默认 grants) 与内容表仍在业务 realm(Base)，由 ``db`` 直插。
 """
 
-import datetime
-from typing import Any
-
-from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.admin.deps import COOKIE_NAME, COOKIE_PATH, create_admin_access_token
 from app.modules.admin.models import RolePermission
-from app.modules.auth.models import Profile, RefreshToken, User
-from app.modules.auth.security import hashpwd
-from app.modules.rbac.permissions import Permission
+from app.modules.auth.models import User
+from tests.conftest import DB, Client, auth_user_uid
+
+# 拆库后业务 realm 无 users：本文件一律经 auth realm 造 User + 从 auth_db ORM row mint
+# admin cookie。权限点落在业务 realm(RolePermission)。auth_seam_realm 把 monolith 鉴权缝
+# 指到本测 auth_db —— seam-only 的后台 require_admin/danger 据此裁决（business 绝不本地读 auth）。
 
 
-async def _create_user(
-    db: AsyncSession,
-    username: str,
-    password: str = "secret123456",
-    account_level: str = "local",
+async def _mk_admin(
+    auth_db: AsyncSession, uname: str, *, role: str = "super_admin"
 ) -> User:
-    user = User(
-        username=username,
-        email=f"{username}@example.com",
-        hashed_password=await hashpwd(password),
-        account_level=account_level,
+    """在 auth realm 造一个 admin 账号（account_level=admin）+ 指定复合角色 Profile。"""
+    au = await auth_user_uid(
+        auth_db,
+        username=uname,
+        account_level="admin",
+        role=role,
     )
-    db.add(user)
-    await db.flush()
-    # 后台 RBAC：admin 用户缺省为 super_admin 角色（/me/数据/删除端点需 admin 域权限点）
-    if account_level == "admin":
-        db.add(Profile(user_id=user.id, role="super_admin", nickname=username))
+    row = (await auth_db.execute(select(User).where(User.id == au.id))).scalar_one()
+    return row
+
+
+async def _grant_super_admin(db: DB, *perms: str) -> None:
+    """给 admin:super_admin 授指定权限点（每测独立 schema → 直接插无冲突）。"""
+    for p in perms:
+        db.add(RolePermission(role_name="admin:super_admin", permission=p))
     await db.commit()
-    await db.refresh(user)
-    return user
 
 
-async def _grant(db: AsyncSession, perm: Permission) -> None:
-    """给 admin:super_admin 授指定权限点（幂等，复刻 super_admin DEFAULT_GRANTS）。"""
-    exists = await db.scalar(
-        select(RolePermission.id).where(
-            RolePermission.role_name == "admin:super_admin",
-            RolePermission.permission == perm.value,
-        )
-    )
-    if exists is None:
-        db.add(RolePermission(role_name="admin:super_admin", permission=perm.value))
-    await db.flush()
+def _set_admin_cookie(client: Client, user: User, *, mfa: bool = False) -> None:
+    """把该 admin(从 auth realm ORM) 的后台 access cookie 装进 monolith client jar。
 
-
-def _login(
-    client: AsyncClient, username: str = "root", password: str = "secret123456"
-) -> Any:
-    """用客户端登录，返回响应。httpx 会把 Set-Cookie 自动持久化到 client.cookies。"""
-    return client.post(
-        "/api/v1/admin/auth/login",
-        json={"username": username, "password": password},
-    )
+    与 auth_app 签发的 cookie 同源（settings.jwt_secret + admin_session audience），故 seam/
+    require_admin_2fa 解码一致。mfa=True 表示已过危险操作 step-up(1h 信任) —— 与 test_admin_auth
+    _process 经 auth /admin/auth/2fa 产物同形（cookie 契约单一）。
+    """
+    tok = create_admin_access_token(user, mfa_verified=mfa)
+    client.cookies.set(COOKIE_NAME, tok, path=COOKIE_PATH)
 
 
 # ===================================================================
-# 登录
-# ===================================================================
-
-
-class TestAdminLogin:
-    async def should_login_admin_and_set_cookies(
-        self, db: AsyncSession, client: AsyncClient
-    ):
-        await _create_user(db, username="root", account_level="admin")
-        resp = await _login(client, "root")
-        assert resp.status_code == 200
-        body: dict[str, Any] = resp.json()
-        assert body["code"] == 0
-        assert body["data"]["account_level"] == "admin"
-        # httpx 已把 Set-Cookie 持久化到客户端 jar
-        assert client.cookies.get("admin_session")
-        assert client.cookies.get("admin_refresh")
-
-    async def should_reject_wrong_password(self, db: AsyncSession, client: AsyncClient):
-        await _create_user(db, username="root", account_level="admin")
-        resp = await client.post(
-            "/api/v1/admin/auth/login",
-            json={"username": "root", "password": "wrong-pass"},
-        )
-        assert resp.status_code == 403
-
-    async def should_reject_non_admin_account(
-        self, db: AsyncSession, client: AsyncClient
-    ):
-        await _create_user(db, username="member1", account_level="normal")
-        resp = await client.post(
-            "/api/v1/admin/auth/login",
-            json={"username": "member1", "password": "secret123456"},
-        )
-        assert resp.status_code == 403
-        # 即使密码正确，普通用户不得进后台
-        body: dict[str, Any] = resp.json()
-        assert body["msg"] == "无后台访问权限"
-
-    async def should_reject_unknown_username(
-        self, db: AsyncSession, client: AsyncClient
-    ):
-        resp = await client.post(
-            "/api/v1/admin/auth/login",
-            json={"username": "ghost", "password": "secret123456"},
-        )
-        assert resp.status_code == 403
-
-    async def should_store_admin_refresh_with_kind(
-        self, db: AsyncSession, client: AsyncClient
-    ):
-        """后台登录生成的 refresh 令牌必须落库为 kind='admin'（与前台 web 隔离）。"""
-        await _create_user(db, username="kind1", account_level="admin")
-        login = await _login(client, "kind1")
-        assert login.status_code == 200
-        stored = (await db.execute(select(RefreshToken))).scalars().first()
-        assert stored is not None
-        assert stored.kind == "admin"
-
-    async def should_reject_web_refresh_in_admin_endpoint(
-        self, db: AsyncSession, client: AsyncClient
-    ):
-        """前台(web) refresh 令牌不得在后台刷新端点被消费（隔离后方，防跨会话互用）。"""
-        await _create_user(db, username="kind2", account_level="admin")
-        # 直接插入一条 kind='web' 的 refresh，验证后台端点拒绝
-        kind2: User | None = (
-            (await db.execute(select(User).where(User.username == "kind2")))
-            .scalars()
-            .first()
-        )
-        assert kind2 is not None
-        db.add(
-            RefreshToken(
-                user_id=kind2.id,
-                token_hash=(await hashpwd("not-a-real-token"))[0:64],
-                kind="web",
-                mfa_verified=False,
-                expires_at=datetime.datetime.now(datetime.UTC)
-                + datetime.timedelta(days=1),
-                revoked_at=None,
-            )
-        )
-        await db.commit()
-        resp = await client.post("/api/v1/admin/auth/refresh")
-        # 无 admin refresh cookie → 403
-        assert resp.status_code == 403
-
-
-# ===================================================================
-# /me 访问控制
+# /auth/me —— monolith seam-only 登录态读
 # ===================================================================
 
 
 class TestAdminMe:
-    async def should_reject_without_cookie(self, db: AsyncSession, client: AsyncClient):
+    async def should_reject_without_cookie(self, client: Client) -> None:
+        """无 admin cookie → 403 Not logged（任意 seam 状态都拒）。"""
         resp = await client.get("/api/v1/admin/auth/me")
         assert resp.status_code == 403
 
-    async def should_allow_admin_with_access_cookie(
-        self, db: AsyncSession, client: AsyncClient
-    ):
-        await _create_user(db, username="root", account_level="admin")
-        await _grant(db, Permission.admin_dashboard)
-        login = await _login(client, "root")
-        assert login.status_code == 200
-        assert client.cookies.get("admin_session")
+    async def should_fail_closed_when_seam_off(
+        self, db: DB, client: Client, auth_db: AsyncSession
+    ) -> None:
+        """seam 未启用(未开启 seam realm) → 即便带有效 admin cookie 也 fail-closed 403。"""
+        admin = await _mk_admin(auth_db, "seam_off_admin")
+        await _grant_super_admin(db, "admin.dashboard")
+        _set_admin_cookie(client, admin)
+        resp = await client.get("/api/v1/admin/auth/me")
+        # business 不能本地裁决后台真值 → 一律拒（Admin auth service not configured）
+        assert resp.status_code == 403
+        assert resp.json()["msg"] == "Admin auth service not configured"
 
-        # 登录后 Set-Cookie 已持久化，同一 client 自动携带，无需手传
+    async def should_allow_seam_admin(
+        self,
+        db: DB,
+        client: Client,
+        auth_db: AsyncSession,
+        auth_seam_realm: None,
+    ) -> None:
+        """seam 开 + admin(super_admin 持仓 admin.dashboard) → me 200。"""
+        admin = await _mk_admin(auth_db, "seam_me_admin")
+        await _grant_super_admin(db, "admin.dashboard")
+        _set_admin_cookie(client, admin)
+
         resp = await client.get("/api/v1/admin/auth/me")
         assert resp.status_code == 200
-        body: dict[str, Any] = resp.json()
+        body = resp.json()
         assert body["code"] == 0
         assert body["data"]["account_level"] == "admin"
+        assert body["data"]["role"] == "super_admin"
+        assert body["data"]["id"] == int(admin.id)
 
+    async def should_fail_closed_when_seam_verdict_revoked(
+        self,
+        client: Client,
+        auth_db: AsyncSession,
+        monkeypatch,
+    ) -> None:
+        """seam 裁决回 non-ok(改密撤销/会话失效) → monolith me fail-closed 403。
 
-# ===================================================================
-# refresh / logout
-# ===================================================================
+        直接替换 authz seam 判定为「该 admin 已失效」，验证 monolith 不本地回落、按不可用拒。
+        """
+        from app.core.config import settings as _cfg
+        from app.modules.auth import user_http as uh
 
+        admin = await _mk_admin(auth_db, "seam_rev_root")
+        _set_admin_cookie(client, admin)
 
-class TestAdminRefreshAndLogout:
-    async def should_rotate_on_refresh(self, db: AsyncSession, client: AsyncClient):
-        await _create_user(db, username="root", account_level="admin")
-        login = await _login(client, "root")
-        assert login.status_code == 200
+        # seam 开：配 url+token，并让 authz 回“改密后已失效”裁决
+        monkeypatch.setattr(_cfg, "auth_http_url", "http://auth-realm-test")
+        monkeypatch.setattr(_cfg, "auth_http_token", "x")
 
-        # 用已持久化的 refresh cookie 换新 access + 新 refresh
-        resp = await client.post("/api/v1/admin/auth/refresh")
-        assert resp.status_code == 200
-        body: dict[str, Any] = resp.json()
-        assert body["code"] == 0
+        async def _revoked(*, user_id: int, **_: object) -> dict[str, object]:
+            return {
+                "ok": False,
+                "cause": "password_changed",
+                "account_level": None,
+                "role": None,
+            }
 
-    async def should_logout_and_clear(self, db: AsyncSession, client: AsyncClient):
-        await _create_user(db, username="root", account_level="admin")
-        login = await _login(client, "root")
-        assert login.status_code == 200
-
-        logout = await client.post("/api/v1/admin/auth/logout")
-        assert logout.status_code == 200
-
-        # 登出后旧 refresh 已被撤销，再用其刷新 → 应被拒
-        # （httpx jar 里 cookie 已清，需手动塞回旧值验证撤销）
-        again = await client.post("/api/v1/admin/auth/refresh")
-        assert again.status_code == 403
-
-    async def should_reject_reuse_of_old_refresh_after_rotation(
-        self, db: AsyncSession, client: AsyncClient
-    ):
-        # 用独特用户名避开共享内存 admin 登录限流（5 次/300s）在本进程跨用例累计
-        await _create_user(db, username="root_reuse", account_level="admin")
-        login = await _login(client, "root_reuse")
-        assert login.status_code == 200
-
-        old_refresh = client.cookies.get("admin_refresh")
-        assert old_refresh
-
-        first = await client.post("/api/v1/admin/auth/refresh")
-        assert first.status_code == 200
-
-        # 旋转后，旧 refresh 已撤销：清掉旋转后写下的新 cookie（及历史遗留），
-        # 塞回旧值再刷新应被拒。cookie path 须与实际写入的 COOKIE_PATH（/api/v1）一致，
-        # 否则 httpx 会按最具体 path 优先发送旋转后的新 cookie，导致测不到旧值复用。
-        for cp in ("/api/v1", "/api/v1/admin"):
-            client.cookies.delete("admin_refresh", path=cp)
-        client.cookies.set("admin_refresh", old_refresh, path="/api/v1")
-        again = await client.post("/api/v1/admin/auth/refresh")
-        assert again.status_code == 403
-
-
-# ===================================================================
-# 用户列表 / 统计（require_admin 保护）
-# ===================================================================
-
-
-class TestAdminData:
-    async def should_reject_without_cookie(self, db: AsyncSession, client: AsyncClient):
-        assert (await client.get("/api/v1/admin/users")).status_code == 403
-        assert (await client.get("/api/v1/admin/stats")).status_code == 403
-
-    async def should_list_users_hiding_pii_by_default(
-        self, db: AsyncSession, client: AsyncClient
-    ):
-        # 用不重复用户名，避开共享内存 rate limiter 对本进程"admin 用户名登录次数"的计数
-        await _create_user(db, username="data_root1", account_level="admin")
-        await _create_user(db, username="member_1", account_level="normal")
-        await _grant(db, Permission.admin_users_manage)
-        await _login(client, "data_root1")
-
-        resp = await client.get("/api/v1/admin/users")
-        assert resp.status_code == 200
-        body: dict[str, Any] = resp.json()
-        data: dict[str, Any] = body["data"]
-        assert data["total"] == 2
-        items: list[Any] = data["items"]
-        names = {it["username"] for it in items}
-        assert names == {"data_root1", "member_1"}
-        # 默认不返回邮箱（PII 隐藏）
-        assert all(it["email"] is None for it in items)
-
-    async def should_include_pii_when_requested(
-        self, db: AsyncSession, client: AsyncClient
-    ):
-        await _create_user(db, username="data_root2", account_level="admin")
-        await _grant(db, Permission.admin_users_manage)
-        await _login(client, "data_root2")
-        resp = await client.get("/api/v1/admin/users", params={"include_pii": "true"})
-        assert resp.status_code == 200
-        body: dict[str, Any] = resp.json()
-        data: dict[str, Any] = body["data"]
-        items: list[Any] = data["items"]
-        email = next(
-            (it["email"] for it in items if it["username"] == "data_root2"), None
-        )
-        assert email == "data_root2@example.com"
-
-    async def should_filter_users_by_keyword(
-        self, db: AsyncSession, client: AsyncClient
-    ):
-        await _create_user(db, username="data_root3", account_level="admin")
-        await _create_user(db, username="other", account_level="normal")
-        await _grant(db, Permission.admin_users_manage)
-        await _login(client, "data_root3")
-        resp = await client.get("/api/v1/admin/users", params={"keyword": "data_root"})
-        body: dict[str, Any] = resp.json()
-        data: dict[str, Any] = body["data"]
-        assert data["total"] == 1
-        assert data["items"][0]["username"] == "data_root3"
-
-    async def should_return_stats(self, db: AsyncSession, client: AsyncClient):
-        await _create_user(db, username="data_root4", account_level="admin")
-        await _grant(db, Permission.admin_dashboard)
-        await _login(client, "data_root4")
-        resp = await client.get("/api/v1/admin/stats")
-        assert resp.status_code == 200
-        body: dict[str, Any] = resp.json()
-        data: dict[str, Any] = body["data"]
-        assert data["user_count"] >= 1
-        assert data["post_count"] == 0
-        assert data["file_count"] == 0
-
-
-# ===================================================================
-# get_real_client_ip：不信任客户端伪造的 XFF（防绕过 IP 级限流）
-# ===================================================================
-
-
-class TestGetRealClientIp:
-    def should_not_trust_spoofed_xff(self):
-        """伪造 X-Forwarded-For 不应改变取到的 IP——应用层不手动信 XFF，依赖 uvicorn proxy-headers。"""
-        from starlette.requests import Request as StarletteRequest
-
-        scope: dict[str, Any] = {
-            "type": "http",
-            "method": "POST",
-            "path": "/api/v1/admin/auth/login",
-            "headers": [(b"x-forwarded-for", b"1.2.3.4")],
-            "client": ("9.9.9.9", 12345),
-            "scheme": "http",
-            "query_string": b"",
-            "server": ("testserver", 80),
-        }
-        req = StarletteRequest(scope)
-        from app.modules.admin.deps import get_real_client_ip
-
-        # 即使带了伪造 XFF，也应返回真实 client.host，而非 1.2.3.4
-        assert get_real_client_ip(req) == "9.9.9.9"
-
-    def should_return_unknown_without_client(self):
-        """client 缺失时回退 'unknown'，不崩溃。"""
-        from starlette.requests import Request as StarletteRequest
-
-        scope: dict[str, Any] = {
-            "type": "http",
-            "method": "POST",
-            "path": "/x",
-            "headers": [],
-            "client": None,
-            "scheme": "http",
-            "query_string": b"",
-            "server": ("testserver", 80),
-        }
-        req = StarletteRequest(scope)
-        from app.modules.admin.deps import get_real_client_ip
-
-        assert get_real_client_ip(req) == "unknown"
-
-
-# ===================================================================
-# 改密撤销：updated_at 晚于 token iat 时旧 admin cookie 应失效（与前台一致）
-# ===================================================================
-
-
-class TestAdminPasswordChangeInvalidation:
-    async def should_invalidate_old_cookie_after_password_change(
-        self, db: AsyncSession, client: AsyncClient
-    ):
-        await _create_user(db, username="root_pwd", account_level="admin")
-        login = await _login(client, "root_pwd")
-        assert login.status_code == 200
-        assert client.cookies.get("admin_session")
-
-        user = (
-            (await db.execute(select(User).where(User.username == "root_pwd")))
-            .scalars()
-            .first()
-        )
-        assert user is not None
-        # 模拟改密：updated_at 晚于 token 签发时间（iat）超过 5 秒容差
-        user.updated_at = datetime.datetime.now(datetime.UTC) + datetime.timedelta(
-            seconds=10
-        )
-        await db.commit()
+        monkeypatch.setattr(uh, "authorize_via_seam", _revoked)
 
         resp = await client.get("/api/v1/admin/auth/me")
-        assert resp.status_code == 403
+        assert resp.status_code == 403  # Admin account state invalid or unavailable
 
 
 # ===================================================================
-# 管理员删除用户内容：require_admin_2fa 门禁（未 step-up → 401 code=4）
+# danger —— require_admin_2fa 内容删除门禁（monolith + seam）
 # ===================================================================
 
-
-def _totp_code_now(secret: str) -> str:
-    """生成当前时间步的 TOTP 6 位码（与 security.verify_totp window=1 对齐）。"""
-    import base64
-    import hashlib
-    import hmac
-    import struct
-    import time
-
-    key = base64.b32decode(secret, casefold=True)
-    counter = int(time.time()) // 30
-    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
-    offset = digest[-1] & 0x0F
-    code = (
-        struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
-    ) % 1_000_000
-    return f"{code:06d}"
+CONTENT_DELETE = "/api/v1/admin/content/item/99999"
 
 
-class TestAdminContentDelete:
-    """DELETE /admin/content/* —— 危险写操作必须持有后台 2FA 信任。"""
+class TestAdminDangerContentDelete:
+    async def should_gate_without_mfa(
+        self,
+        db: DB,
+        client: Client,
+        auth_db: AsyncSession,
+        auth_seam_realm: None,
+    ) -> None:
+        """seam admin 带**未 step-up**(无 mfa) cookie 删除 → 401 code=4 MFA_REQUIRED。"""
+        admin = await _mk_admin(auth_db, "danger_nomfa")
+        await _grant_super_admin(db, "admin.content_review")
+        _set_admin_cookie(client, admin, mfa=False)
 
-    async def _enable_admin_totp(self, db: AsyncSession, user_id: int) -> str:
-        """给管理员建一个已启用 TOTP 记录，返回明文 secret。"""
-        from app.modules.auth.models import TOTP
-        from app.modules.auth.security import encrypt_secret, generate_totp_secret
-
-        secret = generate_totp_secret()
-        db.add(TOTP(user_id=user_id, secret=encrypt_secret(secret), enabled=True))
-        await db.commit()
-        return secret
-
-    async def should_gate_without_2fa(self, db: AsyncSession, client: AsyncClient):
-        """未做 step-up 的 admin 会话调删除 → 401 code=4（MFA_REQUIRED）。"""
-        await _create_user(db, username="adm_del", account_level="admin")
-        login = await _login(client, "adm_del")
-        assert login.status_code == 200
-
-        resp = await client.delete("/api/v1/admin/content/item/99999")
+        resp = await client.delete(CONTENT_DELETE)
         assert resp.status_code == 401
         assert resp.json()["code"] == 4  # CommonErr.MFA_REQUIRED
 
     async def should_pass_gate_after_stepup(
-        self, db: AsyncSession, client: AsyncClient
-    ):
-        """完成 admin step-up（POST /admin/auth/2fa）后，删除能走到 service（不存在的帖→404）。"""
-        await _create_user(db, username="adm_del2", account_level="admin")
-        await _grant(db, Permission.admin_content_review)
-        login = await _login(client, "adm_del2")
-        assert login.status_code == 200
+        self,
+        db: DB,
+        client: Client,
+        auth_db: AsyncSession,
+        auth_seam_realm: None,
+    ) -> None:
+        """seam admin 已 step-up(mfa cookie) → 越过 2FA 门禁触达 service（不存在 item→404）。
 
-        user = (
-            (await db.execute(select(User).where(User.username == "adm_del2")))
-            .scalars()
-            .first()
-        )
-        secret = await self._enable_admin_totp(db, user.id)
-        stepup = await client.post(
-            "/api/v1/admin/auth/2fa", json={"code": _totp_code_now(secret)}
-        )
-        assert stepup.status_code == 200
+        mfa cookie 由 auth_app 的 /admin/auth/2fa 同源签发；此处直接以同契约 cookie 代用
+        （文档见 test_admin_auth_process —— auth 进程 step-up 兜底用例）。"""
+        admin = await _mk_admin(auth_db, "danger_stepup")
+        await _grant_super_admin(db, "admin.content_review")
+        _set_admin_cookie(client, admin, mfa=True)
 
-        # 已带 2FA 信任：删除不存在的内容项应到达 service 层 → 404 CONTENT_NOT_FOUND，而非 401
-        resp = await client.delete("/api/v1/admin/content/item/99999")
+        resp = await client.delete(CONTENT_DELETE)
+        # 非 401 MFA_REQUIRED：已穿过门禁，content 不存在 → 404
         assert resp.status_code == 404
+
+    async def should_reject_mfa_trust_expired_cookie(
+        self,
+        db: DB,
+        client: Client,
+        auth_db: AsyncSession,
+        auth_seam_realm: None,
+    ) -> None:
+        """mfa_at 远超 1h 信任窗 → danger 仍拒（401 code=4），即烂 mfa 信任不可放行。"""
+        import datetime
+
+        admin = await _mk_admin(auth_db, "danger_stale")
+        await _grant_super_admin(db, "admin.content_review")
+        # 造一「盖章在 >1h 前」的 step-up cookie → 过期
+        old = int(
+            (datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=2)).timestamp()
+        )
+        tok = create_admin_access_token(admin, mfa_verified=True, mfa_at=old)
+        client.cookies.set(COOKIE_NAME, tok, path=COOKIE_PATH)
+
+        resp = await client.delete(CONTENT_DELETE)
+        assert resp.status_code == 401
+        assert resp.json()["code"] == 4

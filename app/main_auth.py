@@ -32,8 +32,8 @@ from app.core import redis as redis_client
 from app.core.config import settings
 from app.core.err import BizError, map_err, resp_json
 from app.db.session import dispose_engine
-from app.modules.auth import router as auth_router
 from app.modules.auth import (
+    admin_router,
     router_2fa,
     router_authz,
     router_oauth,
@@ -43,11 +43,15 @@ from app.modules.auth import (
     router_recovery,
     router_settings,
 )
+from app.modules.auth import (
+    router as auth_router,
+)
 
 # 本进程装配的 auth 面（子集口径见模块 docstring）：独立于业务 registry，
 # 显式 import 各 auth router 聚合，不触发非 auth 模块副作用。
 _AUTH_ROUTERS = [
     auth_router.router,
+    admin_router.router,  # S5-A2 Step0：后台 admin 会话写面（auth 域自足版，DB=独立 auth 库）
     router_2fa.router,
     router_authz.router,
     router_oauth.router,
