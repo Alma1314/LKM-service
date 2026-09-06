@@ -6,9 +6,11 @@
 """
 
 from app.core.config import settings
-from app.core.err import BizError
+from app.core.err import (
+    AuthErr,  # M3 peer: 并入共享 shared err
+    BizError,
+)
 from app.core.redis_limiter import RedisRateLimiter
-from app.modules.auth.errors import AuthErr
 
 
 async def check_password_login_rate_limit(ip_address: str) -> None:

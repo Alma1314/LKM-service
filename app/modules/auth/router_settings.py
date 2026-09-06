@@ -19,8 +19,8 @@ from sqlalchemy.orm import selectinload
 
 from app.core.common import ApiResp
 from app.core.err import BizError, CommonErr, respond
+from app.db.auth_session import get_auth_session
 from app.db.repo import get_or_raise
-from app.db.session import get_session
 from app.modules.auth import service_2fa, service_auth
 from app.modules.auth.deps import (
     CurrentUser,
@@ -77,7 +77,7 @@ async def bind_email_request(
     background_tasks: BackgroundTasks,
     _cur: CurrentUser = Depends(get_current_user),
     email_provider: EmailProvider = Depends(get_email_provider),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> dict[str, Any]:
     """请求用于绑定的邮箱验证码。"""
     # 检查邮箱是否已被占用
@@ -105,7 +105,7 @@ async def bind_email_request(
 async def bind_email_verify(
     body: BindEmailVerify,
     cur: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> dict[str, Any]:
     """验证邮箱验证码并将邮箱绑定到当前用户。"""
     await consume_email_code(db, body.email, body.code, _BIND_PURPOSE)
@@ -145,7 +145,7 @@ async def bind_phone_request(
     background_tasks: BackgroundTasks,
     _cur: CurrentUser = Depends(get_current_user),
     sms_provider: SmsProvider = Depends(get_sms_provider),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> dict[str, Any]:
     """请求用于绑定的短信验证码。"""
     # 检查手机号是否已被占用
@@ -173,7 +173,7 @@ async def bind_phone_request(
 async def bind_phone_verify(
     body: BindPhoneVerify,
     cur: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> dict[str, Any]:
     """验证手机验证码并将手机号绑定到当前用户。"""
     await consume_phone_code(db, body.phone, body.code, _BIND_PURPOSE)
@@ -210,7 +210,7 @@ async def bind_phone_verify(
 @respond
 async def get_settings(
     cur: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> dict[str, Any]:
     """返回当前用户的绑定状态（邮箱 / 手机号 / GitHub / 2FA）。"""
     user = await get_or_raise(db, User, AuthErr.USER_NOT_FOUND, User.id == cur.id)
@@ -243,7 +243,7 @@ async def unbind(
     binding_type: str,
     body: UnbindRequest,
     cur: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> dict[str, Any]:
     """解绑邮箱 / 手机号 / GitHub。已开启 2FA 时需携带 TOTP 码或恢复码二次验证。"""
     if binding_type not in _ALLOWED_UNBIND:

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.common import ApiResp
 from app.core.err import BizError, CommonErr, respond
-from app.db.session import get_session
+from app.db.auth_session import get_auth_session
 from app.modules.auth.deps import CurrentUser, get_current_user
 from app.modules.auth.schemas import OnboardingState, OnboardingStepRequest
 from app.modules.auth.service_onboarding import (
@@ -30,7 +30,7 @@ ONBOARDING_STEPS = (1, 2, 3, 4)
 @respond
 async def get_onboarding(
     cur: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> OnboardingState:
     """读取当前用户引导进度；未开始时返回默认 step=1，不 404。"""
     return await get_onboarding_state(db, cur.id)
@@ -42,7 +42,7 @@ async def put_onboarding_step(
     step: int,
     body: OnboardingStepRequest,
     cur: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> OnboardingState:
     """提交某一步的分步数据并推进到该步。"""
     if step not in ONBOARDING_STEPS:
@@ -54,7 +54,7 @@ async def put_onboarding_step(
 @respond
 async def skip_onboarding(
     cur: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> OnboardingState:
     """整体跳过引导并视为完成。"""
     return await mark_onboarding_skipped(db, cur.id)

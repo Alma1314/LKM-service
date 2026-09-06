@@ -129,7 +129,7 @@ ignore_imports = [
     "app.core.task_registry -> app.modules.blog.tasks",  # 任务注册枢纽
     "app.core.task_registry -> app.modules.files.tasks",  # 任务注册枢纽
     "app.core.task_registry -> app.modules.points.tasks",  # 任务注册枢纽
-    "app.core.throttle -> app.modules.auth.errors",  # 限流复用账户锁定语义
+    # app.core.throttle -> app.modules.auth.errors 已随 M3-peer 摘环移除(AuthErr 并 app.core.err)
     "app.core.worker_dlq -> app.modules.admin.models",  # worker 消费业务模型(DlqMessage)
 ]
 
@@ -152,7 +152,7 @@ ignore_imports = [
     "app.db.model_registry -> app.modules.points.models",
     "app.db.model_registry -> app.modules.projects.models",
     "app.db.model_registry -> app.modules.starhope.models",
-    "app.db.session -> app.modules.auth.errors",  # 会话构造错误码
+    # app.db.session -> app.modules.auth.errors 已随 M3-peer 摘环移除(AuthErr 并 app.core.err)
 ]
 
 [[tool.importlinter.contracts]]

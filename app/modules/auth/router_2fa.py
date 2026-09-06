@@ -17,9 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.common import ApiResp
 from app.core.err import BizError, respond
+from app.db.auth_session import get_auth_session
 from app.db.base import expires_at, now_iso
 from app.db.repo import consume_once, get_or_raise
-from app.db.session import get_session
 from app.modules.auth import security, service_2fa
 from app.modules.auth.deps import CurrentUser, RequireLevel, get_current_user
 from app.modules.auth.errors import AuthErr
@@ -65,7 +65,7 @@ def _decode_setup_temp_token(temp_token: str) -> tuple[str, int]:
 @respond
 async def setup_2fa_begin(
     cur: CurrentUser = RequireLevel("normal"),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> dict[str, Any]:
     """开始 TOTP 设置。返回密钥和二维码 URI。"""
     result = await service_2fa.setup_2fa_begin(db, cur.id)
@@ -76,7 +76,7 @@ async def setup_2fa_begin(
 @respond
 async def setup_2fa_temp(
     temp_token: str,
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> dict[str, Any]:
     """使用登录时获得的临时令牌开始 TOTP 设置（管理员强制设置）。"""
     token_hash, user_id = _decode_setup_temp_token(temp_token)
@@ -104,7 +104,7 @@ async def setup_2fa_temp(
 async def setup_2fa_complete_temp(
     temp_token: str,
     code: str,
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> dict[str, Any]:
     """使用临时令牌完成 TOTP 设置（管理员强制设置路径）。"""
     token_hash, user_id = _decode_setup_temp_token(temp_token)
@@ -151,7 +151,7 @@ async def setup_2fa_complete_temp(
 async def setup_2fa_complete(
     body: TOTPSetupCompleteRequest,
     cur: CurrentUser = RequireLevel("normal"),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> dict[str, Any]:
     """通过验证 TOTP 码完成 TOTP 设置。返回恢复码。"""
     result = await service_2fa.setup_2fa_complete(db, cur.id, body.code)
@@ -162,7 +162,7 @@ async def setup_2fa_complete(
 @respond
 async def confirm_recovery_codes(
     cur: CurrentUser = RequireLevel("normal"),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> dict[str, Any]:
     """确认用户已保存其恢复码。"""
     return await service_2fa.confirm_recovery_codes_saved(db, cur.id)
@@ -172,7 +172,7 @@ async def confirm_recovery_codes(
 @respond
 async def verify_2fa(
     body: TOTPVerifyRequest,
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> dict[str, Any]:
     """在登录时使用临时令牌和 TOTP / 恢复码验证 2FA。"""
     # 按用户分桶（而非全站共享）：防止单个攻击者刷错耗尽共享额度封锁所有用户的 2FA
@@ -201,7 +201,7 @@ async def verify_2fa(
 async def disable_2fa(
     body: TOTPDisableRequest,
     cur: CurrentUser = RequireLevel("normal"),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> dict[str, Any]:
     """为当前用户禁用 2FA。需要有效的 TOTP 码或恢复码。"""
     result = await service_2fa.disable_2fa(
@@ -214,7 +214,7 @@ async def disable_2fa(
 @respond
 async def get_2fa_status(
     cur: CurrentUser = RequireLevel("normal"),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> dict[str, Any]:
     """返回当前用户 2FA 是否已开启。"""
     totp = await service_2fa.get_enabled_totp(db, cur.id)
@@ -226,7 +226,7 @@ async def get_2fa_status(
 async def step_up_2fa(
     body: TOTPDisableRequest,
     cur: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> dict[str, Any]:
     """前台危险操作 step-up：验证当前已登录用户的第二因素（TOTP 或恢复码），通过后签发带 2FA 信任的 access token。
 

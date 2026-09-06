@@ -212,6 +212,33 @@ async def client(
 
 
 @pytest.fixture
+async def auth_front_client(auth_db: AsyncSession) -> AsyncGenerator[AsyncClient]:
+    """前台 auth HTTP 宿主（S5 slice-1 收敛样板）：单体 monolith + auth 库会话。
+
+    前台 /auth/* 路由与会话依赖经上述收敛已绑 ``get_auth_session``（auth 独立库）。
+    本 fixture 起单体的 ``app.main.app``(ASGITransport, 不触发 lifespan)，并把该通道
+    ``get_auth_session`` override 到本测 ``auth_db`` 的 AuthBase 专属 schema —— 使前台
+    auth 路由的 User/TOTP/RefreshToken 读写落到该测量 auth 真值，与测试体直呼
+    ``auth_db``(flush 未 commit 即 POST→GET 同见) 共享同一长活会话。
+
+    相对既有 ``client``（get_session→业务 db, 服务业务域端点）语义**不变**：本 fixture 专用于
+    "前台认证语义" 端点（业务域各自仍走 ``client``），两者 override 键互不污染。
+    """
+    from app.db.auth_session import get_auth_session
+
+    async def override_get_auth() -> AsyncGenerator[AsyncSession]:
+        yield auth_db
+
+    app.dependency_overrides[get_auth_session] = override_get_auth
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
+    finally:
+        app.dependency_overrides.pop(get_auth_session, None)
+
+
+@pytest.fixture
 async def auth_app_client(auth_db: AsyncSession) -> AsyncGenerator[AsyncClient]:
     """AUTH 独立进程 admin 会话写面相的 HTTP 客户端（S5-A2 Step0）。
 

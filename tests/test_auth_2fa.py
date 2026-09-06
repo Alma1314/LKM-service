@@ -288,27 +288,27 @@ class TestVerify2FA:
 
 
 class TestDisable2FA:
-    async def should_disable_totp_and_clear_data(self, db: AsyncSession):
-        user = await _create_user(db, username="disableuser")
-        secret = await _enable_totp_for_user(db, user.id)
+    async def should_disable_totp_and_clear_data(self, auth_db: AsyncSession):
+        user = await _create_user(auth_db, username="disableuser")
+        secret = await _enable_totp_for_user(auth_db, user.id)
 
         # Add a recovery code
         code_hash = hashlib.sha256(b"dummy-recovery").hexdigest()
-        db.add(RecoveryCode(user_id=user.id, code_hash=code_hash, used=False))
-        await db.flush()
+        auth_db.add(RecoveryCode(user_id=user.id, code_hash=code_hash, used=False))
+        await auth_db.flush()
 
         code = _generate_totp_code(secret)
-        result = await _svc().disable_2fa(db, user.id, code)
+        result = await _svc().disable_2fa(auth_db, user.id, code)
         assert result["message"] == "2FA disabled"
 
-        totp_record = await _get(db, TOTP, TOTP.user_id == user.id)
+        totp_record = await _get(auth_db, TOTP, TOTP.user_id == user.id)
         assert totp_record.enabled is False
         assert totp_record.secret == ""
 
         # Recovery codes should be deleted
         rcs = (
             (
-                await db.execute(
+                await auth_db.execute(
                     select(RecoveryCode).where(RecoveryCode.user_id == user.id)
                 )
             )
@@ -317,32 +317,32 @@ class TestDisable2FA:
         )
         assert len(rcs) == 0
 
-    async def should_reject_when_not_enabled(self, db: AsyncSession):
-        user = await _create_user(db, username="notenabled")
+    async def should_reject_when_not_enabled(self, auth_db: AsyncSession):
+        user = await _create_user(auth_db, username="notenabled")
         with pytest.raises(BizError) as exc:
-            await _svc().disable_2fa(db, user.id, "123456")
+            await _svc().disable_2fa(auth_db, user.id, "123456")
         assert exc.value.errcode == AuthErr.TOTP_NOT_ENABLED
 
-    async def should_downgrade_admin_to_normal(self, db: AsyncSession):
-        user = await _create_user(db, username="admin2fa", account_level="admin")
-        secret = await _enable_totp_for_user(db, user.id)
+    async def should_downgrade_admin_to_normal(self, auth_db: AsyncSession):
+        user = await _create_user(auth_db, username="admin2fa", account_level="admin")
+        secret = await _enable_totp_for_user(auth_db, user.id)
 
         code = _generate_totp_code(secret)
-        result = await _svc().disable_2fa(db, user.id, code)
+        result = await _svc().disable_2fa(auth_db, user.id, code)
         assert result["message"] == "2FA disabled"
 
         # Verify admin downgrade
         user_id = user.id
-        db.expire_all()
-        user = await _get(db, User, User.id == user_id)
+        auth_db.expire_all()
+        user = await _get(auth_db, User, User.id == user_id)
         assert user.account_level == "normal"
 
-    async def should_reject_invalid_code(self, db: AsyncSession):
-        user = await _create_user(db, username="wrongcodedisable")
-        await _enable_totp_for_user(db, user.id)
+    async def should_reject_invalid_code(self, auth_db: AsyncSession):
+        user = await _create_user(auth_db, username="wrongcodedisable")
+        await _enable_totp_for_user(auth_db, user.id)
 
         with pytest.raises(BizError) as exc:
-            await _svc().disable_2fa(db, user.id, "000000")
+            await _svc().disable_2fa(auth_db, user.id, "000000")
         assert exc.value.errcode == AuthErr.TOTP_CODE_INVALID
 
 
@@ -354,25 +354,25 @@ class TestGet2FAStatus:
 
         return json.loads(response.body.decode())
 
-    async def should_return_false_when_not_enabled(self, db: AsyncSession):
-        user = await _create_user(db, username="statusoff")
+    async def should_return_false_when_not_enabled(self, auth_db: AsyncSession):
+        user = await _create_user(auth_db, username="statusoff")
         from app.modules.auth.router_2fa import get_2fa_status
 
         data = await self._unwrap(
             await get_2fa_status(
-                cur=_FakeCurrentUser(user.id, account_level="normal"), db=db
+                cur=_FakeCurrentUser(user.id, account_level="normal"), db=auth_db
             )
         )
         assert data["data"] == {"enabled": False}
 
-    async def should_return_true_when_enabled(self, db: AsyncSession):
-        user = await _create_user(db, username="statuson")
-        await _enable_totp_for_user(db, user.id)
+    async def should_return_true_when_enabled(self, auth_db: AsyncSession):
+        user = await _create_user(auth_db, username="statuson")
+        await _enable_totp_for_user(auth_db, user.id)
         from app.modules.auth.router_2fa import get_2fa_status
 
         data = await self._unwrap(
             await get_2fa_status(
-                cur=_FakeCurrentUser(user.id, account_level="normal"), db=db
+                cur=_FakeCurrentUser(user.id, account_level="normal"), db=auth_db
             )
         )
         assert data["data"] == {"enabled": True}
@@ -419,38 +419,37 @@ def _auth(token: str) -> dict[str, str]:
 
 
 class TestStepUp2FA:
-    """POST /auth/2fa/step-up —— 已验证会话基础上补验 TOTP，签发带 mfa 信任的新 access token。"""
+    """POST /auth/2fa/step-up —— 已验证会话基础上补验 TOTP，签发带 mfa 信任的新 access token。
 
-    async def _make_authed_user(
-        self, db: AsyncSession, username: str
-    ) -> tuple[User, str]:
-        user = await _create_user(db, username=username)
+    S5 收敛后为前台认证语义端点：走 :ref:`auth_front_client`(monolith + auth 库会话) 并把用户
+    建在 auth 独立库 schema(auth_db) —— 证明 auth router/deps 已绑 ``get_auth_session``。
+    """
+
+    async def should_reject_wrong_code(
+        self, auth_front_client: Any, auth_db: AsyncSession
+    ):
+        user = await _create_user(auth_db, username="stepup_bad")
+        await _enable_totp_for_user(auth_db, user.id)
         token = create_access_token(
             user_id=user.id, account_level="normal", role="member"
         )
-        return user, token
-
-    async def should_reject_wrong_code(self, client: Any, db: AsyncSession):
-        user = await _create_user(db, username="stepup_bad")
-        await _enable_totp_for_user(db, user.id)
-        token = create_access_token(
-            user_id=user.id, account_level="normal", role="member"
-        )
-        resp = await client.post(
+        resp = await auth_front_client.post(
             "/api/v1/auth/2fa/step-up", headers=_auth(token), json={"code": "000000"}
         )
         # verify_user_totp 失败抛 TOTP_CODE_INVALID -> HTTP 400
         assert resp.status_code == 400
         assert resp.json()["code"] != 0
 
-    async def should_issue_mfa_token_on_valid_code(self, client: Any, db: AsyncSession):
-        user = await _create_user(db, username="stepup_ok")
-        secret = await _enable_totp_for_user(db, user.id)
+    async def should_issue_mfa_token_on_valid_code(
+        self, auth_front_client: Any, auth_db: AsyncSession
+    ):
+        user = await _create_user(auth_db, username="stepup_ok")
+        secret = await _enable_totp_for_user(auth_db, user.id)
         token = create_access_token(
             user_id=user.id, account_level="normal", role="member"
         )
         code = _generate_totp_code(secret)
-        resp = await client.post(
+        resp = await auth_front_client.post(
             "/api/v1/auth/2fa/step-up", headers=_auth(token), json={"code": code}
         )
         assert resp.status_code == 200
@@ -460,25 +459,27 @@ class TestStepUp2FA:
         assert payload["mfa"] is True
         assert payload["mfa_at"] is not None
 
-    async def should_accept_recovery_code(self, client: Any, db: AsyncSession):
+    async def should_accept_recovery_code(
+        self, auth_front_client: Any, auth_db: AsyncSession
+    ):
         """step-up 走恢复码兜底：正确恢复码签发 mfa token，错误恢复码被拒。"""
         import hashlib
 
-        user = await _create_user(db, username="stepup_recovery")
-        await _enable_totp_for_user(db, user.id)
-        db.add(
+        user = await _create_user(auth_db, username="stepup_recovery")
+        await _enable_totp_for_user(auth_db, user.id)
+        auth_db.add(
             RecoveryCode(
                 user_id=user.id,
                 code_hash=hashlib.sha256(b"rc-abc123").hexdigest(),
                 used=False,
             )
         )
-        await db.flush()
+        await auth_db.flush()
         token = create_access_token(
             user_id=user.id, account_level="normal", role="member"
         )
 
-        ok = await client.post(
+        ok = await auth_front_client.post(
             "/api/v1/auth/2fa/step-up",
             headers=_auth(token),
             json={"recovery_code": "rc-abc123"},
@@ -489,7 +490,7 @@ class TestStepUp2FA:
         assert payload["mfa"] is True
 
         # 恢复码已原子消费，重复用 → 失败
-        again = await client.post(
+        again = await auth_front_client.post(
             "/api/v1/auth/2fa/step-up",
             headers=_auth(token),
             json={"recovery_code": "rc-abc123"},

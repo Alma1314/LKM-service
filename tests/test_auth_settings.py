@@ -44,23 +44,23 @@ def _unwrap(response: Any) -> dict[str, Any]:
 
 
 async def _reg_local(
-    db: AsyncSession, username: str = "alice", password: str = "secret123456"
+    auth_db: AsyncSession, username: str = "alice", password: str = "secret123456"
 ) -> dict[str, Any]:
     from app.modules.auth.schemas import UserRegLocal
 
     svc = _service()
     return await svc.register_local(
-        db, UserRegLocal(username=username, password=password)
+        auth_db, UserRegLocal(username=username, password=password)
     )
 
 
-async def _get_user(db: AsyncSession, user_id: int) -> User:
+async def _get_user(auth_db: AsyncSession, user_id: int) -> User:
     from app.modules.auth.models import User
 
     # 测试均为“先建后查”，必然命中，返回类型直接按 User 处理
     return cast(
         User,
-        (await db.execute(select(User).where(User.id == user_id))).scalars().first(),
+        (await auth_db.execute(select(User).where(User.id == user_id))).scalars().first(),
     )
 
 
@@ -78,17 +78,17 @@ def _service():
 class TestBindEmail:
     """Bind email request + verify, covering auto-upgrade local->normal."""
 
-    async def should_bind_email_and_upgrade_local_to_normal(self, db: AsyncSession):
+    async def should_bind_email_and_upgrade_local_to_normal(self, auth_db: AsyncSession):
         """Full happy path: request code, verify, email bound, account upgraded."""
         # Arrange: create a local user
-        reg_result = await _reg_local(db, username="alice")
+        reg_result = await _reg_local(auth_db, username="alice")
         user_id = reg_result["user_id"]
-        assert (await _get_user(db, user_id)).account_level == "local"
+        assert (await _get_user(auth_db, user_id)).account_level == "local"
 
         # Act: request email binding（验证码直接取自 create_email_verification 返回值）
         from app.modules.auth.service_verify import create_email_verification
 
-        code, _ = await create_email_verification(db, "alice@example.com", "bind")
+        code, _ = await create_email_verification(auth_db, "alice@example.com", "bind")
 
         # Now use the router function directly
         from app.modules.auth.router_settings import bind_email_verify
@@ -96,33 +96,33 @@ class TestBindEmail:
         result = await bind_email_verify(
             body=BindEmailVerify(email="alice@example.com", code=code),
             cur=_FakeCurrentUser(user_id),
-            db=db,
+            db=auth_db,
         )
 
         # Assert
         data = _unwrap(result)
         assert data["data"]["message"] == "Email bound successfully"
 
-        user = await _get_user(db, user_id)
+        user = await _get_user(auth_db, user_id)
         assert user.email == "alice@example.com"
         # account should be upgraded from local to normal
         assert user.account_level == "normal"
 
-    async def should_reject_duplicate_email(self, db: AsyncSession):
+    async def should_reject_duplicate_email(self, auth_db: AsyncSession):
         """Should fail if email is already taken by another user."""
         # Create two local users
-        reg1 = await _reg_local(db, username="alice")
-        reg2 = await _reg_local(db, username="bob")
+        reg1 = await _reg_local(auth_db, username="alice")
+        reg2 = await _reg_local(auth_db, username="bob")
 
         from app.modules.auth.service_verify import create_email_verification
 
         # Bind email to alice directly
-        user1 = await _get_user(db, reg1["user_id"])
+        user1 = await _get_user(auth_db, reg1["user_id"])
         user1.email = "same@example.com"
-        await db.flush()
+        await auth_db.flush()
 
         # Try to bind the same email to bob
-        code, _ = await create_email_verification(db, "same@example.com", "bind")
+        code, _ = await create_email_verification(auth_db, "same@example.com", "bind")
 
         from app.modules.auth.router_settings import bind_email_verify
 
@@ -130,17 +130,17 @@ class TestBindEmail:
             await bind_email_verify(
                 body=BindEmailVerify(email="same@example.com", code=code),
                 cur=_FakeCurrentUser(reg2["user_id"]),
-                db=db,
+                db=auth_db,
             )
         assert exc.value.errcode == AuthErr.ALREADY_REGISTERED
 
-    async def should_reject_wrong_code(self, db: AsyncSession):
+    async def should_reject_wrong_code(self, auth_db: AsyncSession):
         """Should fail with wrong verification code."""
-        reg = await _reg_local(db, username="alice")
+        reg = await _reg_local(auth_db, username="alice")
 
         from app.modules.auth.service_verify import create_email_verification
 
-        await create_email_verification(db, "alice@example.com", "bind")
+        await create_email_verification(auth_db, "alice@example.com", "bind")
 
         from app.modules.auth.router_settings import bind_email_verify
 
@@ -148,7 +148,7 @@ class TestBindEmail:
             await bind_email_verify(
                 body=BindEmailVerify(email="alice@example.com", code="000000"),
                 cur=_FakeCurrentUser(reg["user_id"]),
-                db=db,
+                db=auth_db,
             )
         assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
@@ -156,44 +156,44 @@ class TestBindEmail:
 class TestBindPhone:
     """Bind phone request + verify."""
 
-    async def should_bind_phone_and_upgrade_local_to_normal(self, db: AsyncSession):
+    async def should_bind_phone_and_upgrade_local_to_normal(self, auth_db: AsyncSession):
         """Full happy path: request code, verify, phone bound, account upgraded."""
-        reg = await _reg_local(db, username="alice")
+        reg = await _reg_local(auth_db, username="alice")
         user_id = reg["user_id"]
-        assert (await _get_user(db, user_id)).account_level == "local"
+        assert (await _get_user(auth_db, user_id)).account_level == "local"
 
         from app.modules.auth.service_verify import create_phone_verification
 
-        code, _ = await create_phone_verification(db, "13800001111", "bind")
+        code, _ = await create_phone_verification(auth_db, "13800001111", "bind")
 
         from app.modules.auth.router_settings import bind_phone_verify
 
         result = await bind_phone_verify(
             body=BindPhoneVerify(phone="13800001111", code=code),
             cur=_FakeCurrentUser(user_id),
-            db=db,
+            db=auth_db,
         )
 
         data = _unwrap(result)
         assert data["data"]["message"] == "Phone bound successfully"
 
-        user = await _get_user(db, user_id)
+        user = await _get_user(auth_db, user_id)
         assert user.phone == "13800001111"
         assert user.account_level == "normal"
 
-    async def should_reject_duplicate_phone(self, db: AsyncSession):
+    async def should_reject_duplicate_phone(self, auth_db: AsyncSession):
         """Should fail if phone already taken."""
-        reg1 = await _reg_local(db, username="alice")
-        reg2 = await _reg_local(db, username="bob")
+        reg1 = await _reg_local(auth_db, username="alice")
+        reg2 = await _reg_local(auth_db, username="bob")
 
         # Bind phone to alice directly
-        user1 = await _get_user(db, reg1["user_id"])
+        user1 = await _get_user(auth_db, reg1["user_id"])
         user1.phone = "13800001111"
-        await db.flush()
+        await auth_db.flush()
 
         from app.modules.auth.service_verify import create_phone_verification
 
-        code, _ = await create_phone_verification(db, "13800001111", "bind")
+        code, _ = await create_phone_verification(auth_db, "13800001111", "bind")
 
         from app.modules.auth.router_settings import bind_phone_verify
 
@@ -201,17 +201,17 @@ class TestBindPhone:
             await bind_phone_verify(
                 body=BindPhoneVerify(phone="13800001111", code=code),
                 cur=_FakeCurrentUser(reg2["user_id"]),
-                db=db,
+                db=auth_db,
             )
         assert exc.value.errcode == AuthErr.ALREADY_REGISTERED
 
-    async def should_reject_wrong_code(self, db: AsyncSession):
+    async def should_reject_wrong_code(self, auth_db: AsyncSession):
         """Should fail with wrong verification code."""
-        reg = await _reg_local(db, username="alice")
+        reg = await _reg_local(auth_db, username="alice")
 
         from app.modules.auth.service_verify import create_phone_verification
 
-        await create_phone_verification(db, "13800001111", "bind")
+        await create_phone_verification(auth_db, "13800001111", "bind")
 
         from app.modules.auth.router_settings import bind_phone_verify
 
@@ -219,7 +219,7 @@ class TestBindPhone:
             await bind_phone_verify(
                 body=BindPhoneVerify(phone="13800001111", code="000000"),
                 cur=_FakeCurrentUser(reg["user_id"]),
-                db=db,
+                db=auth_db,
             )
         assert exc.value.errcode == AuthErr.VERIFICATION_CODE_INVALID
 
@@ -227,31 +227,31 @@ class TestBindPhone:
 class TestBindEmailUpgrade:
     """Specifically test that bind email upgrades local->normal."""
 
-    async def should_upgrade_when_binding_email(self, db: AsyncSession):
+    async def should_upgrade_when_binding_email(self, auth_db: AsyncSession):
         """Bind email to a local user: account_level must become normal."""
-        reg = await _reg_local(db, username="upgrademe")
+        reg = await _reg_local(auth_db, username="upgrademe")
         user_id = reg["user_id"]
-        user = await _get_user(db, user_id)
+        user = await _get_user(auth_db, user_id)
         assert user.account_level == "local"
         assert user.email is None
 
         from app.modules.auth.service_verify import create_email_verification
 
-        code, _ = await create_email_verification(db, "upgrade@example.com", "bind")
+        code, _ = await create_email_verification(auth_db, "upgrade@example.com", "bind")
 
         from app.modules.auth.router_settings import bind_email_verify
 
         await bind_email_verify(
             body=BindEmailVerify(email="upgrade@example.com", code=code),
             cur=_FakeCurrentUser(user_id),
-            db=db,
+            db=auth_db,
         )
 
-        user = await _get_user(db, user_id)
+        user = await _get_user(auth_db, user_id)
         assert user.email == "upgrade@example.com"
         assert user.account_level == "normal"
 
-    async def should_not_downgrade_normal_user(self, db: AsyncSession):
+    async def should_not_downgrade_normal_user(self, auth_db: AsyncSession):
         """Binding email to an already-normal user: should stay normal."""
         from app.modules.auth.models import Profile, User
 
@@ -262,26 +262,26 @@ class TestBindEmailUpgrade:
             hashed_password="x",
             account_level="normal",
         )
-        db.add(user)
-        await db.flush()
-        db.add(Profile(user_id=user.id, role="member"))
-        await db.flush()
+        auth_db.add(user)
+        await auth_db.flush()
+        auth_db.add(Profile(user_id=user.id, role="member"))
+        await auth_db.flush()
         user_id = user.id
 
         # Bind a different email (the user already has one, but we're binding another)
         from app.modules.auth.service_verify import create_email_verification
 
-        code, _ = await create_email_verification(db, "another@example.com", "bind")
+        code, _ = await create_email_verification(auth_db, "another@example.com", "bind")
 
         from app.modules.auth.router_settings import bind_email_verify
 
         await bind_email_verify(
             body=BindEmailVerify(email="another@example.com", code=code),
             cur=_FakeCurrentUser(user_id, account_level="normal"),
-            db=db,
+            db=auth_db,
         )
 
-        user = await _get_user(db, user_id)
+        user = await _get_user(auth_db, user_id)
         # Already normal, should not have been changed
         assert user.account_level == "normal"
 
@@ -292,7 +292,7 @@ class TestGetSettings:
     def _unwrap(self, response: Any) -> dict[str, Any]:
         return json.loads(response.body.decode())
 
-    async def should_return_binding_state(self, db: AsyncSession):
+    async def should_return_binding_state(self, auth_db: AsyncSession):
         from app.modules.auth.models import Profile, User
 
         user = User(
@@ -302,21 +302,21 @@ class TestGetSettings:
             hashed_password="x",
             account_level="normal",
         )
-        db.add(user)
-        await db.flush()
-        db.add(Profile(user_id=user.id, role="member"))
-        await db.flush()
+        auth_db.add(user)
+        await auth_db.flush()
+        auth_db.add(Profile(user_id=user.id, role="member"))
+        await auth_db.flush()
 
         from app.modules.auth.models import TOTP
 
-        db.add(TOTP(user_id=user.id, secret="s", enabled=True))
-        await db.flush()
+        auth_db.add(TOTP(user_id=user.id, secret="s", enabled=True))
+        await auth_db.flush()
 
         from app.modules.auth.router_settings import get_settings
 
         data = self._unwrap(
             await get_settings(
-                cur=_FakeCurrentUser(user.id, account_level="normal"), db=db
+                cur=_FakeCurrentUser(user.id, account_level="normal"), db=auth_db
             )
         )
         assert data["data"]["email"] == "a@b.com"
@@ -329,7 +329,7 @@ class TestUnbind:
     """DELETE /auth/settings/{type} — 解绑 + 2FA 门槛 + 保留一种登录方式。"""
 
     async def _reg_with_bindings(
-        self, db: AsyncSession, email: str = "a@b.com", phone: str = "13800001111"
+        self, auth_db: AsyncSession, email: str = "a@b.com", phone: str = "13800001111"
     ) -> User:
         from app.modules.auth.models import Profile, User
 
@@ -340,16 +340,16 @@ class TestUnbind:
             hashed_password="x",
             account_level="normal",
         )
-        db.add(user)
-        await db.flush()
-        db.add(Profile(user_id=user.id, role="member"))
-        await db.flush()
+        auth_db.add(user)
+        await auth_db.flush()
+        auth_db.add(Profile(user_id=user.id, role="member"))
+        await auth_db.flush()
         return user
 
-    async def should_unbind_email_without_2fa(self, db: AsyncSession):
+    async def should_unbind_email_without_2fa(self, auth_db: AsyncSession):
         from app.modules.auth.models import User
 
-        user = await self._reg_with_bindings(db)
+        user = await self._reg_with_bindings(auth_db)
         from app.modules.auth.router_settings import unbind
 
         data = _unwrap(
@@ -357,14 +357,14 @@ class TestUnbind:
                 "email",
                 UnbindRequest(code=None),
                 cur=_FakeCurrentUser(user.id, account_level="normal"),
-                db=db,
+                db=auth_db,
             )
         )
         assert data["data"]["message"] == "email unbound"
         # 直接用标量列查询，避免命中身份映射中已过期的 User 对象触发惰性加载
-        assert await db.scalar(select(User.email).where(User.id == user.id)) is None
+        assert await auth_db.scalar(select(User.email).where(User.id == user.id)) is None
 
-    async def should_reject_unbind_when_only_one_way_left(self, db: AsyncSession):
+    async def should_reject_unbind_when_only_one_way_left(self, auth_db: AsyncSession):
         # 只有 phone，没有 email/github → 解绑 email 会触发“保留一种”守卫（虽然 email 本来就空，走 phone 侧测试更贴）
         from app.modules.auth.models import Profile, User
 
@@ -374,13 +374,13 @@ class TestUnbind:
             hashed_password="x",
             account_level="normal",
         )
-        db.add(user)
-        await db.flush()
-        db.add(Profile(user_id=user.id, role="member"))
-        await db.flush()
+        auth_db.add(user)
+        await auth_db.flush()
+        auth_db.add(Profile(user_id=user.id, role="member"))
+        await auth_db.flush()
         # 绑定另一个联系方式以便 email 存在可解绑，但仅剩 phone 时会拒绝
         user.email = "a@b.com"
-        await db.flush()
+        await auth_db.flush()
 
         from app.core.err import BizError
         from app.modules.auth.router_settings import unbind
@@ -391,7 +391,7 @@ class TestUnbind:
                 "phone",
                 UnbindRequest(code=None),
                 cur=_FakeCurrentUser(user.id, account_level="normal"),
-                db=db,
+                db=auth_db,
             )
         )
         # 再解绑 email，将无任何登录方式 → 应拒绝
@@ -400,16 +400,16 @@ class TestUnbind:
                 "email",
                 UnbindRequest(code=None),
                 cur=_FakeCurrentUser(user.id, account_level="normal"),
-                db=db,
+                db=auth_db,
             )
         assert exc.value.errcode == CommonErr.INVALID_INPUT
 
-    async def should_require_totp_when_2fa_enabled(self, db: AsyncSession):
-        user = await self._reg_with_bindings(db)
+    async def should_require_totp_when_2fa_enabled(self, auth_db: AsyncSession):
+        user = await self._reg_with_bindings(auth_db)
         from app.modules.auth.models import TOTP
 
-        db.add(TOTP(user_id=user.id, secret="s", enabled=True))
-        await db.flush()
+        auth_db.add(TOTP(user_id=user.id, secret="s", enabled=True))
+        await auth_db.flush()
 
         from app.core.err import BizError
         from app.modules.auth.router_settings import unbind
@@ -419,15 +419,15 @@ class TestUnbind:
                 "email",
                 UnbindRequest(code=None),
                 cur=_FakeCurrentUser(user.id, account_level="normal"),
-                db=db,
+                db=auth_db,
             )
         assert exc.value.errcode == AuthErr.TOTP_CODE_INVALID
 
-    async def should_unbind_github(self, db: AsyncSession):
-        user = await self._reg_with_bindings(db)
+    async def should_unbind_github(self, auth_db: AsyncSession):
+        user = await self._reg_with_bindings(auth_db)
         from app.modules.auth.models import UserOAuth
 
-        db.add(
+        auth_db.add(
             UserOAuth(
                 user_id=user.id,
                 provider="github",
@@ -435,7 +435,7 @@ class TestUnbind:
                 provider_email="gh@example.com",
             )
         )
-        await db.flush()
+        await auth_db.flush()
         from app.modules.auth.router_settings import unbind
 
         data = _unwrap(
@@ -443,22 +443,22 @@ class TestUnbind:
                 "github",
                 UnbindRequest(code=None),
                 cur=_FakeCurrentUser(user.id, account_level="normal"),
-                db=db,
+                db=auth_db,
             )
         )
         assert data["data"]["message"] == "github unbound"
         # 用标量列查询判定行已删除，绕过过期身份映射对象
         assert (
-            await db.execute(select(UserOAuth.id).where(UserOAuth.user_id == user.id))
+            await auth_db.execute(select(UserOAuth.id).where(UserOAuth.user_id == user.id))
         ).scalars().first() is None
 
-    async def should_require_2fa_for_github_unbind(self, db: AsyncSession):
+    async def should_require_2fa_for_github_unbind(self, auth_db: AsyncSession):
         """解绑 GitHub 已开启 2FA 时，同样要求二次验证（TOTP 或恢复码）。"""
         from app.modules.auth.models import TOTP
 
-        user = await self._reg_with_bindings(db)
-        db.add(TOTP(user_id=user.id, secret="s", enabled=True))
-        await db.flush()
+        user = await self._reg_with_bindings(auth_db)
+        auth_db.add(TOTP(user_id=user.id, secret="s", enabled=True))
+        await auth_db.flush()
         from app.modules.auth.router_settings import unbind
 
         with pytest.raises(BizError) as exc:
@@ -466,20 +466,20 @@ class TestUnbind:
                 "github",
                 UnbindRequest(code=None),
                 cur=_FakeCurrentUser(user.id, account_level="normal"),
-                db=db,
+                db=auth_db,
             )
         assert exc.value.errcode == AuthErr.TOTP_CODE_INVALID
 
-    async def should_unbind_github_with_recovery_code(self, db: AsyncSession):
+    async def should_unbind_github_with_recovery_code(self, auth_db: AsyncSession):
         """解绑 GitHub 已开启 2FA 时，可用合法恢复码兜底完成。"""
         import hashlib
 
         from app.modules.auth.models import TOTP, RecoveryCode, UserOAuth
         from app.modules.auth.router_settings import unbind
 
-        user = await self._reg_with_bindings(db)
-        db.add(TOTP(user_id=user.id, secret="s", enabled=True))
-        db.add(
+        user = await self._reg_with_bindings(auth_db)
+        auth_db.add(TOTP(user_id=user.id, secret="s", enabled=True))
+        auth_db.add(
             UserOAuth(
                 user_id=user.id,
                 provider="github",
@@ -487,30 +487,30 @@ class TestUnbind:
                 provider_email="gh@example.com",
             )
         )
-        db.add(
+        auth_db.add(
             RecoveryCode(
                 user_id=user.id,
                 code_hash=hashlib.sha256(b"rc-gh-1").hexdigest(),
                 used=False,
             )
         )
-        await db.flush()
+        await auth_db.flush()
 
         data = _unwrap(
             await unbind(
                 "github",
                 UnbindRequest(code=None, recovery_code="rc-gh-1"),
                 cur=_FakeCurrentUser(user.id, account_level="normal"),
-                db=db,
+                db=auth_db,
             )
         )
         assert data["data"]["message"] == "github unbound"
         assert (
-            await db.execute(select(UserOAuth.id).where(UserOAuth.user_id == user.id))
+            await auth_db.execute(select(UserOAuth.id).where(UserOAuth.user_id == user.id))
         ).scalars().first() is None
 
-    async def should_reject_invalid_type(self, db: AsyncSession):
-        user = await self._reg_with_bindings(db)
+    async def should_reject_invalid_type(self, auth_db: AsyncSession):
+        user = await self._reg_with_bindings(auth_db)
         from app.core.err import BizError
         from app.modules.auth.router_settings import unbind
 
@@ -519,6 +519,6 @@ class TestUnbind:
                 "wechat",
                 UnbindRequest(code=None),
                 cur=_FakeCurrentUser(user.id, account_level="normal"),
-                db=db,
+                db=auth_db,
             )
         assert exc.value.errcode == CommonErr.INVALID_INPUT

@@ -11,8 +11,10 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.config import settings
-from app.core.err import BizError
-from app.modules.auth.errors import AuthErr
+from app.core.err import (
+    AuthErr,  # M3 peer: 并入共享 shared err
+    BizError,
+)
 
 # —— 主库（monolith，realm="default"）的惰性单例。M3.B 物理拆目标：monolith 主进程
 # 只触达 database_url（auth 独立库走单独的 app/db/auth_session.py，主进程不侧挂）。

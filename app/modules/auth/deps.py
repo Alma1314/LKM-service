@@ -13,8 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.err import BizError, CommonErr
+from app.db.auth_session import get_auth_session
 from app.db.base import now_iso
-from app.db.session import get_session
 from app.modules.auth.errors import AuthErr
 from app.modules.auth.models import User
 from app.modules.auth.providers.base import EmailProvider, SmsProvider
@@ -190,7 +190,8 @@ async def _resolve_via_seam(
 
 
 async def get_current_user(
-    token: str = Depends(_parse_bearer), db: AsyncSession = Depends(get_session)
+    token: str = Depends(_parse_bearer),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> CurrentUser:
     """必选 JWT 认证依赖。抛出ERROR"""
     return await _resolve_current_user(token, db)
@@ -198,7 +199,7 @@ async def get_current_user(
 
 async def get_optional_user(
     token: str | None = Header(None, alias="Authorization"),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_auth_session),
 ) -> CurrentUser | None:
     """可选 JWT 认证依赖。不抛出ERROR"""
     if not token:
